@@ -1,0 +1,36 @@
+{
+  "name": "anhur",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "tooling/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --filter=vite-playground",
+    "dev:docs": "turbo run dev --filter=docs",
+    "check-types": "turbo run check-types",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint:fix",
+    "format": "turbo run format",
+    "format:fix": "turbo run format:fix",
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration",
+    "release:login": "npm login --auth-type=web --scope=@anhur",
+    "release:sync-check": "bun scripts/release.ts sync-check",
+    "release:version": "bun scripts/release.ts version",
+    "release:verify": "bun scripts/release.ts verify",
+    "release:prepare": "bun scripts/release.ts prepare",
+    "release:pack": "bun scripts/release.ts pack",
+    "release:publish": "bun scripts/release.ts publish"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
+    "turbo": "^2.5.4",
+    "typescript": "^7.0.2"
+  },
+  "packageManager": "bun@1.2.19"
+}

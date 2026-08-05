@@ -1,0 +1,24 @@
+---
+title: Getting started
+description: Choose Vite or the CLI, then wire Anhur into your project.
+sidebar:
+  label: Overview
+  order: 0
+---
+
+Pick how you want Anhur to run, then follow the matching guide.
+
+<CardGroup cols={2}>
+  <Card title="Vite app" href="/getting-started/vite" icon="zap">
+    Recommended. The plugin builds content on `vite dev` / `vite build` and exposes
+    `anhur/generated`.
+  </Card>
+  <Card title="CLI only" href="/getting-started/cli" icon="terminal">
+    Use `anhur build` / `anhur watch` from `@anhur/core` — CI, scripts, or apps without the Vite
+    plugin.
+  </Card>
+</CardGroup>
+
+Both paths share the same `anhur.config.ts` and the same generated output under `.anhur/generated`.
+
+Then skim [Project layout](/getting-started/project-layout) for folders, TypeScript paths, and gitignore tips.

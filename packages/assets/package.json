@@ -1,0 +1,68 @@
+{
+  "name": "@anhur/assets",
+  "version": "0.0.1",
+  "description": "Opt-in image/file asset helpers for @anhur/core documents",
+  "keywords": [
+    "anhur",
+    "assets",
+    "content",
+    "image",
+    "sharp"
+  ],
+  "license": "MIT",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": "./dist/index.js",
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "check-types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tests.json",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
+    "test": "vitest run --project unit --passWithNoTests",
+    "test:watch": "vitest --project unit",
+    "test:integration": "vitest run --project integration --passWithNoTests"
+  },
+  "dependencies": {
+    "@anhur/core": "workspace:*",
+    "sharp": "^0.34.2",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@anhur/oxfmt": "workspace:*",
+    "@anhur/oxlint": "workspace:*",
+    "@mdx-js/mdx": "^3.1.1",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^22",
+    "mdast": "^3.0.0",
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
+    "remark-gfm": "^4.0.1",
+    "tsdown": "0.22.14",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  },
+  "inlinedDependencies": {
+    "@types/mdast": "4.0.4",
+    "@types/unist": "3.0.3"
+  }
+}

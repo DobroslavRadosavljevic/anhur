@@ -1,0 +1,72 @@
+---
+title: Configuration
+description: Overview of anhur.config.ts — content sources, processors, localization, and output.
+sidebar:
+  label: Configuration
+  order: 0
+---
+
+Anhur is configured from one TypeScript module — usually `anhur.config.ts` — passed through `defineConfig`.
+
+```ts
+import { defineCollection, defineConfig, schema as s } from "@anhur/core";
+
+export default defineConfig({
+  content: [
+    defineCollection({
+      name: "posts",
+      directory: "content/posts",
+      include: "**/*.md",
+      schema: s.object({ title: s.string() }),
+    }),
+  ],
+});
+```
+
+## Top-level fields
+
+| Field          | Role                                           |
+| -------------- | ---------------------------------------------- |
+| `content`      | Collections and singletons                     |
+| `processors`   | `mdx()`, `markdown()`, `assets()`, …           |
+| `localization` | Folder locales catalog                         |
+| `outputDir`    | Generated modules (default `.anhur/generated`) |
+| `cacheDir`     | Cache dir, or `false` to disable               |
+| `loaders`      | Extra file loaders before built-ins            |
+| `prepare`      | Hook after transforms, before codegen          |
+| `complete`     | Hook after all codegen                         |
+
+## Content sources
+
+| Option                  | Collections       | Singletons            |
+| ----------------------- | ----------------- | --------------------- |
+| `name`                  | Required          | Required              |
+| `directory` / `include` | Required          | Localized: required   |
+| `filePath`              | —                 | Monolingual: required |
+| `schema`                | Required          | Required              |
+| `localized`             | Inherit / `false` | Inherit / `false`     |
+| `transform`             | Optional          | Optional              |
+| `generate`              | Optional          | Optional              |
+| `optional`              | —                 | Skip missing file     |
+
+Deep dives:
+
+- [Schemas](/guides/schemas)
+- [Generate options](/guides/generate-options)
+- [Transforms & relations](/guides/transforms-and-relations)
+- [Drafts & hooks](/guides/drafts-and-hooks)
+- [Localization](/concepts/localization)
+
+## Processors
+
+Register every processor your schema helpers need — see [Processors](/concepts/processors).
+
+## Output directory
+
+Defaults to `.anhur/generated` relative to the config file. Override with `outputDir` when needed.
+
+## Reference
+
+- [`defineConfig`](/reference/define-config)
+- [`defineCollection`](/reference/define-collection)
+- [`defineSingleton`](/reference/define-singleton)

@@ -1,0 +1,73 @@
+{
+  "name": "@anhur/core",
+  "version": "0.0.1",
+  "description": "Typed content SDK — Effect services + Node FileSystem/Path for validated content data",
+  "keywords": [
+    "content",
+    "effect",
+    "i18n",
+    "markdown",
+    "mdx",
+    "vite",
+    "zod"
+  ],
+  "license": "MIT",
+  "bin": {
+    "anhur": "./src/cli.ts"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "bin": {
+      "anhur": "./dist/cli.js"
+    },
+    "exports": {
+      ".": "./dist/index.js",
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "check-types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tests.json",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
+    "test": "vitest run --project unit --passWithNoTests",
+    "test:watch": "vitest --project unit",
+    "test:integration": "vitest run --project integration --passWithNoTests"
+  },
+  "dependencies": {
+    "@effect/platform-node": "^4.0.0-beta.103",
+    "effect": "^4.0.0-beta.103",
+    "gray-matter": "^4.0.3",
+    "jiti": "^2.7.0",
+    "mdast-util-from-markdown": "^2.0.2",
+    "mdast-util-toc": "^7.1.0",
+    "yaml": "^2.8.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@anhur/oxfmt": "workspace:*",
+    "@anhur/oxlint": "workspace:*",
+    "@effect/vitest": "^4.0.0-beta.103",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^22",
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
+    "tsdown": "0.22.14",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  }
+}

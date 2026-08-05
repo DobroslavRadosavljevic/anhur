@@ -1,0 +1,18 @@
+---
+title: "@anhur/assets"
+description: Image and file fields with copy and URL rewrite.
+sidebar:
+  label: "@anhur/assets"
+  order: 5
+---
+
+```ts
+import { assets, schema as a } from "@anhur/assets";
+```
+
+- `processors: [assets({ dir?, base? })]` — defaults `.anhur/assets` and `/anhur-assets/`
+- Schema: `a.image()`, `a.file()`
+- Rewrites relative URLs in MDX/Markdown bodies when those processors run
+- Depends on `sharp`
+
+Guide: [Assets](/guides/assets)

@@ -1,0 +1,39 @@
+---
+title: defineConfig
+description: Top-level Anhur project configuration.
+sidebar:
+  label: defineConfig
+  order: 0
+---
+
+```ts
+import { defineConfig } from "@anhur/core";
+
+export default defineConfig({
+  content: [/* collections & singletons */],
+  processors: [/* optional */],
+  localization: {
+    strategy: "folder",
+    locales: ["en", "de"],
+    defaultLocale: "en",
+  },
+  outputDir: ".anhur/generated",
+  cacheDir: ".anhur/cache", // or false
+  loaders: [/* optional */],
+  prepare: (sources) => {},
+  complete: () => {},
+});
+```
+
+| Field          | Required | Notes                                    |
+| -------------- | -------- | ---------------------------------------- |
+| `content`      | Yes      | Non-empty array of sources               |
+| `processors`   | No       | Opt-in MDX / Markdown / assets           |
+| `localization` | No       | Folder locales catalog                   |
+| `outputDir`    | No       | Default `.anhur/generated`               |
+| `cacheDir`     | No       | Default `.anhur/cache`; `false` disables |
+| `loaders`      | No       | Extra loaders before built-ins           |
+| `prepare`      | No       | After transforms, before codegen         |
+| `complete`     | No       | After all codegen                        |
+
+See [Configuration](/guides/configuration).

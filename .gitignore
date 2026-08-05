@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Builds
+dist/
+.turbo/
+*.tsbuildinfo
+*.tgz
+
+# Anhur
+.anhur/
+.temp/
+
+# Blume (docs app runtime)
+.blume/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Logs / OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Test / coverage
+coverage/
+
+# Vite
+*.local

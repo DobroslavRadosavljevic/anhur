@@ -1,0 +1,94 @@
+---
+title: CLI setup
+description: Build and watch content with the anhur CLI that ships with @anhur/core.
+sidebar:
+  label: CLI
+  icon: terminal
+  order: 2
+---
+
+The **`anhur` CLI** is included when you install `@anhur/core`. Use it for CI, prebuild scripts, or any setup where you do not want the Vite plugin.
+
+## Install
+
+```package-install
+@anhur/core
+```
+
+Optional processors as needed:
+
+```package-install
+@anhur/mdx @anhur/markdown @anhur/assets
+```
+
+## Config
+
+Same `anhur.config.ts` as the Vite path:
+
+```ts title="anhur.config.ts"
+import { defineCollection, defineConfig, schema as s } from "@anhur/core";
+
+const posts = defineCollection({
+  name: "posts",
+  directory: "content/posts",
+  include: "**/*.md",
+  localized: false,
+  schema: s.object({
+    title: s.string(),
+    slug: s.unique(),
+    body: s.raw(),
+  }),
+});
+
+export default defineConfig({
+  content: [posts],
+});
+```
+
+## Commands
+
+```sh
+anhur build --root .
+anhur watch --root .
+```
+
+Useful flags:
+
+| Flag              | Purpose                                                   |
+| ----------------- | --------------------------------------------------------- |
+| `--root <dir>`    | Project root (default: cwd)                               |
+| `--config <path>` | Config file if it is not `anhur.config.ts` under `--root` |
+
+Via a package manager without a global bin:
+
+```sh
+bunx anhur build --root .
+npx anhur build --root .
+```
+
+## Wire the import
+
+Point TypeScript (and your bundler, if needed) at the generated folder:
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "paths": {
+      "anhur/generated": ["./.anhur/generated"]
+    }
+  }
+}
+```
+
+Then:
+
+```ts
+import { allPosts, getPost } from "anhur/generated";
+```
+
+If you later add Vite, switch to [`@anhur/vite`](/getting-started/vite) so you do not maintain a separate alias in Vite config.
+
+## Next
+
+- [Project layout](/getting-started/project-layout)
+- [CLI reference](/reference/cli)

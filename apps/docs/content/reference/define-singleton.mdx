@@ -1,0 +1,44 @@
+---
+title: defineSingleton
+description: API for one-document (or one-per-locale) sources.
+sidebar:
+  label: defineSingleton
+  order: 2
+---
+
+```ts
+import { defineSingleton, schema as s } from "@anhur/core";
+
+// Monolingual
+defineSingleton({
+  name: "about",
+  filePath: "content/about.md",
+  localized: false,
+  optional: true,
+  schema: s.object({ title: s.string() }),
+});
+
+// Localized
+defineSingleton({
+  name: "settings",
+  directory: "content/settings",
+  include: "**/index.md", // optional override
+  schema: s.object({ siteTitle: s.string() }),
+  generate: {
+    variantsName: "allSettings",
+  },
+});
+```
+
+| Field                                  | Required    | Notes                                       |
+| -------------------------------------- | ----------- | ------------------------------------------- |
+| `name`                                 | Yes         | Export naming                               |
+| `schema`                               | Yes         | Zod schema                                  |
+| `filePath`                             | Monolingual | Single file                                 |
+| `directory`                            | Localized   | Locale folders                              |
+| `include`                              | No          | Default localized layout uses `index` files |
+| `localized`                            | No          | Inherit / `false`                           |
+| `optional`                             | No          | Skip if file missing                        |
+| `transform` / `onSuccess` / `generate` | No          | Same ideas as collections                   |
+
+When project localization is on, localized singletons need `directory`. Monolingual singletons need `filePath` (and usually `localized: false`).

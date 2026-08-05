@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "skills": {
+    "brainstorm": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/brainstorm/SKILL.md",
+      "computedHash": "1bf13f657594a25b9816d575697566511ad6d61d6c6c5f986cdd6ef8bf938b1b"
+    },
+    "bun": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/bun/SKILL.md",
+      "computedHash": "345195aaec59071b8888ea674ea92e293d3634c8b9939510fed2b1f5271659a3"
+    },
+    "date-fns": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/date-fns/SKILL.md",
+      "computedHash": "1ce6daaaba4bf2b758d5b1630cc524eec26b9b34ccad3c210e5d1401f7f34e9e"
+    },
+    "decimal-js": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/decimal-js/SKILL.md",
+      "computedHash": "d3e8f0772b83eb4511e5200da643b32975e0fd30ac6840afc792f60345f586bd"
+    },
+    "deduplicate": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/deduplicate/SKILL.md",
+      "computedHash": "defe081bbc0971a4cb3c226d41818206f16f0cba0e2635f11cd6b159b0004cad"
+    },
+    "effect": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/effect/SKILL.md",
+      "computedHash": "a13b7fbe22f9ad3f0493b6d3463cb113f32f77fe5aaf81a3152a6f39ac2eb28f"
+    },
+    "evlog": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/evlog/SKILL.md",
+      "computedHash": "2a9fbe851ffe204dd34aa9aaca3e9547f95e696f2764fcebc842576cafa803db"
+    },
+    "handoff": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/handoff/SKILL.md",
+      "computedHash": "7c91158ea41076fef06543ac33862a4042fa2de2cd1bf8602a9d30f340f06b7b"
+    },
+    "intlayer": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/intlayer/SKILL.md",
+      "computedHash": "3df445726bbf85dc132908960d06c3d625651de5f62420aa61cd6b551e0dcd01"
+    },
+    "jsdoc": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/jsdoc/SKILL.md",
+      "computedHash": "b5ae4fe07b3be3e28540eb3c349b3aba06c3060d9178404d6a137a61f2dbba5e"
+    },
+    "kill-legacy": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/kill-legacy/SKILL.md",
+      "computedHash": "94bd9f54eb7224a9e1fcbd3f8b279dc0b7276f298ec85b2283304104ad0fcbe8"
+    },
+    "loop": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/loop/SKILL.md",
+      "computedHash": "6f8511219302404e17fbcf5755e86ca7e998d856af89499a7cad7a8f598a21bb"
+    },
+    "mantine-hooks": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/mantine-hooks/SKILL.md",
+      "computedHash": "3217e7d6c133052a0bbfae75bccd1859e17ccf39891221eb8375d5036cd8f8be"
+    },
+    "oxfmt": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/oxfmt/SKILL.md",
+      "computedHash": "ee6a6801ebbfed870ed267f81cbb056c0e7ad820deb89e4aaa3d639a2b60ed29"
+    },
+    "oxlint": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/oxlint/SKILL.md",
+      "computedHash": "f3534278cdcbbd7eaf4c45fbf59c37565f5ee08038dac5b75d1d80b821c14121"
+    },
+    "plain-language": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/plain-language/SKILL.md",
+      "computedHash": "6e30576a2ba57334bd7a0aa45e39055ac1ea6cc9c989f03c306d8afed8431abc"
+    },
+    "react": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/react/SKILL.md",
+      "computedHash": "f70b5426bcd72a9ef2d65dc1445b58fa89b141ecfda85e5421cf08ddd33ab78a"
+    },
+    "react-boundaries": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-boundaries/SKILL.md",
+      "computedHash": "0992499bf4ea53b7962931033a7d283eb9f2bdc96c3cb4b99fa0f9d4fa64bb93"
+    },
+    "research": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/research/SKILL.md",
+      "computedHash": "ab65d697eecf498b75772adb01a61eb218008003971e8acabf4336c64a0c7af0"
+    },
+    "simplify-layout": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/simplify-layout/SKILL.md",
+      "computedHash": "22d2d40e71ba84c2571574d5845058bdf906e45312b90ab006d0f4369609337e"
+    },
+    "storybook": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/storybook/SKILL.md",
+      "computedHash": "607a9914c78338cfcddd27f2e7e884ef3bcc94e84a96a2b48504d50594260800"
+    },
+    "subagents": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/subagents/SKILL.md",
+      "computedHash": "3297aa1bfd7c035d86e093d5cd36a58a80d25761bbff9974544ebbe5beb69f9c"
+    },
+    "tailwind": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/tailwind/SKILL.md",
+      "computedHash": "120f796e748891613145fc3b3dc8d2b2e0f73203e5b4ab71c916a5884ff24c14"
+    },
+    "tailwind-variants": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/tailwind-variants/SKILL.md",
+      "computedHash": "62ec7f2705e999f30951383d0af940e00d8dca577ffcde905ffed8ddcaaebbd9"
+    },
+    "tanstack-router": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/tanstack-router/SKILL.md",
+      "computedHash": "aabf83b1869ce87e49b50b90e4a6ffdecd1c8fe6a40defd7a26f8ba5f96314e7"
+    },
+    "tanstack-start": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/tanstack-start/SKILL.md",
+      "computedHash": "a9a3b723100539810d9c18bd175f1df8e6925f75cbc7c14c4a658d445e958d1c"
+    },
+    "tanstack-start-architecture": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/tanstack-start-architecture/SKILL.md",
+      "computedHash": "92ff9bc9729751885fbe0bc365c39ae6c67054662d2be891fd6f1705a2b5a6d2"
+    },
+    "testcontainers": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/testcontainers/SKILL.md",
+      "computedHash": "8a2deedd8666f37951eca89ed8dd64dab151432eb20067bf22d946cb908f5559"
+    },
+    "tsdown": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/tsdown/SKILL.md",
+      "computedHash": "32464e9a545df43cad5209640666b04c3e8daffe3ff4c44fb6139b8bc5e5cf4c"
+    },
+    "turborepo": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/turborepo/SKILL.md",
+      "computedHash": "fabbbdf9232810393910395b2350c9acad505aaf9a792a14229c15549df422e0"
+    },
+    "turborepo-architecture": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/turborepo-architecture/SKILL.md",
+      "computedHash": "83a924e8e120e52d1f9f3a1d1ed591c886e0162f0ea3ae248a578ec7aff06217"
+    },
+    "ultra-review": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/ultra-review/SKILL.md",
+      "computedHash": "73d80e2293ad56e96e73f82c8cbb3f03d2eaebf575b4ba613b59d76b9c988460"
+    },
+    "ultraplan": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/ultraplan/SKILL.md",
+      "computedHash": "da6a208303f0a3383c5a38ea6df827959f96b5f84b0b425bcded6357b3f81b46"
+    },
+    "unsmell": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/unsmell/SKILL.md",
+      "computedHash": "0f4a02d5388fb2b63cc2e9dba3eb0f34741154feea9ee325dc210a18daf111c9"
+    },
+    "vite": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/vite/SKILL.md",
+      "computedHash": "3129cd1bfcd7512ba7b9b6f1c62a7b8b661cb5c0560dca42f2cf8a1f70b5238e"
+    },
+    "vitest": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/vitest/SKILL.md",
+      "computedHash": "c7d375e67c42d10d9db963aeaebdb8f387e9f871879a8c007b75c510f25529c0"
+    },
+    "vitest-architecture": {
+      "source": "DobroslavRadosavljevic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/vitest-architecture/SKILL.md",
+      "computedHash": "e0f5a70ab9246ed2709ebb51fa6078172a55a6b5e57acbbc6dc8e470078c4e68"
+    }
+  }
+}

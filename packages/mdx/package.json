@@ -1,0 +1,87 @@
+{
+  "name": "@anhur/mdx",
+  "version": "0.0.1",
+  "description": "Opt-in MDX compile helpers for @anhur/core documents",
+  "keywords": [
+    "content",
+    "anhur",
+    "mdx",
+    "zod"
+  ],
+  "license": "MIT",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./react": "./src/react/index.tsx",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": "./dist/index.js",
+      "./react": "./dist/react/index.js",
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "check-types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tests.json",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
+    "test": "vitest run --project unit --passWithNoTests",
+    "test:watch": "vitest --project unit",
+    "test:integration": "vitest run --project integration --passWithNoTests"
+  },
+  "dependencies": {
+    "@anhur/core": "workspace:*",
+    "@mdx-js/mdx": "^3.1.1",
+    "remark-gfm": "^4.0.1",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@anhur/assets": "workspace:*",
+    "@anhur/oxfmt": "workspace:*",
+    "@anhur/oxlint": "workspace:*",
+    "@types/mdast": "^4.0.4",
+    "@types/mdx": "^2.0.13",
+    "@types/node": "^22",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "happy-dom": "^20.8.9",
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sharp": "0.34.2",
+    "tsdown": "0.22.14",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "peerDependencies": {
+    "@anhur/assets": "workspace:*",
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "@anhur/assets": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  }
+}

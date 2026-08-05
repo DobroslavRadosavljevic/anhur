@@ -1,0 +1,78 @@
+---
+title: Marketing pages
+description: Localized Markdown pages plus a monolingual about singleton.
+sidebar:
+  label: Marketing pages
+  order: 3
+---
+
+Marketing site pattern: locale folders for pages, one shared about file.
+
+## Install
+
+```package-install
+@anhur/core @anhur/vite @anhur/markdown
+```
+
+## Config
+
+```ts title="anhur.config.ts"
+import { defineCollection, defineConfig, defineSingleton, schema as s } from "@anhur/core";
+import { markdown, schema as md } from "@anhur/markdown";
+
+const pages = defineCollection({
+  name: "pages",
+  directory: "content/pages",
+  include: "**/*.md",
+  schema: s.object({
+    title: s.string(),
+    slug: s.unique(),
+    body: md.markdown(),
+  }),
+});
+
+const about = defineSingleton({
+  name: "about",
+  filePath: "content/about.md",
+  localized: false,
+  schema: s.object({
+    title: s.string(),
+    body: md.markdown(),
+  }),
+});
+
+export default defineConfig({
+  localization: {
+    strategy: "folder",
+    locales: ["en", "fr"],
+    defaultLocale: "en",
+  },
+  processors: [markdown({ gfm: true })],
+  content: [pages, about],
+});
+```
+
+## Files
+
+```txt
+content/pages/en/pricing.md
+content/pages/fr/pricing.md
+content/about.md
+```
+
+## Usage
+
+```ts
+import { allPages, getPage, about } from "anhur/generated";
+
+const pricing = await getPage({ locale: "fr", slug: "pricing" });
+
+export function About() {
+  return (
+    <section>
+      <h1>{about.title}</h1>
+      <div dangerouslySetInnerHTML={{ __html: about.body }} />
+    </section>
+  );
+}
+```

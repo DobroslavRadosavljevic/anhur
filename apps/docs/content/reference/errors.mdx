@@ -1,0 +1,39 @@
+---
+title: Errors
+description: Common Anhur build failures and how to fix them.
+sidebar:
+  label: Errors
+  order: 6
+---
+
+Anhur fails the build when content or config is invalid. That keeps bad data out of `anhur/generated`.
+
+## Schema helper without processor
+
+**Symptom:** build error mentioning a missing processor for MDX, Markdown, or assets.
+
+**Fix:** add the matching factory to `processors` — see [Processors](/concepts/processors).
+
+## Relative body asset without assets()
+
+**Symptom:** relative `./image.png` in Markdown/MDX body fails the build.
+
+**Fix:** install `@anhur/assets` and register `assets()`, or use absolute/public URLs.
+
+## Localization misconfig
+
+**Symptom:** `defaultLocale` not in `locales`, or singleton missing `directory` / `filePath`.
+
+**Fix:** align [localization](/concepts/localization) with each source’s `localized` / `filePath` / `directory` rules.
+
+## Unique conflicts
+
+**Symptom:** duplicate `s.unique()` values in the same collection (and locale).
+
+**Fix:** rename the colliding field value, or check whether the source should be monolingual (`localized: false`).
+
+## TypeScript cannot find anhur/generated
+
+**Fix:** run a build once, include `.anhur/generated` in `tsconfig`, and set `paths` — see [Project layout](/getting-started/project-layout).
+
+Use `formatAnhurError` from `@anhur/core` when printing errors in custom tooling.

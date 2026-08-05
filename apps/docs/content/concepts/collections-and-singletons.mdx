@@ -1,0 +1,85 @@
+---
+title: Collections and singletons
+description: Many documents vs one document — how sources map to files and exports.
+sidebar:
+  label: Collections & singletons
+  order: 1
+---
+
+A **collection** is many documents under a directory. A **singleton** is one document — or one per locale when localization is on.
+
+## Collections
+
+```ts
+defineCollection({
+  name: "posts",
+  directory: "content/posts",
+  include: "**/*.{md,mdx}",
+  schema: s.object({
+    title: s.string(),
+  }),
+});
+```
+
+Typical files:
+
+```txt
+content/posts/en/hello.mdx  →  list row + getPost({ locale: "en", slug: "hello" })
+content/posts/de/hello.mdx  →  same logical post, different locale
+```
+
+Default exports for `name: "posts"` (with the default `light` split):
+
+| Export         | Meaning                            |
+| -------------- | ---------------------------------- |
+| `allPosts`     | Light index (heavy fields omitted) |
+| `getPost`      | Async full document loader         |
+| `Post`         | Full document type                 |
+| `PostListItem` | List row type                      |
+| `Posts`        | `Array<Post>` alias                |
+
+Per-document modules live under `.anhur/generated/documents/…`.
+
+## Singletons
+
+**Monolingual** — one file via `filePath`:
+
+```ts
+defineSingleton({
+  name: "about",
+  filePath: "content/about.md",
+  localized: false,
+  schema: s.object({
+    title: s.string(),
+    body: s.raw(),
+  }),
+});
+```
+
+**Localized** — one file per locale under a directory:
+
+```txt
+content/settings/en/index.md
+content/settings/de/index.md
+```
+
+```ts
+defineSingleton({
+  name: "settings",
+  directory: "content/settings",
+  schema: s.object({
+    siteTitle: s.string(),
+  }),
+});
+```
+
+Exports depend on `generate` options: a default-locale value, an all-locales array, and often a getter.
+
+## Uniqueness
+
+`s.unique()` is unique within a collection. With project localization, uniqueness is **per locale** by default.
+
+## Next
+
+- [Light lists & getters](/concepts/light-lists-and-getters)
+- [Generate options](/guides/generate-options)

@@ -1,0 +1,60 @@
+{
+  "name": "@anhur/vite",
+  "version": "0.0.1",
+  "description": "Vite plugin for @anhur/core",
+  "keywords": [
+    "anhur",
+    "content",
+    "plugin",
+    "vite"
+  ],
+  "license": "MIT",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": "./dist/index.js",
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "check-types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tests.json",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
+    "test": "vitest run --project unit --passWithNoTests",
+    "test:watch": "vitest --project unit",
+    "test:integration": "vitest run --project integration --passWithNoTests"
+  },
+  "dependencies": {
+    "@anhur/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@anhur/oxfmt": "workspace:*",
+    "@anhur/oxlint": "workspace:*",
+    "@types/node": "^22.17.0",
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
+    "tsdown": "0.22.14",
+    "typescript": "^7.0.2",
+    "vite": "^7.0.6",
+    "vitest": "^4.1.10",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  }
+}

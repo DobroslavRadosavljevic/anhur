@@ -1,0 +1,65 @@
+---
+title: Drafts and hooks
+description: Skip unpublished documents and run prepare / onSuccess / complete hooks.
+sidebar:
+  label: Drafts & hooks
+  order: 4
+---
+
+## Drafts
+
+Mark a document as draft in validated data (front matter or transform):
+
+```yaml
+---
+title: WIP
+draft: true
+---
+```
+
+Or in `transform`:
+
+```ts
+transform: (doc, ctx) => {
+  if (doc.draft) return ctx.skip("draft");
+  return doc;
+};
+```
+
+Draft / skipped documents are not written to generated output.
+
+## Lifecycle order
+
+1. Validate
+2. Resolve references
+3. **transform** (skip / draft)
+4. **prepare** (project-wide)
+5. Codegen
+6. Per-source **onSuccess**
+7. **complete** (project-wide)
+
+## prepare
+
+Runs after transforms, before codegen. Mutate `sources` if you need project-wide filtering or injection.
+
+```ts
+export default defineConfig({
+  prepare: (sources) => {
+    // adjust documents on sources before write
+  },
+  content: [/* … */],
+});
+```
+
+## onSuccess
+
+Per collection or singleton, after that source’s modules are written.
+
+## complete
+
+Runs once after all sources succeed — logging, extra file writes, CI checks.
+
+## Next
+
+- [Configuration](/guides/configuration)
+- [`defineConfig` reference](/reference/define-config)

@@ -1,0 +1,72 @@
+---
+title: Localization
+description: Folder-based locales for collections and singletons.
+sidebar:
+  label: Localization
+  order: 4
+---
+
+Anhur supports **folder locales**: the same collection under `en/`, `de/`, and so on.
+
+## Project config
+
+```ts
+export default defineConfig({
+  localization: {
+    strategy: "folder",
+    locales: ["en", "de"],
+    defaultLocale: "en",
+  },
+  content: [/* … */],
+});
+```
+
+`defaultLocale` must appear in `locales`.
+
+## Layout
+
+```txt
+content/posts/en/hello.mdx
+content/posts/de/hello.mdx
+content/settings/en/index.md
+content/settings/de/index.md
+```
+
+Sources **inherit** project localization unless they set `localized: false`.
+
+## Opt out per source
+
+Authors, products, and other monolingual data stay flat:
+
+```ts
+defineCollection({
+  name: "authors",
+  directory: "content/authors",
+  include: "**/*.{yml,yaml}",
+  localized: false,
+  schema: s.object({
+    name: s.string(),
+  }),
+});
+```
+
+```txt
+content/authors/ada.yml
+```
+
+## Uniqueness
+
+With localization on, `s.unique()` is unique **per locale** by default — the same slug can exist in `en` and `de`.
+
+## Getters
+
+Pass locale when looking up documents:
+
+```ts
+const post = await getPost({ locale: "de", slug: "hello" });
+```
+
+## Next
+
+- [Recipe: multi-locale site](/recipes/multi-locale-site)
+- [Collections & singletons](/concepts/collections-and-singletons)

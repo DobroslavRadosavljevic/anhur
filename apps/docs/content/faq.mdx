@@ -1,0 +1,36 @@
+---
+title: FAQ
+description: Short answers to common Anhur questions.
+sidebar:
+  label: FAQ
+  icon: circle-help
+  order: 7
+---
+
+## Does the CLI come with core?
+
+Yes. Installing `@anhur/core` installs the `anhur` binary.
+
+## Do I need Vite?
+
+No. Use the [CLI](/getting-started/cli) for CI or non-Vite apps. Vite is the smoothest day-to-day path for Vite projects.
+
+## Why is `body` missing on `allPosts`?
+
+Default `light` split omits `body` from the list. Use `getPost` (or change `generate`) — see [Light lists & getters](/concepts/light-lists-and-getters).
+
+## Can I use npm or pnpm?
+
+Yes. Package names are the same; examples use `bun` / `package-install` for brevity.
+
+## Is there a Next.js adapter?
+
+Not yet. Run `anhur build` in prebuild and alias `anhur/generated` yourself.
+
+## Where should docs be hosted?
+
+This site is configured for `https://anhur.dev` in Blume. Change `deployment.site` in `blume.config.ts` if that changes.
+
+## Early API warning?
+
+Yes — pin versions and expect breaking changes before 1.0.

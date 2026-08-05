@@ -1,0 +1,17 @@
+{
+  "name": "@anhur/oxfmt",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared Oxfmt config for Anhur packages and apps",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src"],
+  "peerDependencies": {
+    "oxfmt": "^0.62.0"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.62.0"
+  }
+}

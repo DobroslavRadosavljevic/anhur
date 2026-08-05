@@ -1,0 +1,60 @@
+---
+title: Generate options
+description: Control list shape, getters, naming, sorting, and lookup keys.
+sidebar:
+  label: Generate options
+  order: 2
+---
+
+Pass `generate` on a collection or singleton to control how modules are emitted.
+
+## Collection example
+
+```ts
+defineCollection({
+  name: "posts",
+  directory: "content/posts",
+  include: "**/*.{md,mdx}",
+  generate: {
+    split: "light",
+    listOmit: ["body"],
+    listName: "allPosts",
+    getterName: "getPost",
+    lookupBy: ["id", "slug"],
+    emitIds: true,
+    emitSlugs: true,
+    listSort: { by: "publishedAt", order: "desc" },
+  },
+  schema: /* … */,
+});
+```
+
+## Split modes
+
+| Mode        | Use when                                       |
+| ----------- | ---------------------------------------------- |
+| `light`     | MDX/Markdown posts — default                   |
+| `full`      | You want every field on the list and no getter |
+| `list-only` | Small catalogs (products, authors)             |
+
+See [Light lists & getters](/concepts/light-lists-and-getters).
+
+## Naming
+
+| Option       | Default idea                    |
+| ------------ | ------------------------------- |
+| `listName`   | `allPosts` from `posts`         |
+| `getterName` | `getPost`                       |
+| Type names   | `Post`, `PostListItem`, `Posts` |
+
+## Singletons
+
+| Option                                       | Notes                                                |
+| -------------------------------------------- | ---------------------------------------------------- |
+| `exportName` / `getterName` / `variantsName` | Rename exports                                       |
+| `split`                                      | `light` vs `full` / `list-only`                      |
+| `emitAll`                                    | Emit all-locales array when localized (default true) |
+
+## Reference
+
+Full option lists: [Generate options reference](/reference/generate-options).

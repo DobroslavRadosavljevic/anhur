@@ -1,0 +1,66 @@
+---
+title: Assets
+description: Copy images and files next to content with @anhur/assets.
+sidebar:
+  label: Assets
+  order: 7
+---
+
+`@anhur/assets` copies local files referenced from front matter or Markdown/MDX bodies into `.anhur/assets` and rewrites them to public URLs.
+
+Image handling uses [sharp](https://sharp.pixelplumbing.com/).
+
+## Install
+
+```package-install
+@anhur/assets
+```
+
+## Config
+
+```ts
+import { defineCollection, defineConfig, schema as s } from "@anhur/core";
+import { assets, schema as a } from "@anhur/assets";
+
+const posts = defineCollection({
+  name: "posts",
+  directory: "content/posts",
+  include: "**/*.{md,mdx}",
+  schema: s.object({
+    title: s.string(),
+    cover: a.image(),
+    brochure: a.file().optional(),
+  }),
+});
+
+export default defineConfig({
+  processors: [
+    assets({
+      dir: ".anhur/assets",
+      base: "/anhur-assets/",
+    }),
+  ],
+  content: [posts],
+});
+```
+
+Front matter:
+
+```md
+---
+title: Hello
+cover: ./cover.png
+---
+```
+
+## Body rewrite
+
+With `assets()` registered, relative URLs in MDX/Markdown bodies are copied and rewritten. Without `assets()`, those URLs fail the build.
+
+## Vite
+
+[`@anhur/vite`](/guides/vite-plugin) serves the assets directory in development and copies them for production builds as needed.
+
+## Package page
+
+[`@anhur/assets`](/packages/assets)

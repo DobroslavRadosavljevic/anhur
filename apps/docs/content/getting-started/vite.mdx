@@ -1,0 +1,129 @@
+---
+title: Vite setup
+description: Install Anhur in any Vite app and import typed content from anhur/generated.
+sidebar:
+  label: Vite
+  icon: zap
+  order: 1
+---
+
+Works with any Vite app — plain Vite, TanStack Start, Astro’s Vite layer, and similar setups. The plugin owns the `anhur/generated` alias; you do not configure that by hand in Vite.
+
+<Steps>
+  <Step title="Install">
+    Add core and the Vite plugin. Add MDX, Markdown, or assets only when your schemas need them.
+  </Step>
+  <Step title="Config">Create `anhur.config.ts` next to your Vite config.</Step>
+  <Step title="Plugin">Register `anhur()` in `vite.config.ts`.</Step>
+  <Step title="TypeScript">Point `paths` at `.anhur/generated` and include that folder.</Step>
+  <Step title="Content + import">Add files, run `vite dev`, import from `anhur/generated`.</Step>
+</Steps>
+
+## Install
+
+```package-install
+@anhur/core @anhur/vite
+```
+
+Optional processors:
+
+```package-install
+@anhur/mdx @anhur/markdown @anhur/assets
+```
+
+## Config
+
+```ts title="anhur.config.ts"
+import { defineCollection, defineConfig, schema as s } from "@anhur/core";
+import { markdown, schema as md } from "@anhur/markdown";
+
+const posts = defineCollection({
+  name: "posts",
+  directory: "content/posts",
+  include: "**/*.md",
+  schema: s.object({
+    title: s.string(),
+    slug: s.unique(),
+    body: md.markdown(),
+  }),
+});
+
+export default defineConfig({
+  processors: [markdown({ gfm: true })],
+  content: [posts],
+});
+```
+
+Paths in the config (`directory`, `outputDir`, asset dirs) are relative to the **config file’s directory**.
+
+If you use `md.markdown()`, `m.mdx()`, or `a.image()` / `a.file()`, the matching processor must be listed in `processors` or the build fails.
+
+## Vite plugin
+
+```ts title="vite.config.ts"
+import { defineConfig } from "vite";
+import anhur from "@anhur/vite";
+
+export default defineConfig({
+  plugins: [anhur()],
+});
+```
+
+Do not manually alias `anhur/generated` in Vite — the plugin owns it.
+
+## TypeScript
+
+```json title="tsconfig.json"
+{
+  "include": ["src", ".anhur/generated"],
+  "compilerOptions": {
+    "paths": {
+      "anhur/generated": ["./.anhur/generated"]
+    }
+  }
+}
+```
+
+Run `vite dev` or `vite build` once so `.anhur/generated` exists before typecheck in CI, or commit generated output if your team prefers that.
+
+## Content
+
+```txt
+content/posts/hello.md
+```
+
+```md title="content/posts/hello.md"
+---
+title: Hello
+slug: hello
+---
+
+First post body.
+```
+
+With project localization enabled, prefer locale folders:
+
+```txt
+content/posts/en/hello.md
+content/posts/de/hello.md
+```
+
+## Import
+
+```ts
+import { allPosts, getPost } from "anhur/generated";
+
+for (const post of allPosts) {
+  console.log(post.title, post.slug);
+}
+
+const post = await getPost({ slug: "hello" });
+```
+
+By default the list omits `body`. Use the getter when you need the full document.
+
+## Next
+
+- [Project layout](/getting-started/project-layout)
+- [How it works](/concepts/how-it-works)
+- [Light lists & getters](/concepts/light-lists-and-getters)

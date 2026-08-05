@@ -1,0 +1,71 @@
+---
+title: YAML / JSON catalog
+description: A monolingual product catalog with list-only generation.
+sidebar:
+  label: YAML / JSON catalog
+  order: 2
+---
+
+Small structured data — no Markdown bodies, everything on the list.
+
+## Install
+
+```package-install
+@anhur/core @anhur/vite
+```
+
+## Config
+
+```ts title="anhur.config.ts"
+import { defineCollection, defineConfig, schema as s } from "@anhur/core";
+
+const products = defineCollection({
+  name: "products",
+  directory: "content/products",
+  include: "**/*.json",
+  localized: false,
+  generate: {
+    split: "list-only",
+    listSort: { by: "name", order: "asc" },
+  },
+  schema: s.object({
+    sku: s.unique(),
+    name: s.string(),
+    price: s.number(),
+  }),
+});
+
+export default defineConfig({
+  content: [products],
+});
+```
+
+## Content
+
+```json title="content/products/widget.json"
+{
+  "sku": "W-100",
+  "name": "Widget",
+  "price": 19.99
+}
+```
+
+## Usage
+
+```ts
+import { allProducts } from "anhur/generated";
+
+export function Catalog() {
+  return (
+    <ul>
+      {allProducts.map((p) => (
+        <li key={p.sku}>
+          {p.name} — {p.price}
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+No getter is emitted in `list-only` mode — filter `allProducts` in app code if you need a single item.

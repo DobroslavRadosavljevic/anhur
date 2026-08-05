@@ -1,0 +1,164 @@
+import {
+  defineCollection,
+  defineConfig,
+  defineSingleton,
+  getDocumentMeta,
+  schema as s,
+} from "@anhur/core";
+import { assets, schema as a } from "@anhur/assets";
+import { markdown, schema as md } from "@anhur/markdown";
+import { mdx, schema as m } from "@anhur/mdx";
+
+/** Monolingual YAML authors (`localized: false`). */
+const authors = defineCollection({
+  name: "authors",
+  directory: "content/authors",
+  include: "**/*.{yml,yaml}",
+  localized: false,
+  generate: {
+    listOmit: [],
+  },
+  schema: s.object({
+    name: s.string(),
+    role: s.string(),
+    bio: s.string(),
+    avatar: a.image().optional(),
+  }),
+});
+
+/** Localized MDX posts — cover, reference→author, body rewrite, permalink. */
+const posts = defineCollection({
+  name: "posts",
+  directory: "content/posts",
+  include: "**/*.{md,mdx}",
+  generate: {
+    emitIds: true,
+    emitSlugs: true,
+  },
+  schema: s
+    .object({
+      title: s.string(),
+      slug: s.slug(),
+      summary: s.string().optional(),
+      publishedAt: s.isodate().optional(),
+      draft: s.boolean().optional(),
+      author: s.reference("authors", { embed: true }),
+      cover: a.image().optional(),
+      attachment: a.file().optional(),
+      remoteCover: a.image().optional(),
+      excerpt: s.excerpt({ length: 120 }),
+      metadata: s.metadata(),
+      toc: s.toc({ maxDepth: 3 }),
+      body: m.mdx(),
+    })
+    .transform((data) => {
+      const meta = getDocumentMeta();
+      return {
+        ...data,
+        permalink: `/posts/${meta.locale ?? "default"}/${data.slug}`,
+      };
+    }),
+  transform: (doc, ctx) => {
+    if (doc.draft === true) return ctx.skip("draft");
+    const authorCount = ctx.documents(authors).length;
+    return {
+      ...doc,
+      authorCatalogSize: authorCount,
+    };
+  },
+});
+
+/** Localized Markdown→HTML pages. */
+const pages = defineCollection({
+  name: "pages",
+  directory: "content/pages",
+  include: "**/*.md",
+  schema: s.object({
+    title: s.string(),
+    slug: s.slug(),
+    body: md.markdown(),
+  }),
+});
+
+/** Localized site settings singleton. */
+const settings = defineSingleton({
+  name: "settings",
+  directory: "content/settings",
+  include: "index.{md,mdx}",
+  generate: {
+    variantsName: "allSettings",
+  },
+  schema: s.object({
+    siteName: s.string(),
+    tagline: s.string(),
+    body: s.raw(),
+  }),
+});
+
+/** Monolingual JSON products — list-only (no lazy documents). */
+const products = defineCollection({
+  name: "products",
+  directory: "content/products",
+  include: "**/*.json",
+  localized: false,
+  generate: {
+    split: "list-only",
+    listOmit: [],
+    lookupBy: ["sku"],
+    emitIds: true,
+  },
+  schema: s.object({
+    name: s.string(),
+    sku: s.unique(),
+    price: s.string(),
+    brochure: a.file().optional(),
+  }),
+});
+
+/** Monolingual Markdown changelog. */
+const changelog = defineCollection({
+  name: "changelog",
+  directory: "content/changelog",
+  include: "**/*.md",
+  localized: false,
+  generate: {
+    listSort: { by: "date", order: "desc" },
+    emitIds: true,
+  },
+  schema: s.object({
+    title: s.string(),
+    date: s.isodate(),
+    body: md.markdown(),
+  }),
+});
+
+/** Monolingual about singleton via `filePath`. */
+const about = defineSingleton({
+  name: "about",
+  filePath: "content/about.md",
+  localized: false,
+  generate: {
+    split: "list-only",
+  },
+  schema: s.object({
+    title: s.string(),
+    body: s.raw(),
+  }),
+});
+
+export default defineConfig({
+  localization: {
+    strategy: "folder",
+    locales: ["en", "de"],
+    defaultLocale: "en",
+  },
+  processors: [
+    mdx({ gfm: true }),
+    markdown({ gfm: true }),
+    assets({
+      dir: ".anhur/assets",
+      base: "/anhur-assets/",
+    }),
+  ],
+  content: [authors, posts, pages, settings, products, changelog, about],
+});

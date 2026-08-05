@@ -1,0 +1,32 @@
+---
+title: Generate options reference
+description: Full generate knobs for collections and singletons.
+sidebar:
+  label: Generate options
+  order: 4
+---
+
+## Collection `generate`
+
+| Option                  | Default / notes                              |
+| ----------------------- | -------------------------------------------- |
+| `split`                 | `"light"` \| `"full"` \| `"list-only"`       |
+| `listOmit`              | Default `["body"]` for light lists           |
+| `listName`              | e.g. `allPosts`                              |
+| `getterName`            | e.g. `getPost`                               |
+| `lookupBy`              | Extra getter keys (slug included by default) |
+| `emitIds` / `emitSlugs` | Union type exports                           |
+| `listSort`              | `{ by, order?: "asc" \| "desc" }`            |
+| Type name overrides     | Document / list item / array aliases         |
+
+## Singleton `generate`
+
+| Option         | Notes                                 |
+| -------------- | ------------------------------------- |
+| `exportName`   | Default export name                   |
+| `getterName`   | Locale/document getter                |
+| `variantsName` | All-locales array name                |
+| `split`        | `light` vs `full` / `list-only`       |
+| `emitAll`      | Emit all-locales array (default true) |
+
+Guide: [Generate options](/guides/generate-options)

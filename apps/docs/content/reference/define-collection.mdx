@@ -1,0 +1,42 @@
+---
+title: defineCollection
+description: API for many-document content sources.
+sidebar:
+  label: defineCollection
+  order: 1
+---
+
+```ts
+import { defineCollection, schema as s } from "@anhur/core";
+
+defineCollection({
+  name: "posts",
+  typeName: "Post", // optional
+  directory: "content/posts",
+  include: "**/*.{md,mdx}",
+  localized: false, // optional; inherit project localization by default
+  optional: undefined, // collections are required sources
+  schema: s.object({ title: s.string() }),
+  transform: (doc, ctx) => doc,
+  onSuccess: (docs) => {},
+  generate: {
+    split: "light",
+  },
+  listOmit: ["body"], // prefer generate.listOmit
+});
+```
+
+| Field       | Required | Notes                                    |
+| ----------- | -------- | ---------------------------------------- |
+| `name`      | Yes      | Drives export names                      |
+| `directory` | Yes      | Content root for this source             |
+| `include`   | Yes      | Glob relative to `directory`             |
+| `schema`    | Yes      | Zod schema                               |
+| `typeName`  | No       | Document type name                       |
+| `localized` | No       | Inherit / `false`                        |
+| `transform` | No       | Per document                             |
+| `onSuccess` | No       | After this source’s codegen              |
+| `generate`  | No       | Codegen knobs                            |
+| `listOmit`  | No       | Legacy alias; prefer `generate.listOmit` |
+
+See [Collections & singletons](/concepts/collections-and-singletons).

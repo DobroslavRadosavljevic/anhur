@@ -1,0 +1,34 @@
+---
+title: "@anhur/vite"
+description: Vite plugin for Anhur.
+sidebar:
+  label: "@anhur/vite"
+  order: 2
+---
+
+Vite integration for any Vite app.
+
+## Install
+
+```package-install
+@anhur/core @anhur/vite
+```
+
+## Usage
+
+```ts
+import anhur from "@anhur/vite";
+
+export default defineConfig({
+  plugins: [anhur()],
+});
+```
+
+## What it does
+
+1. Resolves `anhur.config.ts`
+2. Aliases `anhur/generated` → `.anhur/generated`
+3. Builds on `buildStart`; watches in dev
+4. Serves asset files when `@anhur/assets` is configured
+
+Full guide: [Vite plugin](/guides/vite-plugin) · [Vite setup](/getting-started/vite)

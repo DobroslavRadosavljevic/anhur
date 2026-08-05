@@ -1,0 +1,27 @@
+---
+title: Packages
+description: Install matrix for @anhur/core, vite, mdx, markdown, and assets.
+sidebar:
+  label: Overview
+  order: 0
+---
+
+Install only what your schemas need.
+
+| Package                                 | Install when  | Provides                              |
+| --------------------------------------- | ------------- | ------------------------------------- |
+| [`@anhur/core`](/packages/core)         | Always        | Config, schemas, CLI                  |
+| [`@anhur/vite`](/packages/vite)         | Vite apps     | Plugin + `anhur/generated`            |
+| [`@anhur/mdx`](/packages/mdx)           | MDX bodies    | `mdx()` + `m.mdx()` + React           |
+| [`@anhur/markdown`](/packages/markdown) | Markdown→HTML | `markdown()` + `md.markdown()`        |
+| [`@anhur/assets`](/packages/assets)     | Images/files  | `assets()` + `a.image()` / `a.file()` |
+
+```package-install
+@anhur/core @anhur/vite
+```
+
+```package-install
+@anhur/mdx @anhur/markdown @anhur/assets
+```
+
+Rule: every schema helper from an opt-in package needs its processor in `processors`. See [Processors](/concepts/processors).
