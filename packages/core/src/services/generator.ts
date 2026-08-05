@@ -6,6 +6,7 @@ import {
   collectStringFieldValues,
   documentLookupKey,
   documentModuleBasename,
+  effectiveListOmit,
   getterQueryTypeFields,
   literalUnionType,
   omitKeysUnionType,
@@ -39,9 +40,6 @@ function collectionGetterSource(
   loaderEntries: string[],
 ): string {
   const lookupFields = lookupBy.filter((f) => f !== "id");
-  const requiredHint = ["id", ...lookupFields]
-    .map((f) => `query.${f}`)
-    .join(" or ");
 
   const fieldChecks = lookupFields
     .map(
@@ -58,19 +56,35 @@ ${loaderEntries.join("\n")}
 
 /**
  * Load one full ${sourceName} document (includes fields omitted from the list index).
- * @param {{ locale?: string, id?: string${lookupFields.map((f) => `, ${f}?: string`).join("")} }} query
+ * Accepts an id/slug string or a query object. Returns null when not found.
+ * @param {string | { locale?: string, id?: string${lookupFields.map((f) => `, ${f}?: string`).join("")} }} [idOrSlugOrQuery]
  */
-export async function ${getterName}(query = {}) {
-  const locale = query.locale ?? "default";
-  let keyPart = query.id;
+export async function ${getterName}(idOrSlugOrQuery) {
+  let locale = "default";
+  let keyPart;
+  if (typeof idOrSlugOrQuery === "string") {
+    keyPart = idOrSlugOrQuery;
+  } else {
+    const query = idOrSlugOrQuery ?? {};
+    locale = query.locale ?? "default";
+    keyPart = query.id;
 ${fieldChecks}
-  if (typeof keyPart !== "string" || keyPart.length === 0) {
-    throw new Error("${getterName} requires ${requiredHint}");
   }
-  const key = locale + ":" + keyPart;
-  const loader = loaders[key];
+  if (typeof keyPart !== "string" || keyPart.length === 0) {
+    return null;
+  }
+  let loader = loaders[locale + ":" + keyPart];
+  if (!loader && typeof idOrSlugOrQuery === "string") {
+    const suffix = ":" + keyPart;
+    for (const key of Object.keys(loaders)) {
+      if (key.endsWith(suffix)) {
+        loader = loaders[key];
+        break;
+      }
+    }
+  }
   if (!loader) {
-    throw new Error("${sourceName} document not found: " + key);
+    return null;
   }
   return (await loader()).default;
 }
@@ -87,19 +101,31 @@ ${loaderEntries.join("\n")}
 };
 
 /**
- * Load one locale variant of ${sourceName}.
- * @param {{ locale?: string }} query
+ * Load one locale variant of ${sourceName}. Returns null when not found.
+ * @param {{ locale?: string }} [query]
  */
 export async function ${getterName}(query = {}) {
   const locale = query.locale ?? "default";
   const key = locale + ":${sourceName}";
   const loader = loaders[key];
   if (!loader) {
-    throw new Error("${sourceName} document not found: " + key);
+    return null;
   }
   return (await loader()).default;
 }
 `;
+}
+
+function collectionGetterDts(
+  getterName: string,
+  documentType: string,
+  lookupBy: readonly string[],
+): string {
+  const queryFields = getterQueryTypeFields(lookupBy);
+  return [
+    `export declare function ${getterName}(idOrSlug: string): Promise<${documentType} | null>;`,
+    `export declare function ${getterName}(query?: { ${queryFields} }): Promise<${documentType} | null>;`,
+  ].join("\n");
 }
 
 /**
@@ -118,6 +144,7 @@ export class Generator extends Context.Service<
     readonly write: (options: {
       config: AnhurConfig;
       configPath: string;
+      rootDir: string;
       outputDir: string;
       built: BuiltSource[];
     }) => Effect.Effect<void, PlatformError>;
@@ -149,6 +176,7 @@ export class Generator extends Context.Service<
 
       const writeCollection = (
         outputDir: string,
+        rootDir: string,
         item: BuiltSource,
       ): Effect.Effect<void, PlatformError> =>
         Effect.gen(function* () {
@@ -156,11 +184,12 @@ export class Generator extends Context.Service<
 
           const source = item.source;
           const gen = resolveCollectionGenerate(source);
+          const listOmit = effectiveListOmit(gen.listOmit, item.documents);
           const docsDir = path.join(outputDir, "documents", source.name);
 
           const listItems = sortByListSort(
             item.documents.map((doc) =>
-              toListExport(doc.data, doc._meta, gen.listOmit),
+              toListExport(doc.data, doc._meta, listOmit, rootDir),
             ),
             gen.listSort,
           );
@@ -190,7 +219,7 @@ export class Generator extends Context.Service<
             );
             const fileName = `${basename}.js`;
             const absDocPath = path.join(docsDir, fileName);
-            const full = toDocumentExport(doc.data, doc._meta);
+            const full = toDocumentExport(doc.data, doc._meta, rootDir);
 
             yield* writeText(
               absDocPath,
@@ -231,6 +260,7 @@ export class Generator extends Context.Service<
       const writeSingleton = (
         config: AnhurConfig,
         outputDir: string,
+        rootDir: string,
         item: BuiltSource,
       ): Effect.Effect<void, PlatformError> =>
         Effect.gen(function* () {
@@ -243,7 +273,11 @@ export class Generator extends Context.Service<
           );
 
           let exportValue: unknown = item.documents[0]
-            ? toDocumentExport(item.documents[0].data, item.documents[0]._meta)
+            ? toDocumentExport(
+                item.documents[0].data,
+                item.documents[0]._meta,
+                rootDir,
+              )
             : undefined;
 
           if (localization) {
@@ -252,7 +286,7 @@ export class Generator extends Context.Service<
                 (d) => d._meta.locale === localization.defaultLocale,
               ) ?? item.documents[0];
             exportValue = preferred
-              ? toDocumentExport(preferred.data, preferred._meta)
+              ? toDocumentExport(preferred.data, preferred._meta, rootDir)
               : undefined;
           }
 
@@ -266,7 +300,9 @@ export class Generator extends Context.Service<
               path.join(outputDir, `${gen.variantsName}.js`),
               jsModule(
                 `export default ${serializeValue(
-                  item.documents.map((d) => toDocumentExport(d.data, d._meta)),
+                  item.documents.map((d) =>
+                    toDocumentExport(d.data, d._meta, rootDir),
+                  ),
                 )}`,
               ),
             );
@@ -284,7 +320,7 @@ export class Generator extends Context.Service<
             );
             const fileName = `${basename}.js`;
             const absDocPath = path.join(docsDir, fileName);
-            const full = toDocumentExport(doc.data, doc._meta);
+            const full = toDocumentExport(doc.data, doc._meta, rootDir);
 
             yield* writeText(
               absDocPath,
@@ -313,6 +349,7 @@ export class Generator extends Context.Service<
       const writeDataModules = (
         config: AnhurConfig,
         outputDir: string,
+        rootDir: string,
         built: BuiltSource[],
       ): Effect.Effect<void, PlatformError> =>
         Effect.gen(function* () {
@@ -320,9 +357,9 @@ export class Generator extends Context.Service<
 
           for (const item of built) {
             if (isCollection(item.source)) {
-              yield* writeCollection(outputDir, item);
+              yield* writeCollection(outputDir, rootDir, item);
             } else {
-              yield* writeSingleton(config, outputDir, item);
+              yield* writeSingleton(config, outputDir, rootDir, item);
             }
           }
         });
@@ -428,20 +465,21 @@ export class Generator extends Context.Service<
               }
               if (gen.emitDocuments) {
                 lines.push(
-                  `export declare function ${gen.getterName}(query?: { locale?: string }): Promise<${source.typeName}>;`,
+                  `export declare function ${gen.getterName}(query?: { locale?: string }): Promise<${source.typeName} | null>;`,
                 );
               }
             } else if (isCollection(source)) {
               const gen = resolveCollectionGenerate(source);
               const documentType = source.typeName;
+              const listOmit = effectiveListOmit(gen.listOmit, item.documents);
 
-              if (gen.listOmit.length === 0) {
+              if (listOmit.length === 0) {
                 lines.push(
                   `export type ${gen.listItemTypeName} = ${documentType};`,
                 );
               } else {
                 lines.push(
-                  `export type ${gen.listItemTypeName} = Omit<${documentType}, ${omitKeysUnionType(gen.listOmit)}>;`,
+                  `export type ${gen.listItemTypeName} = Omit<${documentType}, ${omitKeysUnionType(listOmit)}>;`,
                 );
               }
 
@@ -469,7 +507,11 @@ export class Generator extends Context.Service<
 
               if (gen.emitDocuments) {
                 lines.push(
-                  `export declare function ${gen.getterName}(query?: { ${getterQueryTypeFields(gen.lookupBy)} }): Promise<${documentType}>;`,
+                  collectionGetterDts(
+                    gen.getterName,
+                    documentType,
+                    gen.lookupBy,
+                  ),
                 );
               }
             }
@@ -488,14 +530,15 @@ export class Generator extends Context.Service<
       const write = (options: {
         config: AnhurConfig;
         configPath: string;
+        rootDir: string;
         outputDir: string;
         built: BuiltSource[];
       }): Effect.Effect<void, PlatformError> =>
         Effect.gen(function* () {
-          const { config, configPath, outputDir, built } = options;
+          const { config, configPath, rootDir, outputDir, built } = options;
           yield* fs.makeDirectory(outputDir, { recursive: true });
           yield* writeText(path.join(outputDir, ".keep"), "");
-          yield* writeDataModules(config, outputDir, built);
+          yield* writeDataModules(config, outputDir, rootDir, built);
           yield* writeIndexJs(config, outputDir, built);
           yield* writeIndexDts(config, outputDir, configPath, built);
         });

@@ -42,14 +42,79 @@ export function resolveListOmit(
   return listOmit ?? DEFAULT_LIST_OMIT;
 }
 
+/**
+ * Drop omit keys that never appear on collected documents so list item types
+ * stay `Author` instead of `Omit<Author, "body">` when there is no body.
+ */
+export function effectiveListOmit(
+  listOmit: readonly string[],
+  documents: readonly { data: Record<string, unknown> }[],
+): readonly string[] {
+  if (listOmit.length === 0 || documents.length === 0) return listOmit;
+  const present = new Set<string>();
+  for (const doc of documents) {
+    for (const key of Object.keys(doc.data)) {
+      present.add(key);
+    }
+  }
+  return listOmit.filter((key) => present.has(key));
+}
+
+/** Make `_meta.filePath` portable (project-root relative) for generated modules. */
+export function toPublicFilePath(
+  absolutePath: string,
+  rootDir: string,
+  fallbackRelativePath: string,
+): string {
+  const root = rootDir.replace(/\\/g, "/").replace(/\/+$/, "");
+  const file = absolutePath.replace(/\\/g, "/");
+  if (root.length > 0 && (file === root || file.startsWith(`${root}/`))) {
+    return file === root
+      ? fallbackRelativePath.replace(/\\/g, "/")
+      : file.slice(root.length + 1);
+  }
+  return fallbackRelativePath.replace(/\\/g, "/");
+}
+
+function rewriteMetaFilePaths(value: unknown, rootDir: string): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteMetaFilePaths(item, rootDir));
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  const obj = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(obj)) {
+    if (
+      key === "_meta" &&
+      child !== null &&
+      typeof child === "object" &&
+      !Array.isArray(child)
+    ) {
+      const meta = child as ContentMeta;
+      out[key] = {
+        ...meta,
+        filePath: toPublicFilePath(meta.filePath, rootDir, meta.relativePath),
+      };
+      continue;
+    }
+    out[key] = rewriteMetaFilePaths(child, rootDir);
+  }
+  return out;
+}
+
 export function toDocumentExport(
   data: Record<string, unknown>,
   meta: ContentMeta,
+  rootDir?: string,
 ): Record<string, unknown> {
-  return {
+  const document = {
     ...data,
     _meta: meta,
   };
+  if (rootDir === undefined) return document;
+  return rewriteMetaFilePaths(document, rootDir) as Record<string, unknown>;
 }
 
 /** List row: full document minus omitted heavy fields. */
@@ -57,8 +122,9 @@ export function toListExport(
   data: Record<string, unknown>,
   meta: ContentMeta,
   listOmit: readonly string[],
+  rootDir?: string,
 ): Record<string, unknown> {
-  const full = toDocumentExport(data, meta);
+  const full = toDocumentExport(data, meta, rootDir);
   if (listOmit.length === 0) return full;
   const light: Record<string, unknown> = { ...full };
   for (const key of listOmit) {

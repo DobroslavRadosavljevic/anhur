@@ -43,11 +43,11 @@ defineCollection({
 ## References
 
 ```ts
-author: s.reference("authors"); // stores id / key
-author: s.reference("authors", { embed: true }); // embed related doc when possible
+author: s.reference("authors"); // string id / key
+author: s.reference("authors", { embed: true }); // full author document (typed)
 ```
 
-The referenced collection must be registered in `content`.
+With `embed: true`, runtime and TypeScript both treat the field as the related document (`{ …fields, _meta }`). Without embed, it stays a string. The referenced collection must be registered in `content`.
 
 ## Prefer fields for bodies
 

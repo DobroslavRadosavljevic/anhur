@@ -63,7 +63,7 @@ import { allPosts, getPost } from "anhur/generated";
 
 - Put one collection (or singleton) per content type — posts, authors, settings, and so on
 - Use folders like `content/posts/en/` and `content/posts/de/` when you need multiple languages
-- List pages can use the light list (`allPosts`); detail pages can load one full document with `getPost(...)`
+- List pages can use the light list (`allPosts`); detail pages can load one full document with `getPost("slug")` or `getPost({ slug })` (returns `null` if missing)
 
 ## License
 

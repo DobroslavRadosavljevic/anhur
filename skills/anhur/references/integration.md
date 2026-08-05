@@ -69,9 +69,12 @@ import { allPosts, getPost } from "anhur/generated";
 
 const list = allPosts; // light items
 const full = await getPost(list[0]!._meta.id);
+if (!full) {
+  // missing id — getters return null instead of throwing
+}
 ```
 
-Singletons export a const (and optional `*All` / getter per `generate`).
+Singletons export a const (and optional `*All` / getter per `generate`). Generated `_meta.filePath` is relative to the project root (safe to commit if you choose to).
 
 ## 7. Without Vite
 

@@ -109,8 +109,42 @@ describe("codegen list/document split", () => {
       "export declare const allPosts: Array<PostListItem>;",
     );
     expect(dts).toContain(
-      "export declare function getPost(query?: { locale?: string; id?: string; slug?: string }): Promise<Post>;",
+      "export declare function getPost(idOrSlug: string): Promise<Post | null>;",
     );
+    expect(dts).toContain(
+      "export declare function getPost(query?: { locale?: string; id?: string; slug?: string }): Promise<Post | null>;",
+    );
+  });
+
+  it("accepts string id/slug and returns null when missing", async () => {
+    const result = await build({
+      rootDir: path.join(fixturesRoot, fixtureName),
+    });
+
+    const { getPost } = await import(
+      `${pathToFileURL(path.join(result.outputDir, "getPost.js")).href}?t=${Date.now()}`
+    );
+
+    const bySlug = await getPost("alpha");
+    expect(bySlug.title).toBe("Alpha");
+    expect(bySlug.body).toContain("BODY_ALPHA_UNIQUE_MARKER");
+
+    const missing = await getPost("does-not-exist");
+    expect(missing).toBeNull();
+
+    const missingQuery = await getPost({ locale: "en", slug: "nope" });
+    expect(missingQuery).toBeNull();
+  });
+
+  it("emits project-relative _meta.filePath", async () => {
+    const rootDir = path.join(fixturesRoot, fixtureName);
+    const result = await build({ rootDir });
+    const listSource = await readFile(
+      path.join(result.outputDir, "allPosts.js"),
+      "utf8",
+    );
+    expect(listSource).not.toContain(rootDir);
+    expect(listSource).toMatch(/"filePath":\s*"content\//);
   });
 
   it("types light list items without body at compile time", async () => {
@@ -138,11 +172,14 @@ describe("codegen list/document split", () => {
     const { getPost } = (await import(
       `${pathToFileURL(path.join(result.outputDir, "getPost.js")).href}?t=${Date.now()}`
     )) as {
-      getPost: (q: { locale?: string; slug?: string }) => Promise<Post>;
+      getPost: (
+        q: string | { locale?: string; slug?: string },
+      ) => Promise<Post | null>;
     };
 
     const post = await getPost({ locale: "en", slug: "beta" });
-    expectTypeOf(post).toMatchTypeOf<Post>();
-    expect(post.body).toContain("BODY_BETA_UNIQUE_MARKER");
+    expect(post).not.toBeNull();
+    expectTypeOf(post!).toMatchTypeOf<Post>();
+    expect(post!.body).toContain("BODY_BETA_UNIQUE_MARKER");
   });
 });

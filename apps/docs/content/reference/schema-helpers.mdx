@@ -8,16 +8,16 @@ sidebar:
 
 ## From `@anhur/core` (`schema as s`)
 
-| Helper                          | Output idea                 |
-| ------------------------------- | --------------------------- |
-| `s.raw()`                       | String body / blob          |
-| `s.slug()`                      | Slug string                 |
-| `s.unique()`                    | Unique value in collection  |
-| `s.reference(name, { embed? })` | Foreign key or embedded doc |
-| `s.isodate()`                   | ISO date string             |
-| `s.excerpt({ length? })`        | Excerpt                     |
-| `s.metadata()`                  | Metadata object             |
-| `s.toc({ maxDepth? })`          | TOC entries                 |
+| Helper                          | Output idea                                        |
+| ------------------------------- | -------------------------------------------------- |
+| `s.raw()`                       | String body / blob                                 |
+| `s.slug()`                      | Slug string                                        |
+| `s.unique()`                    | Unique value in collection                         |
+| `s.reference(name, { embed? })` | String id, or embedded document when `embed: true` |
+| `s.isodate()`                   | ISO date string (string or YAML `Date`)            |
+| `s.excerpt({ length? })`        | Excerpt                                            |
+| `s.metadata()`                  | Metadata object                                    |
+| `s.toc({ maxDepth? })`          | TOC entries                                        |
 
 Plus the usual Zod builders: `s.object`, `s.string`, `s.number`, `s.boolean`, `s.array`, …
 

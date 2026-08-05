@@ -37,8 +37,9 @@ import { allPosts, getPost } from "anhur/generated";
 // Light list for index pages (heavy fields like body are skipped by default)
 const posts = allPosts;
 
-// Full document when you need it
-const post = getPost({ locale: "en", slug: "hello" });
+// Full document when you need it (string id/slug or query object; null if missing)
+const post = await getPost("hello");
+// or: await getPost({ locale: "en", slug: "hello" })
 ```
 
 ## 📦 Packages

@@ -118,6 +118,9 @@ for (const post of allPosts) {
 }
 
 const post = await getPost({ slug: "hello" });
+if (!post) {
+  // missing slug — getters return null
+}
 ```
 
 By default the list omits `body`. Use the getter when you need the full document.

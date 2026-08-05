@@ -179,15 +179,20 @@ Built-in loaders: front-matter MD/MDX, YAML, JSON. Extra loaders via `loaders` (
 
 For collection `posts`:
 
-- `allPosts` — light list (default omits `body`)
-- `getPost(idOrSlug)` — full document module
+- `allPosts` — light list (default omits `body` when that field exists)
+- `getPost(idOrSlug)` or `getPost({ locale?, id?, slug? })` — full document, or `null` if missing
 - Optional: `PostId`, `PostSlug` when `generate.emitIds` / `emitSlugs`
 
 ```ts
 import { allPosts, getPost, settings } from "anhur/generated";
+
+const post = await getPost("hello");
+if (!post) throw notFound(); // or your router’s missing-page helper
 ```
 
 Import id is always `anhur/generated` (not a relative path).
+
+Monolingual collections (`localized: false`) look up under the internal locale key `default`. Pass `{ locale: "en", … }` when using folder i18n.
 
 ## CLI (no Vite)
 

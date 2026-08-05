@@ -25,7 +25,11 @@ export const schema = {
 
 export type { UniqueOptions } from "./unique";
 export type { SlugOptions } from "./slug";
-export type { ReferenceOptions } from "./reference";
+export type {
+  EmbeddedDocument,
+  ReferenceOptions,
+  ReferenceMarker,
+} from "./reference";
 export type { ExcerptOptions } from "./excerpt";
 export type { DocumentMetadata } from "./metadata";
 export type { TocEntry, TocOptions } from "./toc";

@@ -61,7 +61,10 @@ describe("codegen generate options", () => {
     expect(dts).toContain('export type PostSlug = "newer" | "older";');
     expect(dts).toContain("export declare const posts: Array<PostSummary>;");
     expect(dts).toContain(
-      "export declare function loadPost(query?: { locale?: string; id?: string; slug?: string }): Promise<Post>;",
+      "export declare function loadPost(idOrSlug: string): Promise<Post | null>;",
+    );
+    expect(dts).toContain(
+      "export declare function loadPost(query?: { locale?: string; id?: string; slug?: string }): Promise<Post | null>;",
     );
 
     const index = await readFile(
@@ -149,7 +152,10 @@ describe("codegen generate options", () => {
       "utf8",
     );
     expect(dts).toContain(
-      "export declare function getInventory(query?: { locale?: string; id?: string; sku?: string }): Promise<Inventory>;",
+      "export declare function getInventory(idOrSlug: string): Promise<Inventory | null>;",
+    );
+    expect(dts).toContain(
+      "export declare function getInventory(query?: { locale?: string; id?: string; sku?: string }): Promise<Inventory | null>;",
     );
   });
 
@@ -188,7 +194,7 @@ describe("codegen generate options", () => {
     );
     expect(dts).toContain("export declare const allSettings: Array<Settings>;");
     expect(dts).toContain(
-      "export declare function loadSettings(query?: { locale?: string }): Promise<Settings>;",
+      "export declare function loadSettings(query?: { locale?: string }): Promise<Settings | null>;",
     );
   });
 });

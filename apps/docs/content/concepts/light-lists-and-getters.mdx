@@ -18,11 +18,15 @@ import { allPosts, getPost } from "anhur/generated";
 // Index route — no body by default
 allPosts.map((p) => ({ title: p.title, slug: p.slug }));
 
-// Detail route — full document
-const post = await getPost({ locale: "en", slug: "hello" });
+// Detail route — full document (string id/slug or query object)
+const post = await getPost("hello");
+// or: await getPost({ locale: "en", slug: "hello" })
+if (!post) {
+  // missing — getters return null
+}
 ```
 
-`listOmit` defaults to `["body"]` for light lists. Override per collection with `generate.listOmit`.
+`listOmit` defaults to `["body"]` for light lists. Keys that are not on the schema/documents are skipped, so YAML authors without `body` stay typed as `Author`, not `Omit<Author, "body">`. Override with `generate.listOmit`.
 
 ## Split modes
 

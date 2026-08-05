@@ -19,6 +19,15 @@ No. Use the [CLI](/getting-started/cli) for CI or non-Vite apps. Vite is the smo
 
 Default `light` split omits `body` from the list. Use `getPost` (or change `generate`) — see [Light lists & getters](/concepts/light-lists-and-getters).
 
+## Why does `getPost` return `null`?
+
+Missing id/slug (or wrong locale) returns `null` instead of throwing. Check before rendering:
+
+```ts
+const post = await getPost({ slug });
+if (!post) throw notFound();
+```
+
 ## Can I use npm or pnpm?
 
 Yes. Package names are the same; examples use `bun` / `package-install` for brevity.

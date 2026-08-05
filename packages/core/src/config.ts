@@ -8,7 +8,11 @@ export type { DocumentTransform, TransformContext } from "./transform-types";
 export type ContentMeta = {
   /** Logical document id (path under the locale folder, without extension). */
   id: string;
-  /** Absolute file path. */
+  /**
+   * Path to the source file.
+   * During collect/build this is absolute (for errors/logs).
+   * Generated modules rewrite it to a path relative to the project root.
+   */
   filePath: string;
   /** Path relative to the content source root (collection/singleton directory). */
   relativePath: string;
@@ -471,10 +475,35 @@ export type InferSchemaData<T> =
 export type InferDocument<T> = DocumentWithMeta<InferSchemaData<T>>;
 
 /**
+ * Remap `EmbeddedDocument<"authors">` markers from `s.reference(..., { embed: true })`
+ * to the real target document type from the same config.
+ */
+export type RemapEmbeddedRefs<
+  T,
+  TContent extends readonly AnyContent[],
+> = T extends import("./schema/reference").EmbeddedDocument<infer TName>
+  ? TName extends string
+    ? RemapEmbeddedRefs<
+        DocumentWithMeta<
+          InferSchemaData<Extract<TContent[number], { name: TName }>>
+        >,
+        TContent
+      >
+    : never
+  : T extends readonly (infer TItem)[]
+    ? RemapEmbeddedRefs<TItem, TContent>[]
+    : T extends object
+      ? { [K in keyof T]: RemapEmbeddedRefs<T[K], TContent> }
+      : T;
+
+/**
  * Resolve a content source by name from a config object.
  * Used by generated `.d.ts` files.
  */
 export type GetTypeByName<
   TConfig extends AnhurConfig,
   TName extends TConfig["content"][number]["name"],
-> = InferDocument<Extract<TConfig["content"][number], { name: TName }>>;
+> = RemapEmbeddedRefs<
+  InferDocument<Extract<TConfig["content"][number], { name: TName }>>,
+  TConfig["content"]
+>;

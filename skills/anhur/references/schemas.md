@@ -4,16 +4,16 @@
 
 Re-exports Zod (`s.object`, `s.string`, `s.boolean`, …) plus:
 
-| Helper                                        | Purpose                             |
-| --------------------------------------------- | ----------------------------------- |
-| `s.raw()`                                     | Uncompiled body / string blob       |
-| `s.slug()`                                    | Slug field (lookup-friendly)        |
-| `s.unique()`                                  | Unique across collection (e.g. SKU) |
-| `s.reference("authors", { embed?: boolean })` | Cross-collection ref                |
-| `s.isodate()`                                 | ISO date string                     |
-| `s.excerpt({ length? })`                      | Excerpt from body                   |
-| `s.metadata()`                                | Document metadata object            |
-| `s.toc({ maxDepth? })`                        | Table of contents entries           |
+| Helper                                        | Purpose                                                          |
+| --------------------------------------------- | ---------------------------------------------------------------- |
+| `s.raw()`                                     | Uncompiled body / string blob                                    |
+| `s.slug()`                                    | Slug field (lookup-friendly)                                     |
+| `s.unique()`                                  | Unique across collection (e.g. SKU)                              |
+| `s.reference("authors", { embed?: boolean })` | Cross-collection ref; `embed: true` types as the target document |
+| `s.isodate()`                                 | ISO date string (accepts string or `Date` from YAML)             |
+| `s.excerpt({ length? })`                      | Excerpt from body                                                |
+| `s.metadata()`                                | Document metadata object                                         |
+| `s.toc({ maxDepth? })`                        | Table of contents entries                                        |
 
 Use Zod `.optional()`, `.transform()`, etc. on these fields.
 
@@ -21,8 +21,8 @@ Inside schema `.transform`, `getDocumentMeta()` from `@anhur/core` yields `_meta
 
 ## Opt-in schema namespaces
 
-| Import                                   | Field                   |
-| ---------------------------------------- | ----------------------- |
+| Import                                | Field                   |
+| ------------------------------------- | ----------------------- |
 | `schema as m` from `@anhur/mdx`       | `m.mdx()`               |
 | `schema as md` from `@anhur/markdown` | `md.markdown()`         |
 | `schema as a` from `@anhur/assets`    | `a.image()`, `a.file()` |
@@ -81,4 +81,4 @@ Order: validate → refs → **transform** (skip/draft) → **prepare** → code
 
 ## References
 
-`s.reference("authors", { embed: true })` embeds the related document when possible; without embed, stores the id/key. Referenced collection must be registered in `content`.
+`s.reference("authors", { embed: true })` replaces the string with the related document (`{ …fields, _meta }`) after collect. TypeScript types follow: `Post["author"]` is the author document shape, not `string`. Without `embed`, the field stays a string id/key. The referenced collection must be registered in `content`.

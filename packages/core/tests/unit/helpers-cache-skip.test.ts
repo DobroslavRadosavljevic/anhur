@@ -16,6 +16,27 @@ describe("s.isodate()", () => {
     expect(result).toBe(new Date("2026-08-05").toISOString());
   });
 
+  it("coerces Date objects from YAML/gray-matter", () => {
+    const result = s.isodate().parse(new Date("2026-08-01T00:00:00.000Z"));
+    expect(result).toBe("2026-08-01T00:00:00.000Z");
+  });
+
+  it("accepts unquoted YAML dates from gray-matter", async () => {
+    const { matterLoader } = await import("../../src/loaders/matter");
+    const loaded = await matterLoader().load({
+      path: "post.md",
+      raw: `---
+publishedAt: 2026-08-01
+---
+
+Body
+`,
+    });
+    expect(loaded.data.publishedAt).toBeInstanceOf(Date);
+    const iso = s.isodate().parse(loaded.data.publishedAt);
+    expect(iso).toBe(new Date("2026-08-01").toISOString());
+  });
+
   it("rejects invalid dates", () => {
     expect(() => s.isodate().parse("not-a-date")).toThrow();
   });

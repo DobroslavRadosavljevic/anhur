@@ -4,6 +4,7 @@ import {
   collectionGetterName,
   documentLookupKey,
   documentModuleBasename,
+  effectiveListOmit,
   getterQueryTypeFields,
   literalUnionType,
   omitKeysUnionType,
@@ -56,6 +57,34 @@ describe("codegen helpers", () => {
     expect(light).toMatchObject({ title: "T", slug: "t" });
     expect(light).not.toHaveProperty("body");
     expect(light._meta).toMatchObject({ id: "t", locale: "en" });
+  });
+
+  it("rewrites absolute _meta.filePath when rootDir is provided", () => {
+    const exported = toListExport(
+      { title: "T" },
+      {
+        id: "t",
+        filePath: "/Users/me/project/content/posts/t.md",
+        relativePath: "t.md",
+        extension: ".md",
+      },
+      [],
+      "/Users/me/project",
+    );
+    expect(exported._meta).toMatchObject({
+      id: "t",
+      filePath: "content/posts/t.md",
+      relativePath: "t.md",
+    });
+  });
+
+  it("filters listOmit to keys present on documents", () => {
+    expect(effectiveListOmit(["body"], [{ data: { name: "Ada" } }])).toEqual(
+      [],
+    );
+    expect(
+      effectiveListOmit(["body"], [{ data: { title: "T", body: "x" } }]),
+    ).toEqual(["body"]);
   });
 
   it("formats omit union for d.ts", () => {

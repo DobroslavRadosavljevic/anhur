@@ -24,16 +24,16 @@ s.object({
 });
 ```
 
-| Helper                            | Purpose                                              |
-| --------------------------------- | ---------------------------------------------------- |
-| `s.raw()`                         | Uncompiled body / string blob                        |
-| `s.slug()`                        | Slug-shaped string                                   |
-| `s.unique()`                      | Unique in the collection (per locale when localized) |
-| `s.reference("name", { embed? })` | Cross-collection reference                           |
-| `s.isodate()`                     | ISO date string                                      |
-| `s.excerpt({ length? })`          | Excerpt from body                                    |
-| `s.metadata()`                    | Document metadata object                             |
-| `s.toc({ maxDepth? })`            | Table of contents                                    |
+| Helper                            | Purpose                                                 |
+| --------------------------------- | ------------------------------------------------------- |
+| `s.raw()`                         | Uncompiled body / string blob                           |
+| `s.slug()`                        | Slug-shaped string                                      |
+| `s.unique()`                      | Unique in the collection (per locale when localized)    |
+| `s.reference("name", { embed? })` | String id, or embedded document type when `embed: true` |
+| `s.isodate()`                     | ISO date string (accepts string or YAML `Date`)         |
+| `s.excerpt({ length? })`          | Excerpt from body                                       |
+| `s.metadata()`                    | Document metadata object                                |
+| `s.toc({ maxDepth? })`            | Table of contents                                       |
 
 Normal Zod APIs work: `.optional()`, `.transform()`, unions, and so on.
 

@@ -185,4 +185,37 @@ describe("defineCollection / defineSingleton / defineConfig", () => {
       _meta: { id: string };
     }>();
   });
+
+  it("remaps embed:true references to the target document type", () => {
+    const authors = defineCollection({
+      name: "authors",
+      directory: "content/authors",
+      include: "**/*.yml",
+      localized: false,
+      schema: s.object({
+        name: s.string(),
+        role: s.string(),
+      }),
+    });
+    const posts = defineCollection({
+      name: "posts",
+      directory: "content/posts",
+      include: "**/*.md",
+      localized: false,
+      schema: s.object({
+        title: s.string(),
+        author: s.reference("authors", { embed: true }),
+        authorId: s.reference("authors"),
+      }),
+    });
+    const config = defineConfig({ content: [authors, posts] });
+
+    type Post = GetTypeByName<typeof config, "posts">;
+    expectTypeOf<Post["authorId"]>().toEqualTypeOf<string>();
+    expectTypeOf<Post["author"]>().toMatchTypeOf<{
+      name: string;
+      role: string;
+      _meta: { id: string };
+    }>();
+  });
 });

@@ -158,7 +158,13 @@ export class Builder extends Context.Service<
             }
           }
 
-          yield* generator.write({ config, configPath, outputDir, built });
+          yield* generator.write({
+            config,
+            configPath,
+            rootDir,
+            outputDir,
+            built,
+          });
 
           const snapshots = toBuiltSnapshots(built);
           for (const item of built) {
