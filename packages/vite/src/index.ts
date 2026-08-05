@@ -177,9 +177,7 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
             server.ws.send({ type: "full-reload" });
           },
           onError: (error) => {
-            server.config.logger.error(
-              `[anhur] ${formatAnhurError(error)}`,
-            );
+            server.config.logger.error(`[anhur] ${formatAnhurError(error)}`);
           },
         },
       );

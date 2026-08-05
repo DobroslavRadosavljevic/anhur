@@ -229,10 +229,7 @@ export function isCollection(source: AnyContent): source is AnyCollection {
 }
 
 /** Whether this source uses project localization (inherits unless opted out). */
-export function isLocalized(
-  config: AnhurConfig,
-  source: AnyContent,
-): boolean {
+export function isLocalized(config: AnhurConfig, source: AnyContent): boolean {
   if (!config.localization) return false;
   return source.localized !== false;
 }

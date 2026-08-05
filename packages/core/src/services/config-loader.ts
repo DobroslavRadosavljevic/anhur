@@ -68,10 +68,8 @@ export class ConfigLoader extends Context.Service<
         ],
       });
 
-      const resolvePath = (
-        rootDir: string,
-        configPath = "anhur.config.ts",
-      ) => Effect.succeed(resolveConfigPath(rootDir, configPath, path));
+      const resolvePath = (rootDir: string, configPath = "anhur.config.ts") =>
+        Effect.succeed(resolveConfigPath(rootDir, configPath, path));
 
       const load = (
         rootDir: string,

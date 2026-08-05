@@ -3,8 +3,8 @@
   "version": "0.0.1",
   "description": "Opt-in MDX compile helpers for @anhur/core documents",
   "keywords": [
-    "content",
     "anhur",
+    "content",
     "mdx",
     "zod"
   ],

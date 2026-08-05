@@ -74,9 +74,7 @@ describe("schema.mdx body assets", () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.body).toMatch(
-        /\/anhur-assets\/inline-[a-f0-9]+\.png/,
-      );
+      expect(result.data.body).toMatch(/\/anhur-assets\/inline-[a-f0-9]+\.png/);
     }
   });
 

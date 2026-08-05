@@ -24,11 +24,11 @@ describe("hooks + drafts", () => {
     expect(doc.data.slug).toBe("published");
     expect(doc.data.tagged).toBe(true);
     expect(doc.data.prepared).toBe(true);
-    expect(
-      (globalThis as { __anhurOnSuccess?: number }).__anhurOnSuccess,
-    ).toBe(1);
-    expect(
-      (globalThis as { __anhurComplete?: number }).__anhurComplete,
-    ).toBe(1);
+    expect((globalThis as { __anhurOnSuccess?: number }).__anhurOnSuccess).toBe(
+      1,
+    );
+    expect((globalThis as { __anhurComplete?: number }).__anhurComplete).toBe(
+      1,
+    );
   });
 });

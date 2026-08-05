@@ -49,9 +49,7 @@ describe("remarkCopyLinkedFiles", () => {
     await writeFile(docPath, "---\ntitle: T\n---\n");
 
     const config = defineConfig({
-      processors: [
-        assets({ dir: ".anhur/assets", base: "/anhur-assets/" }),
-      ],
+      processors: [assets({ dir: ".anhur/assets", base: "/anhur-assets/" })],
       content: [
         {
           type: "collection",
@@ -274,9 +272,7 @@ describe("schema.image still works alongside body rewrite", () => {
       cover: a.image(),
     });
     const config = defineConfig({
-      processors: [
-        assets({ dir: ".anhur/assets", base: "/anhur-assets/" }),
-      ],
+      processors: [assets({ dir: ".anhur/assets", base: "/anhur-assets/" })],
       content: [
         {
           type: "collection",

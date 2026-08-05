@@ -3,8 +3,8 @@
   "version": "0.0.1",
   "description": "Opt-in Markdown→HTML helpers for @anhur/core documents",
   "keywords": [
-    "content",
     "anhur",
+    "content",
     "markdown",
     "zod"
   ],
