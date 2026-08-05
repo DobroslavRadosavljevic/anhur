@@ -15,6 +15,7 @@ import {
   type GetTypeByName,
 } from "../../src/config";
 import { schema as s } from "../../src/schema";
+import type { TocEntry } from "../../src/schema/toc";
 
 describe("config helpers", () => {
   it("generateTypeName pascal-cases names", () => {
@@ -217,5 +218,70 @@ describe("defineCollection / defineSingleton / defineConfig", () => {
       role: string;
       _meta: { id: string };
     }>();
+  });
+
+  it("keeps TocEntry named through GetTypeByName (no anonymous items: …[])", () => {
+    const posts = defineCollection({
+      name: "posts",
+      directory: "content/posts",
+      include: "**/*.md",
+      schema: s.object({
+        title: s.string(),
+        toc: s.toc(),
+      }),
+    });
+    const config = defineConfig({ content: [posts] });
+    type Post = GetTypeByName<typeof config, "posts">;
+
+    expectTypeOf<Post["toc"]>().toEqualTypeOf<TocEntry[]>();
+    expectTypeOf<Post["toc"][number]["items"]>().toEqualTypeOf<TocEntry[]>();
+  });
+
+  it("keeps TocEntry named even when another field embeds a reference", () => {
+    const authors = defineCollection({
+      name: "authors",
+      directory: "content/authors",
+      include: "**/*.yml",
+      localized: false,
+      schema: s.object({ name: s.string() }),
+    });
+    const posts = defineCollection({
+      name: "posts",
+      directory: "content/posts",
+      include: "**/*.md",
+      localized: false,
+      schema: s.object({
+        title: s.string(),
+        toc: s.toc(),
+        author: s.reference("authors", { embed: true }),
+      }),
+    });
+    const config = defineConfig({ content: [authors, posts] });
+    type Post = GetTypeByName<typeof config, "posts">;
+
+    expectTypeOf<Post["toc"]>().toEqualTypeOf<TocEntry[]>();
+    expectTypeOf<Post["author"]>().toMatchTypeOf<{
+      name: string;
+      _meta: { id: string };
+    }>();
+  });
+
+  it("includes collection transform fields in GetTypeByName", () => {
+    const posts = defineCollection({
+      name: "posts",
+      directory: "content/posts",
+      include: "**/*.md",
+      schema: s.object({
+        title: s.string(),
+      }),
+      transform: (doc) => ({
+        ...doc,
+        relatedCount: 2,
+      }),
+    });
+    const config = defineConfig({ content: [posts] });
+    type Post = GetTypeByName<typeof config, "posts">;
+    expectTypeOf<Post["relatedCount"]>().toEqualTypeOf<number>();
+    expectTypeOf<Post["title"]>().toEqualTypeOf<string>();
   });
 });

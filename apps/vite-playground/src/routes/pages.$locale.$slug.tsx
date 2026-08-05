@@ -8,15 +8,12 @@ import { cn } from "~/lib/utils";
 
 export const Route = createFileRoute("/pages/$locale/$slug")({
   loader: async ({ params }) => {
-    try {
-      const page = await getPage({
-        locale: params.locale,
-        slug: params.slug,
-      });
-      return { page };
-    } catch {
-      throw notFound();
-    }
+    const page = await getPage({
+      locale: params.locale,
+      slug: params.slug,
+    });
+    if (!page) throw notFound();
+    return { page };
   },
   component: PageDetail,
 });

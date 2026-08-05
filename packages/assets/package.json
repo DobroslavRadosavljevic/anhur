@@ -1,6 +1,6 @@
 {
   "name": "@anhur/assets",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Opt-in image/file asset helpers for @anhur/core documents",
   "keywords": [
     "anhur",

@@ -57,7 +57,7 @@ function parseList(tree?: List): TocEntry[] {
 /**
  * Table of contents from Markdown/MDX body (`meta.content` or field value).
  */
-export function toc(options: TocOptions = {}) {
+export function toc(options: TocOptions = {}): z.ZodType<TocEntry[]> {
   return z
     .string()
     .optional()
@@ -86,5 +86,5 @@ export function toc(options: TocOptions = {}) {
         });
         return z.NEVER;
       }
-    });
+    }) as unknown as z.ZodType<TocEntry[]>;
 }

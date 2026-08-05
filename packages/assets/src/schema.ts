@@ -66,7 +66,7 @@ async function readImageMeta(absolutePath: string): Promise<{
   };
 }
 
-function imageField() {
+function imageField(): z.ZodType<AnhurImage> {
   return z.string().transform(async (value): Promise<AnhurImage> => {
     const meta = getDocumentMeta();
     requireAssetsProcessor(meta.path);
@@ -89,16 +89,16 @@ function imageField() {
       src,
       ...imageMeta,
     };
-  });
+  }) as unknown as z.ZodType<AnhurImage>;
 }
 
-function fileField() {
+function fileField(): z.ZodType<AnhurFile> {
   return z.string().transform(async (value): Promise<AnhurFile> => {
     const meta = getDocumentMeta();
     requireAssetsProcessor(meta.path);
     const src = await resolveAndEmit(value, meta.path);
     return { src };
-  });
+  }) as unknown as z.ZodType<AnhurFile>;
 }
 
 /**

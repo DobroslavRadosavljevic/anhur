@@ -12,9 +12,11 @@ import {
 
 export const Route = createFileRoute("/changelog/")({
   loader: async () => {
-    const entries = await Promise.all(
-      allChangelogs.map((entry) => getChangelog({ id: entry._meta.id })),
-    );
+    const entries = (
+      await Promise.all(
+        allChangelogs.map((entry) => getChangelog({ id: entry._meta.id })),
+      )
+    ).filter((entry) => entry != null);
     return { entries };
   },
   component: ChangelogPage,

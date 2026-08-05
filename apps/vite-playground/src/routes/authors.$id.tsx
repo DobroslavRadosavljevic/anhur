@@ -6,12 +6,9 @@ import { cn } from "~/lib/utils";
 
 export const Route = createFileRoute("/authors/$id")({
   loader: async ({ params }) => {
-    try {
-      const author = await getAuthor({ id: params.id });
-      return { author };
-    } catch {
-      throw notFound();
-    }
+    const author = await getAuthor({ id: params.id });
+    if (!author) throw notFound();
+    return { author };
   },
   component: AuthorDetail,
 });

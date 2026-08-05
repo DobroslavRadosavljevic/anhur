@@ -9,15 +9,12 @@ import { cn } from "~/lib/utils";
 
 export const Route = createFileRoute("/posts/$locale/$slug")({
   loader: async ({ params }) => {
-    try {
-      const post = await getPost({
-        locale: params.locale,
-        slug: params.slug,
-      });
-      return { post };
-    } catch {
-      throw notFound();
-    }
+    const post = await getPost({
+      locale: params.locale,
+      slug: params.slug,
+    });
+    if (!post) throw notFound();
+    return { post };
   },
   component: PostDetailPage,
 });
@@ -55,22 +52,7 @@ function PostDetailPage() {
           {post.publishedAt ? (
             <Badge variant="outline">{post.publishedAt.slice(0, 10)}</Badge>
           ) : null}
-          {(() => {
-            const author = post.author as unknown;
-            if (
-              author &&
-              typeof author === "object" &&
-              "name" in author &&
-              typeof (author as { name: unknown }).name === "string"
-            ) {
-              return (
-                <Badge variant="secondary">
-                  {(author as { name: string }).name}
-                </Badge>
-              );
-            }
-            return null;
-          })()}
+          <Badge variant="secondary">{post.author.name}</Badge>
         </div>
         <FeatureBadges
           items={[
@@ -86,7 +68,7 @@ function PostDetailPage() {
         />
       </div>
 
-      {Array.isArray(post.toc) && post.toc.length > 0 ? (
+      {post.toc.length > 0 ? (
         <nav className="rounded-xl border p-4 text-sm">
           <p className="mb-2 font-medium">On this page</p>
           <ul className="space-y-1">

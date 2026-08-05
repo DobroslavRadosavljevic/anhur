@@ -1,7 +1,8 @@
 import type { z } from "zod";
 import type { ProcessorPlugin } from "./processors";
 import type { Loader } from "./loaders/types";
-import type { DocumentTransform } from "./transform-types";
+import type { DocumentTransform, TransformContext } from "./transform-types";
+import type { SkippedSignal } from "./skip";
 
 export type { DocumentTransform, TransformContext } from "./transform-types";
 
@@ -104,6 +105,7 @@ export type SingletonGenerateOptions = {
 export type CollectionDefinition<
   TName extends string = string,
   TSchema extends ContentSchema = ContentSchema,
+  TData = SchemaOutput<TSchema>,
 > = {
   type: "collection";
   name: TName;
@@ -122,6 +124,7 @@ export type CollectionDefinition<
    * Prefer `m.mdx()` / `s.raw()` for body compilation.
    * Second argument is a {@link TransformContext} with `documents()` / `skip()`.
    * Return `ctx.skip()` (or set `draft: true`) to omit a document from output.
+   * Extra fields on the return value are included in generated document types.
    */
   transform?: DocumentTransform;
   /**
@@ -135,11 +138,14 @@ export type CollectionDefinition<
   listOmit?: readonly string[];
   /** Codegen / export tweaks for this collection. */
   generate?: CollectionGenerateOptions;
+  /** Phantom: document data after schema (+ optional transform). */
+  readonly _data?: TData;
 };
 
 export type SingletonDefinition<
   TName extends string = string,
   TSchema extends ContentSchema = ContentSchema,
+  TData = SchemaOutput<TSchema>,
 > = {
   type: "singleton";
   name: TName;
@@ -169,6 +175,7 @@ export type SingletonDefinition<
   /**
    * Optional post-validate map (joins, denormalize).
    * Return `ctx.skip()` (or set `draft: true`) to omit from output.
+   * Extra fields on the return value are included in generated document types.
    */
   transform?: DocumentTransform;
   /**
@@ -177,10 +184,12 @@ export type SingletonDefinition<
   onSuccess?: import("./transform-types").SingletonOnSuccess;
   /** Codegen / export tweaks for this singleton. */
   generate?: SingletonGenerateOptions;
+  /** Phantom: document data after schema (+ optional transform). */
+  readonly _data?: TData;
 };
 
-export type AnyCollection = CollectionDefinition<string, ContentSchema>;
-export type AnySingleton = SingletonDefinition<string, ContentSchema>;
+export type AnyCollection = CollectionDefinition<string, ContentSchema, any>;
+export type AnySingleton = SingletonDefinition<string, ContentSchema, any>;
 export type AnyContent = AnyCollection | AnySingleton;
 
 /** Document shape passed to optional `transform` hooks after validation. */
@@ -320,6 +329,7 @@ function isZodSchema(schema: unknown): schema is ContentSchema {
 export type DefineCollectionInput<
   TName extends string,
   TSchema extends ContentSchema,
+  TOut = DocumentWithMeta<SchemaOutput<TSchema>>,
 > = {
   name: TName;
   typeName?: string;
@@ -328,7 +338,10 @@ export type DefineCollectionInput<
   exclude?: string | string[];
   schema: TSchema;
   localized?: boolean;
-  transform?: DocumentTransform;
+  transform?: (
+    document: DocumentWithMeta<SchemaOutput<TSchema>>,
+    context: TransformContext,
+  ) => TOut | SkippedSignal | Promise<TOut | SkippedSignal>;
   onSuccess?: import("./transform-types").CollectionOnSuccess;
   /**
    * Keys omitted from the light collection index. Default `["body"]`.
@@ -339,12 +352,20 @@ export type DefineCollectionInput<
   generate?: CollectionGenerateOptions;
 };
 
+type DataFromTransformOut<TOut> =
+  Exclude<Awaited<TOut>, SkippedSignal> extends infer R
+    ? R extends { _meta: ContentMeta }
+      ? Omit<R, "_meta">
+      : never
+    : never;
+
 export function defineCollection<
   TName extends string,
   TSchema extends ContentSchema,
+  TOut = DocumentWithMeta<SchemaOutput<TSchema>>,
 >(
-  input: DefineCollectionInput<TName, TSchema>,
-): CollectionDefinition<TName, TSchema> {
+  input: DefineCollectionInput<TName, TSchema, TOut>,
+): CollectionDefinition<TName, TSchema, DataFromTransformOut<TOut>> {
   if (!isZodSchema(input.schema)) {
     throw new Error(
       `Collection "${input.name}" schema must be a Zod schema (use \`schema as s\` from @anhur/core).`,
@@ -360,7 +381,7 @@ export function defineCollection<
     exclude: input.exclude,
     schema: input.schema,
     localized: input.localized,
-    transform: input.transform,
+    transform: input.transform as DocumentTransform | undefined,
     onSuccess: input.onSuccess,
     listOmit: input.listOmit,
     generate: input.generate,
@@ -370,6 +391,7 @@ export function defineCollection<
 export type DefineSingletonInput<
   TName extends string,
   TSchema extends ContentSchema,
+  TOut = DocumentWithMeta<SchemaOutput<TSchema>>,
 > = {
   name: TName;
   typeName?: string;
@@ -379,7 +401,10 @@ export type DefineSingletonInput<
   directory?: string;
   include?: string | string[];
   optional?: boolean;
-  transform?: DocumentTransform;
+  transform?: (
+    document: DocumentWithMeta<SchemaOutput<TSchema>>,
+    context: TransformContext,
+  ) => TOut | SkippedSignal | Promise<TOut | SkippedSignal>;
   onSuccess?: import("./transform-types").SingletonOnSuccess;
   generate?: SingletonGenerateOptions;
 };
@@ -387,9 +412,10 @@ export type DefineSingletonInput<
 export function defineSingleton<
   TName extends string,
   TSchema extends ContentSchema,
+  TOut = DocumentWithMeta<SchemaOutput<TSchema>>,
 >(
-  input: DefineSingletonInput<TName, TSchema>,
-): SingletonDefinition<TName, TSchema> {
+  input: DefineSingletonInput<TName, TSchema, TOut>,
+): SingletonDefinition<TName, TSchema, DataFromTransformOut<TOut>> {
   if (!isZodSchema(input.schema)) {
     throw new Error(
       `Singleton "${input.name}" schema must be a Zod schema (use \`schema as s\` from @anhur/core).`,
@@ -406,7 +432,7 @@ export function defineSingleton<
     directory: input.directory,
     include: input.include,
     optional: input.optional,
-    transform: input.transform,
+    transform: input.transform as DocumentTransform | undefined,
     onSuccess: input.onSuccess,
     generate: input.generate,
   };
@@ -466,17 +492,44 @@ export function defineConfig<const TConfig extends AnhurConfig>(
 
 /** Infer document data type (without `_meta`) from a content definition. */
 export type InferSchemaData<T> =
-  T extends CollectionDefinition<string, infer S>
-    ? SchemaOutput<S>
-    : T extends SingletonDefinition<string, infer S>
-      ? SchemaOutput<S>
+  T extends CollectionDefinition<string, ContentSchema, infer TData>
+    ? TData
+    : T extends SingletonDefinition<string, ContentSchema, infer TData>
+      ? TData
       : never;
 
 export type InferDocument<T> = DocumentWithMeta<InferSchemaData<T>>;
 
+type EmbeddedDocumentMarker =
+  import("./schema/reference").EmbeddedDocument<string>;
+
+/**
+ * True when `T` contains an `EmbeddedDocument<…>` somewhere.
+ * Depth-capped so recursive shapes like `TocEntry` do not loop forever.
+ */
+type ContainsEmbeddedRef<
+  T,
+  TDepth extends readonly unknown[] = [],
+> = TDepth["length"] extends 8
+  ? false
+  : T extends EmbeddedDocumentMarker
+    ? true
+    : T extends readonly (infer TItem)[]
+      ? ContainsEmbeddedRef<TItem, [...TDepth, unknown]>
+      : T extends object
+        ? true extends {
+            [K in keyof T]: ContainsEmbeddedRef<T[K], [...TDepth, unknown]>;
+          }[keyof T]
+          ? true
+          : false
+        : false;
+
 /**
  * Remap `EmbeddedDocument<"authors">` markers from `s.reference(..., { embed: true })`
  * to the real target document type from the same config.
+ *
+ * Types with no embedded refs (e.g. `TocEntry[]`) are left unchanged so named
+ * aliases survive `GetTypeByName` instead of becoming anonymous `items: …[]`.
  */
 export type RemapEmbeddedRefs<
   T,
@@ -490,11 +543,13 @@ export type RemapEmbeddedRefs<
         TContent
       >
     : never
-  : T extends readonly (infer TItem)[]
-    ? RemapEmbeddedRefs<TItem, TContent>[]
-    : T extends object
-      ? { [K in keyof T]: RemapEmbeddedRefs<T[K], TContent> }
-      : T;
+  : ContainsEmbeddedRef<T> extends true
+    ? T extends readonly (infer TItem)[]
+      ? RemapEmbeddedRefs<TItem, TContent>[]
+      : T extends object
+        ? { [K in keyof T]: RemapEmbeddedRefs<T[K], TContent> }
+        : T
+    : T;
 
 /**
  * Resolve a content source by name from a config object.
