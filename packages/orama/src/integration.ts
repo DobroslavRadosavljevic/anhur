@@ -1,0 +1,46 @@
+import { createIntegrationConfigEntry, registerIntegration } from "@anhur/core";
+import { buildOramaIndex } from "./build";
+import type { AnyContent, IntegrationConfigEntry } from "@anhur/core";
+import type { OramaIntegrationOptions } from "./types";
+
+const ORAMA_INTEGRATION_ID = "orama" as const;
+
+/** Ensure the Orama runner is registered (safe to call more than once). */
+export function ensureOramaRegistered(): void {
+  registerIntegration({
+    id: ORAMA_INTEGRATION_ID,
+    run: async (options, context) => {
+      await buildOramaIndex(
+        options as unknown as OramaIntegrationOptions,
+        context,
+      );
+    },
+  });
+}
+
+ensureOramaRegistered();
+
+/**
+ * Add an Orama index to a typed `defineConfig` integrations array.
+ * `defineConfig` supplies the content tuple as contextual type information.
+ */
+export function orama<TContent extends readonly AnyContent[]>(
+  options: NoInfer<OramaIntegrationOptions<TContent>>,
+): IntegrationConfigEntry<TContent, "orama"> {
+  ensureOramaRegistered();
+  return createIntegrationConfigEntry<TContent, "orama">(
+    ORAMA_INTEGRATION_ID,
+    options,
+  );
+}
+
+/**
+ * Create a runnable entry for scripts and lower-level APIs.
+ * In `defineConfig`, prefer the typed {@link orama} factory.
+ */
+export function createOramaIntegration(
+  options: OramaIntegrationOptions,
+): { id: "orama" } & OramaIntegrationOptions {
+  ensureOramaRegistered();
+  return { id: ORAMA_INTEGRATION_ID, ...options };
+}

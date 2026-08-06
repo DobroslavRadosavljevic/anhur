@@ -1,6 +1,6 @@
 {
   "name": "@anhur/core",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Typed content SDK — Effect services + Node FileSystem/Path for validated content data",
   "keywords": [
     "content",

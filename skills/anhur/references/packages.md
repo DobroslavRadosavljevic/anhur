@@ -11,6 +11,7 @@ Exports (typical):
 - `getDocumentMeta()` — ALS meta inside schema `.transform` / field resolvers
 - `build` / `watch` (programmatic) and CLI bin `anhur`
 - `formatAnhurError`
+- Integrations: `defineIntegration`, `registerIntegration`, `createIntegrationConfigEntry`, `IntegrationConfigEntry`, …
 
 Config highlights:
 
@@ -22,8 +23,9 @@ Config highlights:
 | `cacheDir`     | Default `.anhur/cache`; `false` disables. Skipped when `assets()` rewrites bodies |
 | `loaders`      | Extra loaders before matter/yaml/json                                             |
 | `processors`   | `mdx()`, `markdown()`, `assets()`, …                                              |
+| `integrations` | `orama({…})`, `defineIntegration({…})`, … — after codegen, before `complete`      |
 | `prepare`      | After transforms/filters, before codegen                                          |
-| `complete`     | After codegen + per-source `onSuccess`                                            |
+| `complete`     | After codegen + per-source `onSuccess` + integrations                             |
 
 Engines: Node `^22.18.0` or `>=24.11.0`.
 
@@ -75,6 +77,20 @@ import { assets, schema as a } from "@anhur/assets";
 - Rewrites relative URLs in MDX/Markdown **bodies** when those processors run
 - Peer/native: `sharp` — trust lifecycle scripts under Bun if install blocks them (`bun pm untrusted`)
 
+## `@anhur/orama`
+
+```ts
+import { orama } from "@anhur/orama";
+import { createSearcher } from "@anhur/orama/client";
+```
+
+- `integrations: [orama({ collections: { … } })]` — not a processor
+- Types `index` / `store` from the inline `defineConfig({ content })` array
+- Writes `{outputDir}/search/orama.json` by default
+- Query with `createSearcher(snapshot)` in browser or Node
+
+Full guide: [search.md](search.md)
+
 ## Dependency order (mental model)
 
 ```
@@ -82,7 +98,8 @@ core
  ├─ assets
  ├─ markdown
  ├─ mdx (often with assets for body images)
+ ├─ orama (integrations; build-time index + client)
  └─ vite (depends on core; drives build in Vite apps)
 ```
 
-Install only what the config uses. Empty `processors` is fine for YAML/JSON-only schemas using core `s.*` fields.
+Install only what the config uses. Empty `processors` / `integrations` is fine for YAML/JSON-only schemas using core `s.*` fields.

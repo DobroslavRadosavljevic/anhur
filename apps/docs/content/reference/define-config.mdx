@@ -12,6 +12,7 @@ import { defineConfig } from "@anhur/core";
 export default defineConfig({
   content: [/* collections & singletons */],
   processors: [/* optional */],
+  integrations: [/* orama({…}), defineIntegration({…}) */],
   localization: {
     strategy: "folder",
     locales: ["en", "de"],
@@ -25,15 +26,18 @@ export default defineConfig({
 });
 ```
 
-| Field          | Required | Notes                                    |
-| -------------- | -------- | ---------------------------------------- |
-| `content`      | Yes      | Non-empty array of sources               |
-| `processors`   | No       | Opt-in MDX / Markdown / assets           |
-| `localization` | No       | Folder locales catalog                   |
-| `outputDir`    | No       | Default `.anhur/generated`               |
-| `cacheDir`     | No       | Default `.anhur/cache`; `false` disables |
-| `loaders`      | No       | Extra loaders before built-ins           |
-| `prepare`      | No       | After transforms, before codegen         |
-| `complete`     | No       | After all codegen                        |
+Integration factories such as `orama()` get their document types from the inline `content` array — no `defineConfig<typeof content>` required.
+
+| Field          | Required | Notes                                     |
+| -------------- | -------- | ----------------------------------------- |
+| `content`      | Yes      | Non-empty array of sources                |
+| `processors`   | No       | Opt-in MDX / Markdown / assets            |
+| `integrations` | No       | `orama({…})`, `defineIntegration({…})`, … |
+| `localization` | No       | Folder locales catalog                    |
+| `outputDir`    | No       | Default `.anhur/generated`                |
+| `cacheDir`     | No       | Default `.anhur/cache`; `false` disables  |
+| `loaders`      | No       | Extra loaders before built-ins            |
+| `prepare`      | No       | After transforms, before codegen          |
+| `complete`     | No       | After codegen + integrations              |
 
 See [Configuration](/guides/configuration).

@@ -69,6 +69,20 @@ export {
 } from "./processors";
 
 export {
+  clearIntegrationHandlers,
+  createIntegrationConfigEntry,
+  defineIntegration,
+  getIntegrationHandler,
+  registerIntegration,
+  runIntegrations,
+  type IntegrationConfigEntry,
+  type IntegrationDefinition,
+  type IntegrationHandler,
+  type IntegrationInput,
+  type IntegrationRuntimeContext,
+} from "./integrations";
+
+export {
   ASSETS_PROCESSOR_ID,
   createBuildContext,
   getBuildContext,
@@ -109,6 +123,7 @@ export {
   type TransformableSource,
   type BuiltContentSnapshot,
   type PrepareHook,
+  type CompleteContext,
   type CompleteHook,
   type CollectionOnSuccess,
   type SingletonOnSuccess,

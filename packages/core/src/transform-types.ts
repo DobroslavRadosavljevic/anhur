@@ -37,8 +37,17 @@ export type PrepareHook = (
   sources: BuiltContentSnapshot[],
 ) => void | Promise<void>;
 
+/** Paths for post-codegen hooks (`complete`). */
+export type CompleteContext = {
+  /** Absolute path to the config file directory. */
+  rootDir: string;
+  /** Absolute path to the generated output directory. */
+  outputDir: string;
+};
+
 export type CompleteHook = (
   sources: BuiltContentSnapshot[],
+  context: CompleteContext,
 ) => void | Promise<void>;
 
 export type CollectionOnSuccess = (

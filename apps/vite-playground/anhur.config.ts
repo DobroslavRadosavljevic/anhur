@@ -8,6 +8,7 @@ import {
 import { assets, schema as a } from "@anhur/assets";
 import { markdown, schema as md } from "@anhur/markdown";
 import { mdx, schema as m } from "@anhur/mdx";
+import { orama } from "@anhur/orama";
 
 /** Monolingual YAML authors (`localized: false`). */
 const authors = defineCollection({
@@ -161,4 +162,71 @@ export default defineConfig({
     }),
   ],
   content: [authors, posts, pages, settings, products, changelog, about],
+  integrations: [
+    orama({
+      collections: {
+        posts: {
+          schema: {
+            title: "string",
+            summary: "string",
+            excerpt: "string",
+          },
+          index: (doc) => ({
+            title: doc.title,
+            summary: doc.summary ?? "",
+            excerpt: doc.excerpt ?? "",
+          }),
+          store: (doc) => ({
+            title: doc.title,
+            slug: doc.slug,
+            summary: doc.summary ?? doc.excerpt ?? "",
+            href: doc.permalink ?? `/posts/${doc._meta.locale}/${doc.slug}`,
+            authorName: doc.author.name,
+          }),
+        },
+        pages: {
+          schema: {
+            title: "string",
+          },
+          index: (doc) => ({
+            title: doc.title,
+          }),
+          store: (doc) => ({
+            title: doc.title,
+            slug: doc.slug,
+            href: `/pages/${doc._meta.locale}/${doc.slug}`,
+          }),
+        },
+        products: {
+          schema: {
+            name: "string",
+            sku: "string",
+          },
+          index: (doc) => ({
+            name: doc.name,
+            sku: doc.sku,
+          }),
+          store: (doc) => ({
+            name: doc.name,
+            sku: doc.sku,
+            price: doc.price,
+            href: "/products",
+          }),
+        },
+        changelog: {
+          schema: {
+            title: "string",
+          },
+          index: (doc) => ({
+            title: doc.title,
+          }),
+          store: (doc) => ({
+            title: doc.title,
+            date: doc.date,
+            href: "/changelog",
+          }),
+        },
+      },
+    }),
+  ],
 });

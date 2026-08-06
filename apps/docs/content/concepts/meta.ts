@@ -9,6 +9,7 @@ export default defineMeta({
     "collections-and-singletons",
     "light-lists-and-getters",
     "processors",
+    "integrations",
     "localization",
   ],
 });

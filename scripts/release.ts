@@ -27,6 +27,7 @@ const PUBLISH_ORDER = [
   "@anhur/assets",
   "@anhur/markdown",
   "@anhur/mdx",
+  "@anhur/orama",
   "@anhur/vite",
 ] as const;
 
@@ -36,6 +37,7 @@ const REQUIRED_EXPORTS: Record<(typeof PUBLISH_ORDER)[number], readonly string[]
   "@anhur/assets": ["."],
   "@anhur/markdown": ["."],
   "@anhur/mdx": [".", "./react"],
+  "@anhur/orama": [".", "./client"],
   "@anhur/vite": ["."],
 };
 
@@ -625,15 +627,7 @@ async function qualityGates(): Promise<void> {
 
 async function buildPackages(): Promise<void> {
   console.log("\n→ build (@anhur/*)");
-  await run("bun", [
-    "run",
-    "build",
-    "--filter=@anhur/core",
-    "--filter=@anhur/assets",
-    "--filter=@anhur/markdown",
-    "--filter=@anhur/mdx",
-    "--filter=@anhur/vite",
-  ]);
+  await run("bun", ["run", "build", ...PUBLISH_ORDER.map((name) => `--filter=${name}`)]);
 }
 
 async function publishAll(packages: PackageInfo[]): Promise<void> {

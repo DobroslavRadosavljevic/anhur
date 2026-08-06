@@ -17,6 +17,7 @@ const workspacePackages = [
   "@anhur/core",
   "@anhur/mdx",
   "@anhur/markdown",
+  "@anhur/orama",
   "@anhur/vite",
 ];
 

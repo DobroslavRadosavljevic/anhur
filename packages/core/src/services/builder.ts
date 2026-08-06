@@ -8,6 +8,7 @@ import {
   ReferenceFailedError,
   type TransformFailedError,
 } from "../errors";
+import { runIntegrations } from "../integrations";
 import { resolvePendingReferences } from "../relations";
 import { toBuiltSnapshots } from "../transform";
 import { ConfigLoader, type LoadConfigError } from "./config-loader";
@@ -203,11 +204,32 @@ export class Builder extends Context.Service<
             }
           }
 
+          if (config.integrations?.length) {
+            const integrations = config.integrations;
+            yield* Effect.tryPromise({
+              try: async () => {
+                await runIntegrations(integrations, {
+                  rootDir,
+                  outputDir,
+                  sources: snapshots,
+                  config,
+                });
+              },
+              catch: (cause) =>
+                new ConfigInvalidError({
+                  path: configPath,
+                  detail: `integrations failed: ${
+                    cause instanceof Error ? cause.message : String(cause)
+                  }`,
+                }),
+            });
+          }
+
           if (config.complete) {
             const complete = config.complete;
             yield* Effect.tryPromise({
               try: async () => {
-                await complete(snapshots);
+                await complete(snapshots, { rootDir, outputDir });
               },
               catch: (cause) =>
                 new ConfigInvalidError({

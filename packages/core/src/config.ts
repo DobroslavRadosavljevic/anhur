@@ -219,12 +219,20 @@ export type AnhurConfig = {
    */
   processors?: readonly ProcessorPlugin[];
   /**
+   * Build integrations (`orama()`, custom `defineIntegration`, …).
+   * Prefer typed entries returned by package factories.
+   */
+  integrations?: readonly import("./integrations").IntegrationInput<
+    readonly AnyContent[]
+  >[];
+  /**
    * Runs after transforms (and draft/skip filtering), before codegen.
    * Mutate `sources[].documents` for global joins if needed.
    */
   prepare?: import("./transform-types").PrepareHook;
   /**
-   * Runs after codegen and per-source `onSuccess` hooks.
+   * Runs after codegen, per-source `onSuccess`, and `integrations`.
+   * Receives built snapshots and `{ rootDir, outputDir }`.
    */
   complete?: import("./transform-types").CompleteHook;
 };
@@ -242,14 +250,17 @@ export function isCollection(source: AnyContent): source is AnyCollection {
 }
 
 /** Whether this source uses project localization (inherits unless opted out). */
-export function isLocalized(config: AnhurConfig, source: AnyContent): boolean {
+export function isLocalized(
+  config: Pick<AnhurConfig, "localization">,
+  source: AnyContent,
+): boolean {
   if (!config.localization) return false;
   return source.localized !== false;
 }
 
 /** Effective localization for a source, or `undefined` if monolingual. */
 export function resolveLocalization(
-  config: AnhurConfig,
+  config: Pick<AnhurConfig, "localization">,
   source: AnyContent,
 ): Localization | undefined {
   return isLocalized(config, source) ? config.localization : undefined;
@@ -447,7 +458,7 @@ function assertLocalizationCatalog(localization: Localization): void {
 }
 
 function assertSingletonPaths(
-  config: AnhurConfig,
+  config: Pick<AnhurConfig, "localization">,
   singleton: AnySingleton,
 ): void {
   const localized = isLocalized(config, singleton);
@@ -467,12 +478,24 @@ function assertSingletonPaths(
 }
 
 /**
- * Preserve the concrete config shape so generated `.d.ts` can use
+ * Preserve the concrete `content` tuple so generated `.d.ts` can use
  * `GetTypeByName<typeof configuration, "posts">`.
+ *
+ * Package integration factories receive the exact content tuple through the
+ * contextual {@link IntegrationConfigEntry} type, including when `content` is
+ * an inline array.
  */
-export function defineConfig<const TConfig extends AnhurConfig>(
-  config: TConfig,
-): TConfig {
+export function defineConfig<const TContent extends readonly AnyContent[]>(
+  config: Omit<AnhurConfig, "content" | "integrations"> & {
+    content: TContent;
+    integrations?: readonly import("./integrations").IntegrationInput<
+      NoInfer<TContent>
+    >[];
+  },
+): Omit<AnhurConfig, "content" | "integrations"> & {
+  content: TContent;
+  integrations?: readonly import("./integrations").IntegrationInput<TContent>[];
+} {
   if (!config.content?.length) {
     throw new Error("defineConfig requires at least one content source.");
   }
@@ -487,7 +510,10 @@ export function defineConfig<const TConfig extends AnhurConfig>(
     }
   }
 
-  return config;
+  return config as Omit<AnhurConfig, "content" | "integrations"> & {
+    content: TContent;
+    integrations?: readonly import("./integrations").IntegrationInput<TContent>[];
+  };
 }
 
 /** Infer document data type (without `_meta`) from a content definition. */

@@ -27,6 +27,20 @@ export const Route = createFileRoute("/")({
 
 const features = [
   {
+    to: "/search",
+    title: "Search",
+    count: null as number | null,
+    description:
+      "Orama full-text index built in complete — browser restore and server function over the same snapshot.",
+    badges: [
+      "@anhur/orama",
+      "complete",
+      "createSearcher",
+      "searchContent()",
+      "posts+pages+products+changelog",
+    ],
+  },
+  {
     to: "/posts",
     title: "Posts",
     count: allPosts.length,
@@ -177,9 +191,11 @@ function Home() {
               <CardHeader>
                 <div className="flex items-start justify-between gap-2">
                   <CardTitle>{feature.title}</CardTitle>
-                  <span className="text-muted-foreground text-sm tabular-nums">
-                    {feature.count}
-                  </span>
+                  {feature.count !== null ? (
+                    <span className="text-muted-foreground text-sm tabular-nums">
+                      {feature.count}
+                    </span>
+                  ) : null}
                 </div>
                 <CardDescription>{feature.description}</CardDescription>
               </CardHeader>

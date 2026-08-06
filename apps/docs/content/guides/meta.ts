@@ -13,6 +13,7 @@ export default defineMeta({
     "mdx",
     "markdown",
     "assets",
+    "search",
     "vite-plugin",
   ],
 });

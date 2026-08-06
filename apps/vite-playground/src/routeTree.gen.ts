@@ -17,6 +17,7 @@ import { Route as ChangelogIndexRouteImport } from './routes/changelog.index'
 import { Route as PagesIndexRouteImport } from './routes/pages.index'
 import { Route as PostsIndexRouteImport } from './routes/posts.index'
 import { Route as ProductsIndexRouteImport } from './routes/products.index'
+import { Route as SearchIndexRouteImport } from './routes/search.index'
 import { Route as PagesLocaleSlugRouteImport } from './routes/pages.$locale.$slug'
 import { Route as PostsLocaleSlugRouteImport } from './routes/posts.$locale.$slug'
 
@@ -60,6 +61,11 @@ const ProductsIndexRoute = ProductsIndexRouteImport.update({
   path: '/products/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SearchIndexRoute = SearchIndexRouteImport.update({
+  id: '/search/',
+  path: '/search/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PagesLocaleSlugRoute = PagesLocaleSlugRouteImport.update({
   id: '/pages/$locale/$slug',
   path: '/pages/$locale/$slug',
@@ -80,6 +86,7 @@ export interface FileRoutesByFullPath {
   '/pages/': typeof PagesIndexRoute
   '/posts/': typeof PostsIndexRoute
   '/products/': typeof ProductsIndexRoute
+  '/search/': typeof SearchIndexRoute
   '/pages/$locale/$slug': typeof PagesLocaleSlugRoute
   '/posts/$locale/$slug': typeof PostsLocaleSlugRoute
 }
@@ -92,6 +99,7 @@ export interface FileRoutesByTo {
   '/pages': typeof PagesIndexRoute
   '/posts': typeof PostsIndexRoute
   '/products': typeof ProductsIndexRoute
+  '/search': typeof SearchIndexRoute
   '/pages/$locale/$slug': typeof PagesLocaleSlugRoute
   '/posts/$locale/$slug': typeof PostsLocaleSlugRoute
 }
@@ -105,6 +113,7 @@ export interface FileRoutesById {
   '/pages/': typeof PagesIndexRoute
   '/posts/': typeof PostsIndexRoute
   '/products/': typeof ProductsIndexRoute
+  '/search/': typeof SearchIndexRoute
   '/pages/$locale/$slug': typeof PagesLocaleSlugRoute
   '/posts/$locale/$slug': typeof PostsLocaleSlugRoute
 }
@@ -119,6 +128,7 @@ export interface FileRouteTypes {
     | '/pages/'
     | '/posts/'
     | '/products/'
+    | '/search/'
     | '/pages/$locale/$slug'
     | '/posts/$locale/$slug'
   fileRoutesByTo: FileRoutesByTo
@@ -131,6 +141,7 @@ export interface FileRouteTypes {
     | '/pages'
     | '/posts'
     | '/products'
+    | '/search'
     | '/pages/$locale/$slug'
     | '/posts/$locale/$slug'
   id:
@@ -143,6 +154,7 @@ export interface FileRouteTypes {
     | '/pages/'
     | '/posts/'
     | '/products/'
+    | '/search/'
     | '/pages/$locale/$slug'
     | '/posts/$locale/$slug'
   fileRoutesById: FileRoutesById
@@ -156,6 +168,7 @@ export interface RootRouteChildren {
   PagesIndexRoute: typeof PagesIndexRoute
   PostsIndexRoute: typeof PostsIndexRoute
   ProductsIndexRoute: typeof ProductsIndexRoute
+  SearchIndexRoute: typeof SearchIndexRoute
   PagesLocaleSlugRoute: typeof PagesLocaleSlugRoute
   PostsLocaleSlugRoute: typeof PostsLocaleSlugRoute
 }
@@ -218,6 +231,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProductsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/search/': {
+      id: '/search/'
+      path: '/search'
+      fullPath: '/search/'
+      preLoaderRoute: typeof SearchIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pages/$locale/$slug': {
       id: '/pages/$locale/$slug'
       path: '/pages/$locale/$slug'
@@ -244,6 +264,7 @@ const rootRouteChildren: RootRouteChildren = {
   PagesIndexRoute: PagesIndexRoute,
   PostsIndexRoute: PostsIndexRoute,
   ProductsIndexRoute: ProductsIndexRoute,
+  SearchIndexRoute: SearchIndexRoute,
   PagesLocaleSlugRoute: PagesLocaleSlugRoute,
   PostsLocaleSlugRoute: PostsLocaleSlugRoute,
 }

@@ -1,0 +1,96 @@
+---
+title: Search
+description: Full-text search over Anhur collections with @anhur/orama.
+sidebar:
+  label: Search
+  order: 9
+---
+
+`@anhur/orama` builds a full-text index at Anhur build time and lets you query it in the browser or on the server from the same snapshot.
+
+## Install
+
+```package-install
+@anhur/orama
+```
+
+## Config
+
+```ts
+import { defineConfig } from "@anhur/core";
+import { orama } from "@anhur/orama";
+
+export default defineConfig({
+  content: [posts, pages],
+  integrations: [
+    orama({
+      collections: {
+        posts: {
+          schema: {
+            title: "string",
+            summary: "string",
+          },
+          index: (doc) => ({
+            title: doc.title,
+            summary: doc.summary ?? "",
+          }),
+          store: (doc) => ({
+            title: doc.title,
+            slug: doc.slug,
+            href: `/posts/${doc.slug}`,
+          }),
+        },
+      },
+    }),
+  ],
+});
+```
+
+- Put the factory in **`integrations`**, not `processors` or `complete`
+- Plain `defineConfig({…})` is enough — no `defineConfig<typeof content>` and no passing `content` into `orama`
+- `defineConfig` infers the inline `content` array and types `index` / `store`
+- Collection keys must be collection names from `content` (singletons are rejected)
+- Optional: `directory` (default `"search"`), `filename` (default `"orama.json"`) under `outputDir`
+
+Default output: `.anhur/generated/search/orama.json`
+
+## Query
+
+```ts
+import { createSearcher, type AnhurOramaIndex } from "@anhur/orama/client";
+
+import snapshot from "../.anhur/generated/search/orama.json";
+
+const searcher = await createSearcher(snapshot as AnhurOramaIndex);
+
+const result = await searcher.search({
+  term: "hello",
+  collection: "posts", // optional
+  locale: "en", // optional; use "default" for monolingual
+  limit: 20,
+});
+
+for (const hit of result.hits) {
+  console.log(hit.store, hit.score, hit.collection);
+}
+```
+
+`searchCollection(name, query)` scopes to one collection. The same JSON works in browser and Node (read with `fs` on the server if you prefer).
+
+## What is indexed
+
+| Piece        | Role                                         |
+| ------------ | -------------------------------------------- |
+| `schema`     | Orama field types for matchable columns      |
+| `index(doc)` | Values written for those columns             |
+| `store(doc)` | Payload on each hit (not matched by default) |
+
+Anhur also stores `collection`, `locale`, `documentId`, and a JSON `store` string. Row id: `` `${collection}:${locale}:${documentId}` ``.
+
+Full-text only — no vector / AI search in this package.
+
+## Next
+
+- [Integrations](/concepts/integrations)
+- [`@anhur/orama`](/packages/orama)
+- [Configuration](/guides/configuration)

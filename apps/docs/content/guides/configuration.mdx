@@ -29,12 +29,13 @@ export default defineConfig({
 | -------------- | ---------------------------------------------- |
 | `content`      | Collections and singletons                     |
 | `processors`   | `mdx()`, `markdown()`, `assets()`, …           |
+| `integrations` | `orama({…})`, `defineIntegration({…})`, …      |
 | `localization` | Folder locales catalog                         |
 | `outputDir`    | Generated modules (default `.anhur/generated`) |
 | `cacheDir`     | Cache dir, or `false` to disable               |
 | `loaders`      | Extra file loaders before built-ins            |
 | `prepare`      | Hook after transforms, before codegen          |
-| `complete`     | Hook after all codegen                         |
+| `complete`     | Hook after codegen + integrations              |
 
 ## Content sources
 
@@ -60,6 +61,10 @@ Deep dives:
 ## Processors
 
 Register every processor your schema helpers need — see [Processors](/concepts/processors).
+
+## Integrations
+
+Post-codegen packages and hooks (`orama()`, `defineIntegration`) — see [Integrations](/concepts/integrations) and [Search](/guides/search).
 
 ## Output directory
 

@@ -51,3 +51,42 @@ Asset-rewriting builds skip the disk cache for affected compiles. If something l
 ## Scope rename
 
 If packages are published under a different npm scope than `@anhur/*`, install that scope but keep virtual import `anhur/generated` and `.anhur/` dirs unless the release notes say otherwise.
+
+## Orama / integrations typing weak (`doc` is `any`)
+
+**Symptom:** `orama({ collections: { posts: { index: (doc) => … }}})` does not type `doc` from your collections.
+
+**Fix:** Put the factory next to an inline `content` array in a normal `defineConfig` (no generics):
+
+```ts
+export default defineConfig({
+  content: [posts, pages],
+  integrations: [orama({…})],
+});
+```
+
+Do **not**:
+
+- Pass `content` into `orama(…)`
+- Use `defineConfig<typeof content>(…)` (unnecessary now)
+- Use `complete: orama(…)` or `{ id: "orama", … }` as the app DX
+
+If you author a custom package and `doc` is still `any`, return `createIntegrationConfigEntry` (deferred resolver) + `NoInfer` on options — see [search.md](search.md).
+
+## Unknown Orama collection / singleton key
+
+**Symptom:** Type error on a key under `collections` (or a singleton name like `settings`).
+
+**Fix:** Only collection names from `content` are allowed. Singletons are not searchable via Orama config.
+
+## Search index missing
+
+**Symptom:** Cannot import / read `.anhur/generated/search/orama.json`.
+
+**Fix:** Ensure `orama({…})` is in `integrations` and a build has run. Confirm `directory` / `filename` if customized.
+
+## Unknown integration id at build
+
+**Symptom:** `@anhur/core: unknown integration "…"`.
+
+**Fix:** Import the package that calls `registerIntegration` (e.g. `import { orama } from "@anhur/orama"`), or use `defineIntegration({ id, onComplete })` for one-offs.

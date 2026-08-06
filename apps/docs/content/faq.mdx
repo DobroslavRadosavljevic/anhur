@@ -32,6 +32,10 @@ if (!post) throw notFound();
 
 Yes. Package names are the same; examples use `bun` / `package-install` for brevity.
 
+## How do I add full-text search?
+
+Install `@anhur/orama`, add `orama({…})` to `integrations`, then query with `createSearcher`. See [Search](/guides/search).
+
 ## Is there a Next.js adapter?
 
 Not yet. Run `anhur build` in prebuild and alias `anhur/generated` yourself.

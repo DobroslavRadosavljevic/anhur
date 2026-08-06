@@ -4,5 +4,5 @@ export default defineMeta({
   title: "Packages",
   icon: "box",
   order: 4,
-  pages: ["index", "core", "vite", "mdx", "markdown", "assets"],
+  pages: ["index", "core", "vite", "mdx", "markdown", "assets", "orama"],
 });

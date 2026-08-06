@@ -1,0 +1,18 @@
+---
+title: "@anhur/orama"
+description: Build-time Orama full-text index and search client.
+sidebar:
+  label: "@anhur/orama"
+  order: 6
+---
+
+```ts
+import { orama } from "@anhur/orama";
+import { createSearcher } from "@anhur/orama/client";
+```
+
+- `integrations: [orama({ collections })]` — typed from inline `content` (no `defineConfig<typeof content>`)
+- Writes `{outputDir}/search/orama.json` by default
+- Query with `createSearcher(snapshot)` in browser or Node
+
+Guide: [Search](/guides/search) · Concept: [Integrations](/concepts/integrations)

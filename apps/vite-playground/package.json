@@ -19,6 +19,7 @@
     "@anhur/core": "workspace:*",
     "@anhur/markdown": "workspace:*",
     "@anhur/mdx": "workspace:*",
+    "@anhur/orama": "workspace:*",
     "@anhur/vite": "workspace:*",
     "@base-ui/react": "^1.7.0",
     "@fontsource-variable/geist": "^5.3.0",

@@ -2,16 +2,17 @@
 name: anhur
 description: >-
   Build, review, debug, configure, migrate, teach, or plan Anhur typed content
-  (@anhur/core, @anhur/vite, @anhur/mdx, @anhur/markdown,
-  @anhur/assets). Use when integrating Anhur into an app, writing or
-  changing anhur.config.ts, collections, singletons, processors, Zod content
-  schemas, folder i18n, anhur/generated imports, the Vite plugin, CLI
-  build/watch, drafts/hooks, MDX/Markdown bodies, or assets — or when the user
-  mentions Anhur, .anhur, or local MD/MDX/YAML/JSON content pipelines.
+  (@anhur/core, @anhur/vite, @anhur/mdx, @anhur/markdown, @anhur/assets,
+  @anhur/orama). Use when integrating Anhur into an app, writing or changing
+  anhur.config.ts, collections, singletons, processors, integrations (orama /
+  defineIntegration), Zod content schemas, folder i18n, anhur/generated imports,
+  the Vite plugin, CLI build/watch, drafts/hooks, MDX/Markdown bodies, assets,
+  or full-text search — or when the user mentions Anhur, .anhur, or local
+  MD/MDX/YAML/JSON content pipelines.
 license: MIT
 metadata:
-  version: "0.0.4"
-  packages: "@anhur/core,@anhur/vite,@anhur/mdx,@anhur/markdown,@anhur/assets"
+  version: "0.0.5"
+  packages: "@anhur/core,@anhur/vite,@anhur/mdx,@anhur/markdown,@anhur/assets,@anhur/orama"
 ---
 
 # Anhur
@@ -26,7 +27,8 @@ At build time it:
 2. Validates each document with **Zod** schemas you write
 3. Optionally compiles MDX/Markdown, copies images, resolves relations
 4. Writes modules under `.anhur/generated`
-5. Lets the app import them as `anhur/generated`
+5. Runs optional **integrations** (e.g. Orama search index)
+6. Lets the app import generated modules as `anhur/generated`
 
 Vite plugs this into `vite dev` / `vite build` via `@anhur/vite`. The `anhur` CLI does the same without Vite. Optional folder-based **i18n** (`content/posts/en/…`, `de/…`). Local content as typed code — not a hosted CMS.
 
@@ -41,7 +43,7 @@ Without something like Anhur, teams usually:
 - Copy-paste front matter shapes across pages with no compile-time checks
 - Bolt on i18n later as a second system
 
-Anhur is for when content **lives in the repo**, authors edit files, and the app should treat that content as **typed, validated modules** — lists, getters, relations, drafts, assets — with one config file.
+Anhur is for when content **lives in the repo**, authors edit files, and the app should treat that content as **typed, validated modules** — lists, getters, relations, drafts, assets, search — with one config file.
 
 ## What it is for
 
@@ -51,28 +53,33 @@ Anhur is for when content **lives in the repo**, authors edit files, and the app
 | Marketing / product sites  | Localized pages + site settings singleton           |
 | Catalogs / structured data | JSON products with unique SKUs and file attachments |
 | Multi-locale sites         | Same collection under `en/` / `de/` folders         |
+| In-app full-text search    | Orama index over one or many collections            |
 
-**Not for (today):** remote CMS as the source of truth, Next-only adapters, CDN asset upload, non-Zod schema libraries.
+**Not for (today):** remote CMS as the source of truth, Next-only adapters, CDN asset upload, non-Zod schema libraries, vector / AI search.
 
 ## When to use this skill
 
 - Explain Anhur to a user or choose it vs CMS / hand loaders
 - Greenfield or migrate a site/app onto Anhur content
-- Add/change collections, singletons, processors, or schemas
+- Add/change collections, singletons, processors, schemas, or **integrations**
+- Wire Orama search (`orama({…})` in `integrations`, `createSearcher`)
 - Wire Vite (`anhur/generated` alias + asset serving) or CI (`anhur build`)
-- Debug processor/schema mismatches, assets, drafts, or localization layout
+- Debug processor/schema mismatches, assets, drafts, localization, or search index output
 
 ## Package map
 
-| Package           | Install when  | Provides                                                                                  |
-| ----------------- | ------------- | ----------------------------------------------------------------------------------------- |
-| `@anhur/core`     | Always        | `defineConfig`, collections/singletons, `schema as s`, CLI `anhur`, `build`/`watch`       |
-| `@anhur/vite`     | Vite apps     | Plugin: Vite-watcher rebuilds, build logs, `anhur/generated` alias, serve `.anhur/assets` |
-| `@anhur/mdx`      | MDX bodies    | `mdx()` processor, `schema as m` → `m.mdx()`, `MDXContent` from `@anhur/mdx/react`        |
-| `@anhur/markdown` | Markdown→HTML | `markdown()` processor, `schema as md` → `md.markdown()`                                  |
-| `@anhur/assets`   | Images/files  | `assets()` processor, `schema as a` → `a.image()` / `a.file()` (sharp)                    |
+| Package           | Install when     | Provides                                                                                                  |
+| ----------------- | ---------------- | --------------------------------------------------------------------------------------------------------- |
+| `@anhur/core`     | Always           | `defineConfig`, collections/singletons, `schema as s`, CLI `anhur`, `build`/`watch`, integrations runtime |
+| `@anhur/vite`     | Vite apps        | Plugin: Vite-watcher rebuilds, build logs, `anhur/generated` alias, serve `.anhur/assets`                 |
+| `@anhur/mdx`      | MDX bodies       | `mdx()` processor, `schema as m` → `m.mdx()`, `MDXContent` from `@anhur/mdx/react`                        |
+| `@anhur/markdown` | Markdown→HTML    | `markdown()` processor, `schema as md` → `md.markdown()`                                                  |
+| `@anhur/assets`   | Images/files     | `assets()` processor, `schema as a` → `a.image()` / `a.file()` (sharp)                                    |
+| `@anhur/orama`    | Full-text search | `orama()` integration + `createSearcher` (browser/server)                                                 |
 
 **Rule:** every schema helper from an opt-in package needs its processor in `defineConfig({ processors })`. Missing processor → build fails.
+
+**Integrations** (search, custom post-codegen work) go in `defineConfig({ integrations })`, not `processors`. See [references/search.md](references/search.md).
 
 Details: [references/packages.md](references/packages.md)
 
@@ -85,9 +92,10 @@ Copy and track:
 - [ ] Add anhur.config.ts next to content (or set configPath)
 - [ ] Register processors matching schema helpers
 - [ ] Define collections / singletons + content files
+- [ ] Optional: integrations: [orama({…})]
 - [ ] Vite: plugins: [anhur()] + tsconfig paths for anhur/generated
 - [ ] Include .anhur/generated in tsconfig; gitignore .anhur/cache (optional commit generated)
-- [ ] Smoke: anhur build OR vite dev; import from anhur/generated
+- [ ] Smoke: anhur build OR vite dev; import from anhur/generated (and search index if used)
 ```
 
 Full Vite/tsconfig/CLI steps: [references/integration.md](references/integration.md)
@@ -97,7 +105,7 @@ Full Vite/tsconfig/CLI steps: [references/integration.md](references/integration
 ```sh
 bun add @anhur/core @anhur/vite
 # optional:
-bun add @anhur/mdx @anhur/markdown @anhur/assets
+bun add @anhur/mdx @anhur/markdown @anhur/assets @anhur/orama
 ```
 
 `vite.config.ts`:
@@ -124,13 +132,53 @@ export default defineConfig({
 }
 ```
 
+## Search (`@anhur/orama`)
+
+Put `orama({…})` in `integrations`. Plain `defineConfig({…})` is enough — no
+`defineConfig<typeof content>`. `defineConfig` infers the inline `content` array
+and types `index` / `store` (do **not** pass `content` into `orama`).
+
+```ts
+import { defineConfig } from "@anhur/core";
+import { orama } from "@anhur/orama";
+
+export default defineConfig({
+  content: [posts, pages],
+  integrations: [
+    orama({
+      collections: {
+        posts: {
+          schema: { title: "string", summary: "string" },
+          index: (doc) => ({
+            title: doc.title,
+            summary: doc.summary ?? "",
+          }),
+          store: (doc) => ({
+            title: doc.title,
+            slug: doc.slug,
+            href: `/posts/${doc.slug}`,
+          }),
+        },
+      },
+    }),
+  ],
+});
+```
+
+- Rejects unknown collection keys and singleton names at typecheck
+- Writes `.anhur/generated/search/orama.json` (override with `directory` / `filename`)
+- App: `import { createSearcher } from "@anhur/orama/client"` then load that JSON (browser or server)
+
+Full options, client usage, custom integrations: [references/search.md](references/search.md)
+
 ## Config shape
 
 ```ts
-import { defineCollection, defineConfig, defineSingleton, schema as s } from "@anhur/core";
+import { defineCollection, defineConfig, schema as s } from "@anhur/core";
 import { assets, schema as a } from "@anhur/assets";
 import { markdown, schema as md } from "@anhur/markdown";
 import { mdx, schema as m } from "@anhur/mdx";
+import { orama } from "@anhur/orama";
 
 const posts = defineCollection({
   name: "posts",
@@ -162,6 +210,17 @@ export default defineConfig({
     assets({ dir: ".anhur/assets", base: "/anhur-assets/" }),
   ],
   content: [posts],
+  integrations: [
+    orama({
+      collections: {
+        posts: {
+          schema: { title: "string" },
+          index: (doc) => ({ title: doc.title }),
+          store: (doc) => ({ slug: doc.slug }),
+        },
+      },
+    }),
+  ],
 });
 ```
 
@@ -220,8 +279,10 @@ export function PostBody({ code }: { code: string }) {
 2. Relative body images/links need `assets()`; without it they fail the build.
 3. Prefer `m.mdx()` / `md.markdown()` / `s.raw()` for bodies — not ad-hoc compile in `transform`.
 4. Drafts: `draft: true` or `ctx.skip(reason)` in `transform`.
-5. Do not invent CDN upload, Next adapter, or Valibot — out of scope.
-6. Package scope `@anhur` may rename before/after publish; keep config names (`anhur.config.ts`, `.anhur/`, `anhur/generated`) unless the project documents a rename.
+5. Search / post-codegen packages use `integrations: [orama({…})]`, not `processors` or `complete: orama(…)`.
+6. Use plain `defineConfig({ content: […], integrations: [orama({…})] })` — no `defineConfig<typeof content>`, and never pass `content` into `orama`.
+7. Do not invent CDN upload, Next adapter, Valibot, or Orama vector/AI search — out of scope.
+8. Package scope `@anhur` may rename before/after publish; keep config names (`anhur.config.ts`, `.anhur/`, `anhur/generated`) unless the project documents a rename.
 
 ## Failure modes
 
@@ -233,3 +294,4 @@ See [references/pitfalls.md](references/pitfalls.md).
 - App imports from `anhur/generated` typecheck
 - Opt-in fields used only with matching processors
 - Localized folders match `locales` / `defaultLocale` (or `localized: false`)
+- If search is configured: `.anhur/generated/search/orama.json` exists and `createSearcher` works in app

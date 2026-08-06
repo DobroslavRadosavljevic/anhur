@@ -5,6 +5,7 @@ import type { TransformContext } from "./transform-types";
 export type {
   BuiltContentSnapshot,
   CollectionOnSuccess,
+  CompleteContext,
   CompleteHook,
   DocumentTransform,
   PrepareHook,

@@ -8,9 +8,14 @@ bun add @anhur/core @anhur/vite
 
 # Opt-in processors (add only what schemas need)
 bun add @anhur/mdx @anhur/markdown @anhur/assets
+
+# Optional full-text search
+bun add @anhur/orama
 ```
 
 npm/pnpm/yarn work the same package names. Prefer the project’s package manager.
+
+For `orama({…})` in `integrations`, see [search.md](search.md).
 
 ## 2. Config file
 

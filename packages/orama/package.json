@@ -1,0 +1,58 @@
+{
+  "name": "@anhur/orama",
+  "version": "0.0.5",
+  "description": "Build-time Orama full-text search indexes for @anhur/core collections",
+  "keywords": [
+    "anhur",
+    "content",
+    "orama",
+    "search"
+  ],
+  "license": "MIT",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": "./dist/index.js",
+      "./client": "./dist/client.js",
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "check-types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tests.json",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
+    "test": "vitest run --project unit --passWithNoTests",
+    "test:watch": "vitest --project unit",
+    "test:integration": "vitest run --project integration --passWithNoTests"
+  },
+  "dependencies": {
+    "@anhur/core": "workspace:*",
+    "@orama/orama": "3.1.18"
+  },
+  "devDependencies": {
+    "@anhur/oxfmt": "workspace:*",
+    "@anhur/oxlint": "workspace:*",
+    "@types/node": "^22",
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
+    "tsdown": "0.22.14",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  }
+}

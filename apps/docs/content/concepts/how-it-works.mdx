@@ -15,9 +15,10 @@ Anhur is a build-time content pipeline. It does not fetch remote CMS data at req
 3. **Process** — optional MDX/Markdown compile, asset copy, references
 4. **Transform** — per-document `transform`, drafts/skips, then project `prepare`
 5. **Generate** — write modules under `.anhur/generated`
-6. **Import** — your app uses `anhur/generated`
+6. **Integrate** — optional `integrations` (e.g. Orama search index), then `complete`
+7. **Import** — your app uses `anhur/generated` (and any integration outputs)
 
-With [`@anhur/vite`](/packages/vite), steps 1–5 run on `vite dev` / `vite build` and again when content files change. With the [CLI](/getting-started/cli), you run `anhur build` or `anhur watch` yourself.
+With [`@anhur/vite`](/packages/vite), steps 1–6 run on `vite dev` / `vite build` and again when content files change. With the [CLI](/getting-started/cli), you run `anhur build` or `anhur watch` yourself.
 
 ## Mental model
 
@@ -38,3 +39,4 @@ Think of each collection as a typed table of rows, and each content file as a ro
 
 - [Collections & singletons](/concepts/collections-and-singletons)
 - [Processors](/concepts/processors)
+- [Integrations](/concepts/integrations)
