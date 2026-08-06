@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -75,6 +75,54 @@ describe("schema.mdx body assets", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.body).toMatch(/\/anhur-assets\/inline-[a-f0-9]+\.png/);
+    }
+  });
+
+  it("rewrites relative SVG images when assets() is registered", async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "anhur-mdx-svg-"));
+    await writeFile(
+      path.join(dir, "logo.svg"),
+      `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="black"/></svg>`,
+    );
+    const docPath = path.join(dir, "hello.mdx");
+
+    const zodSchema = s.object({
+      title: s.string(),
+      body: m.mdx(),
+    });
+    const config = defineConfig({
+      processors: [mdx({ gfm: true }), assets()],
+      content: [
+        {
+          type: "collection",
+          name: "posts",
+          typeName: "Posts",
+          directory: "content",
+          include: "**/*.mdx",
+          schema: zodSchema,
+        },
+      ],
+    });
+    const buildContext = await createBuildContext(config, {
+      rootDir: dir,
+      configDir: dir,
+    });
+
+    const result = await withBuildContext(buildContext, () =>
+      withDocumentMeta(
+        {
+          path: docPath,
+          content: "See ![logo](./logo.svg)",
+          sourceName: "posts",
+          config,
+        },
+        () => zodSchema.safeParseAsync({ title: "Hi" }),
+      ),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.body).toMatch(/\/anhur-assets\/logo-[a-f0-9]+\.svg/);
     }
   });
 

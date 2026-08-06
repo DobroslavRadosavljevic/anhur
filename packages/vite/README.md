@@ -37,6 +37,28 @@ import { allPosts, getPost } from "anhur/generated";
 
 No separate `anhur build` step is required for day-to-day Vite work — the plugin handles it.
 
+### Dev rebuilds
+
+In `vite dev`, Anhur uses **Vite’s file watcher** (not a second watcher):
+
+1. Subscribes to `anhur.config.ts` and each collection/singleton path
+2. On change / add / unlink → rebuild (debounced)
+3. Invalidates `anhur/generated` modules and triggers a **full page reload**
+
+On startup and each rebuild, Vite logs a short summary, for example:
+
+```text
+[anhur] built 12 document(s) → .anhur/generated
+[anhur]   posts (4): en/hello, en/world, de/hello, de/world
+[anhur]   authors (2): ada, grace
+```
+
+After a content or config change you’ll see the same shape with `rebuilt` instead of `built`.
+
+Editing content or the Anhur config both go through that path. Unrelated files outside those roots do not trigger an Anhur rebuild.
+
+(`anhur watch` on the CLI still uses Anhur’s own watcher — there is no Vite server there.)
+
 ## ⚙️ Options
 
 ```ts

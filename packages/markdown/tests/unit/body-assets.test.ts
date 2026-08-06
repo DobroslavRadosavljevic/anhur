@@ -80,6 +80,56 @@ describe("schema.markdown body assets", () => {
     }
   });
 
+  it("rewrites relative SVG images when assets() is registered", async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "anhur-md-svg-"));
+    await writeFile(
+      path.join(dir, "logo.svg"),
+      `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10" fill="black"/></svg>`,
+    );
+    const docPath = path.join(dir, "hello.md");
+
+    const zodSchema = s.object({
+      title: s.string(),
+      body: md.markdown(),
+    });
+    const config = defineConfig({
+      processors: [markdown({ gfm: true }), assets()],
+      content: [
+        {
+          type: "collection",
+          name: "pages",
+          typeName: "Pages",
+          directory: "content",
+          include: "**/*.md",
+          schema: zodSchema,
+        },
+      ],
+    });
+    const buildContext = await createBuildContext(config, {
+      rootDir: dir,
+      configDir: dir,
+    });
+
+    const result = await withBuildContext(buildContext, () =>
+      withDocumentMeta(
+        {
+          path: docPath,
+          content: "See ![logo](./logo.svg)",
+          sourceName: "pages",
+          config,
+        },
+        () => zodSchema.safeParseAsync({ title: "Hi" }),
+      ),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.body).toMatch(
+        /src="\/anhur-assets\/logo-[a-f0-9]+\.svg"/,
+      );
+    }
+  });
+
   it("rejects relative body images without assets()", async () => {
     dir = await mkdtemp(path.join(tmpdir(), "anhur-md-no-assets-"));
     await writePng(path.join(dir, "inline.png"));

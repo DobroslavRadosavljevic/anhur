@@ -162,6 +162,13 @@ export {
 } from "./watch";
 
 export {
+  collectWatchPaths,
+  canonicalizePath,
+  isAnhurWatchTarget,
+  isUnderWatchPath,
+} from "./watch-paths";
+
+export {
   formatAnhurError,
   ConfigNotFoundError,
   ConfigInvalidError,

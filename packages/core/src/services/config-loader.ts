@@ -1,4 +1,5 @@
 import { createJiti } from "jiti";
+import { realpath } from "node:fs/promises";
 import { Context, Effect, FileSystem, Layer, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import type { AnhurConfig } from "../config";
@@ -26,6 +27,14 @@ export function resolveConfigPath(
   return path.isAbsolute(configPath)
     ? configPath
     : path.resolve(rootDir, configPath);
+}
+
+async function canonicalPath(filePath: string): Promise<string> {
+  try {
+    return await realpath(filePath);
+  } catch {
+    return filePath;
+  }
 }
 
 /**
@@ -56,8 +65,7 @@ export class ConfigLoader extends Context.Service<
       const jiti = createJiti(import.meta.url, {
         interopDefault: true,
         // Keep moduleCache so `@anhur/*` helpers share process state with the host
-        // (document meta / build context). Config files themselves still re-import
-        // when the absolute path changes.
+        // (document meta / build context). Config files are busted on each load.
         moduleCache: true,
         fsCache: false,
         nativeModules: [
@@ -76,18 +84,27 @@ export class ConfigLoader extends Context.Service<
         configPath = "anhur.config.ts",
       ): Effect.Effect<LoadConfigResult, LoadConfigError> =>
         Effect.gen(function* () {
-          const absoluteConfigPath = resolveConfigPath(
+          const resolvedConfigPath = resolveConfigPath(
             rootDir,
             configPath,
             path,
           );
-          const exists = yield* fs.exists(absoluteConfigPath);
+          const exists = yield* fs.exists(resolvedConfigPath);
 
           if (!exists) {
             return yield* Effect.fail(
-              new ConfigNotFoundError({ path: absoluteConfigPath }),
+              new ConfigNotFoundError({ path: resolvedConfigPath }),
             );
           }
+
+          const absoluteConfigPath = yield* Effect.promise(() =>
+            canonicalPath(resolvedConfigPath),
+          );
+
+          // Re-read config after edits (watch / Vite rebuild). Use realpath so
+          // macOS `/var` vs `/private/var` cache keys match.
+          delete jiti.cache[absoluteConfigPath];
+          delete jiti.cache[resolvedConfigPath];
 
           const mod = yield* Effect.tryPromise({
             try: () =>

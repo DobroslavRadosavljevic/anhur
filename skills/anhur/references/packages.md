@@ -14,16 +14,16 @@ Exports (typical):
 
 Config highlights:
 
-| Field          | Role                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------ |
-| `content`      | Collections + singletons                                                             |
-| `localization` | `{ strategy: "folder", locales, defaultLocale }`                                     |
+| Field          | Role                                                                              |
+| -------------- | --------------------------------------------------------------------------------- |
+| `content`      | Collections + singletons                                                          |
+| `localization` | `{ strategy: "folder", locales, defaultLocale }`                                  |
 | `outputDir`    | Default `.anhur/generated` (relative to config file)                              |
 | `cacheDir`     | Default `.anhur/cache`; `false` disables. Skipped when `assets()` rewrites bodies |
-| `loaders`      | Extra loaders before matter/yaml/json                                                |
-| `processors`   | `mdx()`, `markdown()`, `assets()`, …                                                 |
-| `prepare`      | After transforms/filters, before codegen                                             |
-| `complete`     | After codegen + per-source `onSuccess`                                               |
+| `loaders`      | Extra loaders before matter/yaml/json                                             |
+| `processors`   | `mdx()`, `markdown()`, `assets()`, …                                              |
+| `prepare`      | After transforms/filters, before codegen                                          |
+| `complete`     | After codegen + per-source `onSuccess`                                            |
 
 Engines: Node `^22.18.0` or `>=24.11.0`.
 
@@ -36,10 +36,11 @@ Does:
 1. Resolve `anhur.config.ts` from Vite root (or `configPath`)
 2. Alias `anhur/generated` → `.anhur/generated`
 3. `optimizeDeps.exclude` that id
-4. Build on `buildStart`; watch + HMR in `configureServer`
-5. Middleware for `assets().base` (default `/anhur-assets/`) from `.anhur/assets`
+4. Build on `buildStart` / `configureServer`; in dev, use Vite’s file watcher on config + content roots, then invalidate `anhur/generated` and full-reload
+5. Log document counts (and per-source ids) on startup and each rebuild
+6. Middleware for `assets().base` (default `/anhur-assets/`) from `.anhur/assets`
 
-Production: plugin copies assets into Vite `publicDir` as needed so static hosts serve them.
+Production: plugin copies assets into the Vite build output so static hosts serve them.
 
 ## `@anhur/mdx`
 
@@ -70,6 +71,7 @@ import { assets, schema as a } from "@anhur/assets";
 - `processors: [assets({ dir?: string, base?: string })]`
   - Defaults: `dir: ".anhur/assets"`, `base: "/anhur-assets/"`
 - Schema: `cover: a.image()`, `brochure: a.file()` (optional variants)
+- SVG works with both helpers; the original `.svg` is copied as-is. `a.image()` fills size/blur when sharp can rasterize; otherwise size may come from SVG markup and blur stays empty
 - Rewrites relative URLs in MDX/Markdown **bodies** when those processors run
 - Peer/native: `sharp` — trust lifecycle scripts under Bun if install blocks them (`bun pm untrusted`)
 

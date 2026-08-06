@@ -1,6 +1,6 @@
 {
   "name": "@anhur/markdown",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Opt-in Markdown→HTML helpers for @anhur/core documents",
   "keywords": [
     "anhur",

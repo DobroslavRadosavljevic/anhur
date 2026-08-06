@@ -1,14 +1,6 @@
-import {
-  Context,
-  Effect,
-  Fiber,
-  FileSystem,
-  Layer,
-  Path,
-  Stream,
-} from "effect";
-import { isCollection, isLocalized, isSingleton } from "../config";
+import { Context, Effect, Fiber, FileSystem, Layer, Stream } from "effect";
 import { formatAnhurError } from "../errors";
+import { collectWatchPaths } from "../watch-paths";
 import { Builder, type BuildOptions, type BuildResult } from "./builder";
 import { ConfigLoader } from "./config-loader";
 
@@ -41,14 +33,13 @@ export class Watcher extends Context.Service<
   static readonly layer: Layer.Layer<
     Watcher,
     never,
-    Builder | ConfigLoader | FileSystem.FileSystem | Path.Path
+    Builder | ConfigLoader | FileSystem.FileSystem
   > = Layer.effect(
     Watcher,
     Effect.gen(function* () {
       const builder = yield* Builder;
       const configLoader = yield* ConfigLoader;
       const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
 
       const runBuild = (
         options: BuildOptions,
@@ -102,21 +93,9 @@ export class Watcher extends Context.Service<
           }
 
           const { config, configPath: absoluteConfig } = loaded;
-          const watchPaths = new Set<string>([absoluteConfig]);
+          const watchPaths = collectWatchPaths(config, rootDir, absoluteConfig);
 
-          for (const source of config.content) {
-            if (isCollection(source)) {
-              watchPaths.add(path.resolve(rootDir, source.directory));
-            } else if (isSingleton(source)) {
-              if (isLocalized(config, source) && source.directory) {
-                watchPaths.add(path.resolve(rootDir, source.directory));
-              } else if (source.filePath) {
-                watchPaths.add(path.resolve(rootDir, source.filePath));
-              }
-            }
-          }
-
-          const streams = [...watchPaths].map((watchPath) =>
+          const streams = watchPaths.map((watchPath) =>
             fs.watch(watchPath).pipe(Stream.catch(() => Stream.empty)),
           );
 

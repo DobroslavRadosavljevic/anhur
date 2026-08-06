@@ -43,8 +43,13 @@ describe("remarkCopyLinkedFiles", () => {
     dir = await mkdtemp(path.join(tmpdir(), "anhur-body-assets-"));
     const png = path.join(dir, "lake.png");
     const pdf = path.join(dir, "guide.pdf");
+    const svg = path.join(dir, "logo.svg");
     await writePng(png);
     await writeFile(pdf, "%PDF-1.4 fake");
+    await writeFile(
+      svg,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="green"/></svg>`,
+    );
     const docPath = path.join(dir, "post.mdx");
     await writeFile(docPath, "---\ntitle: T\n---\n");
 
@@ -65,7 +70,7 @@ describe("remarkCopyLinkedFiles", () => {
       rootDir: dir,
       configDir: dir,
     });
-    return { docPath, config, buildContext, png, pdf };
+    return { docPath, config, buildContext, png, pdf, svg };
   }
 
   async function compileWithCopy(source: string, docPath: string) {
@@ -105,6 +110,43 @@ describe("remarkCopyLinkedFiles", () => {
     );
 
     expect(code).toMatch(/\/anhur-assets\/guide-[a-f0-9]+\.pdf/);
+  });
+
+  it("rewrites relative SVG markdown images", async () => {
+    const { docPath, config, buildContext } = await setup();
+
+    const code = await withBuildContext(buildContext, () =>
+      withDocumentMeta({ path: docPath, sourceName: "posts", config }, () =>
+        compileWithCopy("![Logo](./logo.svg)", docPath),
+      ),
+    );
+
+    expect(code).toMatch(/\/anhur-assets\/logo-[a-f0-9]+\.svg/);
+    expect(code).not.toContain("./logo.svg");
+  });
+
+  it("rewrites relative SVG file links", async () => {
+    const { docPath, config, buildContext } = await setup();
+
+    const code = await withBuildContext(buildContext, () =>
+      withDocumentMeta({ path: docPath, sourceName: "posts", config }, () =>
+        compileWithCopy("[Logo](./logo.svg)", docPath),
+      ),
+    );
+
+    expect(code).toMatch(/\/anhur-assets\/logo-[a-f0-9]+\.svg/);
+  });
+
+  it("rewrites MDX JSX string src for SVG", async () => {
+    const { docPath, config, buildContext } = await setup();
+
+    const code = await withBuildContext(buildContext, () =>
+      withDocumentMeta({ path: docPath, sourceName: "posts", config }, () =>
+        compileWithCopy('<img src="./logo.svg" alt="Logo" />', docPath),
+      ),
+    );
+
+    expect(code).toMatch(/\/anhur-assets\/logo-[a-f0-9]+\.svg/);
   });
 
   it("rewrites MDX JSX string src attributes", async () => {

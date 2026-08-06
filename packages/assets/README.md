@@ -53,15 +53,27 @@ cover: ./cover.png
 
 In the generated document, `cover` becomes something you can use as an image URL (plus metadata Anhur attaches).
 
+## 🖼️ Images vs files
+
+| Helper      | Use for                     | Result                                   |
+| ----------- | --------------------------- | ---------------------------------------- |
+| `a.image()` | Raster images and SVG       | `{ src, width, height, blurDataURL, … }` |
+| `a.file()`  | Any file (PDF, SVG, zip, …) | `{ src }`                                |
+
+SVG works with both. The original `.svg` is always copied as-is (not converted).
+
+- With `a.image()`, Anhur fills in size and a small WebP blur placeholder when sharp can rasterize the SVG. If it cannot (for example an empty SVG with no size), the file still copies and blur fields stay empty.
+- Prefer `a.file()` when you only need the public URL and do not care about width/height/blur.
+
 ## 🔗 Body images and links
 
-If you also use `@anhur/mdx` or `@anhur/markdown`, relative URLs inside the body — like `![Alt](./photo.png)` or `[PDF](./spec.pdf)` — are copied and rewritten automatically when `assets()` is registered.
+If you also use `@anhur/mdx` or `@anhur/markdown`, relative URLs inside the body — like `![Alt](./photo.png)`, `![Logo](./logo.svg)`, or `[PDF](./spec.pdf)` — are copied and rewritten automatically when `assets()` is registered.
 
 Without `assets()`, those relative body URLs fail the build so broken paths do not ship quietly.
 
 ## ⚡ With Vite
 
-[`@anhur/vite`](https://www.npmjs.com/package/@anhur/vite) can serve the `.anhur/assets` folder in development so those URLs work while you write content.
+[`@anhur/vite`](https://www.npmjs.com/package/@anhur/vite) can serve the `.anhur/assets` folder in development so those URLs work while you write content. SVG is served as `image/svg+xml`.
 
 ## License
 

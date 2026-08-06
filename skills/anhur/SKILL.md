@@ -10,7 +10,7 @@ description: >-
   mentions Anhur, .anhur, or local MD/MDX/YAML/JSON content pipelines.
 license: MIT
 metadata:
-  version: "0.0.3"
+  version: "0.0.4"
   packages: "@anhur/core,@anhur/vite,@anhur/mdx,@anhur/markdown,@anhur/assets"
 ---
 
@@ -64,13 +64,13 @@ Anhur is for when content **lives in the repo**, authors edit files, and the app
 
 ## Package map
 
-| Package           | Install when  | Provides                                                                            |
-| ----------------- | ------------- | ----------------------------------------------------------------------------------- |
-| `@anhur/core`     | Always        | `defineConfig`, collections/singletons, `schema as s`, CLI `anhur`, `build`/`watch` |
-| `@anhur/vite`     | Vite apps     | Plugin: build/watch, `anhur/generated` alias, serve `.anhur/assets`                 |
-| `@anhur/mdx`      | MDX bodies    | `mdx()` processor, `schema as m` → `m.mdx()`, `MDXContent` from `@anhur/mdx/react`  |
-| `@anhur/markdown` | Markdown→HTML | `markdown()` processor, `schema as md` → `md.markdown()`                            |
-| `@anhur/assets`   | Images/files  | `assets()` processor, `schema as a` → `a.image()` / `a.file()` (sharp)              |
+| Package           | Install when  | Provides                                                                                  |
+| ----------------- | ------------- | ----------------------------------------------------------------------------------------- |
+| `@anhur/core`     | Always        | `defineConfig`, collections/singletons, `schema as s`, CLI `anhur`, `build`/`watch`       |
+| `@anhur/vite`     | Vite apps     | Plugin: Vite-watcher rebuilds, build logs, `anhur/generated` alias, serve `.anhur/assets` |
+| `@anhur/mdx`      | MDX bodies    | `mdx()` processor, `schema as m` → `m.mdx()`, `MDXContent` from `@anhur/mdx/react`        |
+| `@anhur/markdown` | Markdown→HTML | `markdown()` processor, `schema as md` → `md.markdown()`                                  |
+| `@anhur/assets`   | Images/files  | `assets()` processor, `schema as a` → `a.image()` / `a.file()` (sharp)                    |
 
 **Rule:** every schema helper from an opt-in package needs its processor in `defineConfig({ processors })`. Missing processor → build fails.
 

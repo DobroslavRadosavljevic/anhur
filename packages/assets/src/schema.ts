@@ -5,6 +5,7 @@ import {
   type AssetsProcessorOptions,
   type ProcessorPlugin,
 } from "@anhur/core";
+import path from "node:path";
 import sharp from "sharp";
 import { z } from "zod";
 import {
@@ -13,6 +14,7 @@ import {
   resolveAndEmit,
   resolveLocalPath,
 } from "./resolve";
+import { readSvgSize } from "./svg-meta";
 
 export type { AssetsProcessorOptions };
 
@@ -29,6 +31,21 @@ export type AnhurFile = {
   src: string;
 };
 
+type ImageMeta = {
+  width: number;
+  height: number;
+  blurDataURL: string;
+  blurWidth: number;
+  blurHeight: number;
+};
+
+const EMPTY_BLUR: Pick<ImageMeta, "blurDataURL" | "blurWidth" | "blurHeight"> =
+  {
+    blurDataURL: "",
+    blurWidth: 0,
+    blurHeight: 0,
+  };
+
 /**
  * Register the assets processor on `defineConfig({ processors })`.
  * Also enables body rewrite for `m.mdx()` / `md.markdown()` relative links.
@@ -39,13 +56,7 @@ export function assets(
   return defineProcessor(ASSETS_PROCESSOR_ID, options);
 }
 
-async function readImageMeta(absolutePath: string): Promise<{
-  width: number;
-  height: number;
-  blurDataURL: string;
-  blurWidth: number;
-  blurHeight: number;
-}> {
+async function readRasterImageMeta(absolutePath: string): Promise<ImageMeta> {
   const metadata = await sharp(absolutePath).metadata();
   const width = metadata.width ?? 0;
   const height = metadata.height ?? 0;
@@ -64,6 +75,26 @@ async function readImageMeta(absolutePath: string): Promise<{
     blurWidth,
     blurHeight,
   };
+}
+
+/**
+ * SVG is copied as-is. Prefer sharp for size + blur placeholder when the
+ * file can be rasterized; otherwise parse the SVG markup for dimensions.
+ */
+async function readSvgImageMeta(absolutePath: string): Promise<ImageMeta> {
+  try {
+    return await readRasterImageMeta(absolutePath);
+  } catch {
+    const size = await readSvgSize(absolutePath);
+    return { ...size, ...EMPTY_BLUR };
+  }
+}
+
+async function readImageMeta(absolutePath: string): Promise<ImageMeta> {
+  if (path.extname(absolutePath).toLowerCase() === ".svg") {
+    return readSvgImageMeta(absolutePath);
+  }
+  return readRasterImageMeta(absolutePath);
 }
 
 function imageField(): z.ZodType<AnhurImage> {

@@ -22,7 +22,7 @@ export const watchEffect = (
     return yield* watcher.start(options, handlers);
   });
 
-/** Promise edge for Vite plugins. */
+/** Promise edge for CLI hosts and non-Vite tooling. */
 export const watch = (
   options: WatchOptions = {},
   handlers: WatchHandlers = {},

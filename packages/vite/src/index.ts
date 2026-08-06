@@ -1,45 +1,30 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { cp } from "node:fs/promises";
 import path from "node:path";
-import type { Connect, Plugin, UserConfig } from "vite";
+import type { Connect, Logger, Plugin, UserConfig } from "vite";
 import {
   build,
-  formatAnhurError,
-  resolveAssetsConfig,
   resolveConfigPath,
-  watch,
   type AnhurConfig,
+  type BuildResult,
 } from "@anhur/core";
+import { formatAnhurBuildLog, type BuildLogKind } from "./build-log";
+import { contentTypeFor } from "./content-type";
+import {
+  IMPORT_ID,
+  attachAnhurDevWatcher,
+  invalidateGeneratedModules,
+  sendFullReload,
+  syncAssetsFromConfig,
+  syncViteWatchRoots,
+  watchRootsFromBuild,
+  type DevWatchState,
+} from "./dev-watch";
 
 export type AnhurViteOptions = {
   /** Path to config relative to Vite root (default `anhur.config.ts`). */
   configPath?: string;
 };
-
-const IMPORT_ID = "anhur/generated";
-
-function contentTypeFor(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  switch (ext) {
-    case ".png":
-      return "image/png";
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".gif":
-      return "image/gif";
-    case ".webp":
-      return "image/webp";
-    case ".svg":
-      return "image/svg+xml";
-    case ".pdf":
-      return "application/pdf";
-    case ".txt":
-      return "text/plain; charset=utf-8";
-    default:
-      return "application/octet-stream";
-  }
-}
 
 /**
  * Serve copied assets. Reads dir/base via getters so registration can happen
@@ -87,23 +72,38 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
   let configDir = "";
   let assetsDir = "";
   let assetsBase = "/anhur-assets/";
-  let watchController: Awaited<ReturnType<typeof watch>> | undefined;
-  let initialBuild: Promise<void> | undefined;
+  let initialBuild: Promise<BuildResult> | undefined;
+  let disposeWatcher: (() => void) | undefined;
+  let logger: Logger | undefined;
+  const watchState: DevWatchState = { watchRoots: [] };
 
-  function syncAssetsFromConfig(config: AnhurConfig) {
-    const resolved = resolveAssetsConfig(config, configDir);
-    if (!resolved) {
+  function logBuild(result: BuildResult, kind: BuildLogKind) {
+    const lines = formatAnhurBuildLog(result, kind, { rootDir });
+    for (const line of lines) {
+      if (logger) {
+        logger.info(line, { timestamp: true });
+      } else {
+        console.info(line);
+      }
+    }
+  }
+
+  function applyBuildResult(config: AnhurConfig, nextOutputDir: string) {
+    outputDir = nextOutputDir;
+    const assets = syncAssetsFromConfig(config, configDir);
+    if (!assets) {
       assetsDir = "";
       return;
     }
-    assetsDir = resolved.dir;
-    assetsBase = resolved.base;
+    assetsDir = assets.dir;
+    assetsBase = assets.base;
   }
 
-  async function runBuild() {
+  async function runBuild(kind: BuildLogKind = "built"): Promise<BuildResult> {
     const result = await build({ rootDir, configPath: configFileName });
-    outputDir = result.outputDir;
-    syncAssetsFromConfig(result.config);
+    applyBuildResult(result.config, result.outputDir);
+    logBuild(result, kind);
+    return result;
   }
 
   return {
@@ -126,6 +126,8 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
         },
         server: {
           watch: {
+            // Keep generated + assets visible to Vite; Anhur rebuilds only on
+            // content/config paths subscribed via server.watcher.add.
             ignored: ["!**/.anhur/generated/**", "!**/.anhur/assets/**"],
           },
         },
@@ -134,13 +136,18 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
       return patch;
     },
 
+    configResolved(resolved) {
+      logger = resolved.logger;
+    },
+
     async buildStart() {
-      initialBuild ??= runBuild();
+      initialBuild ??= runBuild("built");
       await initialBuild;
     },
 
     async configureServer(server) {
-      // Always mount; getters pick up assetsDir after buildStart/runBuild.
+      logger = server.config.logger;
+
       server.middlewares.use(
         serveAssetsMiddleware(
           () => assetsDir,
@@ -149,42 +156,35 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
       );
 
       // Dev server may hit assets before buildStart — warm the build here too.
-      initialBuild ??= runBuild();
-      await initialBuild;
+      initialBuild ??= runBuild("built");
+      const result = await initialBuild;
 
-      watchController = await watch(
-        { rootDir, configPath: configFileName, immediate: false },
-        {
-          onBuild: async (result) => {
-            outputDir = result.outputDir;
-            syncAssetsFromConfig(result.config);
-            const mod = server.moduleGraph.getModuleById(IMPORT_ID);
-            const byPath = [...server.moduleGraph.urlToModuleMap.entries()]
-              .filter(
-                ([url]) =>
-                  url.includes("anhur/generated") ||
-                  url.includes(".anhur/generated"),
-              )
-              .map(([, m]) => m);
-
-            const modules = [mod, ...byPath].filter(Boolean);
-            for (const module of modules) {
-              if (module) {
-                server.moduleGraph.invalidateModule(module);
-              }
-            }
-
-            server.ws.send({ type: "full-reload" });
-          },
-          onError: (error) => {
-            server.config.logger.error(`[anhur] ${formatAnhurError(error)}`);
-          },
-        },
+      syncViteWatchRoots(
+        server,
+        watchState,
+        watchRootsFromBuild(result, rootDir, configFileName),
       );
 
-      server.httpServer?.once("close", () => {
-        void watchController?.close();
+      disposeWatcher?.();
+      disposeWatcher = attachAnhurDevWatcher({
+        server,
+        rootDir,
+        configFileName,
+        getWatchState: () => watchState,
+        onBuildResult: async (next) => {
+          applyBuildResult(next.config, next.outputDir);
+          logBuild(next, "rebuilt");
+          invalidateGeneratedModules(server);
+          sendFullReload(server);
+        },
       });
+
+      const previousClose = server.close.bind(server);
+      server.close = async () => {
+        disposeWatcher?.();
+        disposeWatcher = undefined;
+        await previousClose();
+      };
     },
 
     async writeBundle(outputOptions) {
@@ -197,8 +197,8 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
     },
 
     async closeBundle() {
-      await watchController?.close();
-      watchController = undefined;
+      disposeWatcher?.();
+      disposeWatcher = undefined;
     },
   };
 }
