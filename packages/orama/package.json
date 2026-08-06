@@ -1,6 +1,6 @@
 {
   "name": "@anhur/orama",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Build-time Orama full-text search indexes for @anhur/core collections",
   "keywords": [
     "anhur",
@@ -46,11 +46,13 @@
     "@anhur/oxfmt": "workspace:*",
     "@anhur/oxlint": "workspace:*",
     "@types/node": "^22",
+    "jiti": "^2.7.0",
     "oxfmt": "^0.62.0",
     "oxlint": "^1.77.0",
     "tsdown": "0.22.14",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "zod": "^4.4.3"
   },
   "engines": {
     "node": "^22.18.0 || >=24.11.0"

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { AnhurConfig } from "./config";
 import { createPersistCache, type PersistCache } from "./persist-cache";
@@ -48,6 +48,8 @@ export type BuildContext = {
    * and return its public `src`. Requires an `assets` processor.
    */
   emitAsset(absoluteSourcePath: string): Promise<EmittedAsset>;
+  /** Assets copied during this build (for pruning orphans after success). */
+  getEmittedAssets(): readonly EmittedAsset[];
 };
 
 const GLOBAL_KEY = "__anhur_build_context_als__" as const;
@@ -101,8 +103,10 @@ export async function createBuildContext(
           path.resolve(options.configDir, config.cacheDir ?? ".anhur/cache"),
         );
 
+  // Do not wipe the live assets directory here. A failed rebuild (invalid
+  // content, etc.) must leave the previous successful assets on disk for Vite
+  // to keep serving. Orphans are removed via pruneEmittedAssets after success.
   if (assets) {
-    await rm(assets.dir, { recursive: true, force: true });
     await mkdir(assets.dir, { recursive: true });
   }
 
@@ -118,6 +122,9 @@ export async function createBuildContext(
     assets,
     getProcessor(id) {
       return findProcessor(processors, id);
+    },
+    getEmittedAssets() {
+      return [...emitCache.values()];
     },
     async emitAsset(absoluteSourcePath) {
       if (!assets) {
@@ -147,6 +154,27 @@ export async function createBuildContext(
       return emitted;
     },
   };
+}
+
+/**
+ * Remove asset files that were not emitted during this successful build.
+ * Safe to call only after the build fully succeeds.
+ */
+export async function pruneEmittedAssets(ctx: BuildContext): Promise<void> {
+  if (!ctx.assets) return;
+
+  const keep = new Set(
+    ctx.getEmittedAssets().map((asset) => path.resolve(asset.outputPath)),
+  );
+  const entries = await readdir(ctx.assets.dir, { withFileTypes: true });
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.isFile()) return;
+      const full = path.join(ctx.assets!.dir, entry.name);
+      if (keep.has(path.resolve(full))) return;
+      await rm(full, { force: true });
+    }),
+  );
 }
 
 export function getBuildContext(): BuildContext {

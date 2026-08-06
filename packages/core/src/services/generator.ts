@@ -534,8 +534,10 @@ export class Generator extends Context.Service<
       }): Effect.Effect<void, PlatformError> =>
         Effect.gen(function* () {
           const { config, configPath, rootDir, outputDir, built } = options;
-          // Own the whole output dir so renamed/removed collections cannot leave
-          // stale allX.js / getX.js modules. Integrations rewrite their files after.
+          // Stage into a sibling dir first (see Builder). Own the staging tree so
+          // renamed/removed collections cannot leave stale allX.js / getX.js
+          // modules. Integrations rewrite their files after; live output swaps
+          // only when the full build succeeds.
           yield* removeQuiet(outputDir);
           yield* fs.makeDirectory(outputDir, { recursive: true });
           yield* writeText(path.join(outputDir, ".keep"), "");

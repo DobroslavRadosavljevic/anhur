@@ -89,7 +89,20 @@ export type IntegrationHandler = {
   ) => void | Promise<void>;
 };
 
-const handlers = new Map<string, IntegrationHandler>();
+const GLOBAL_HANDLERS_KEY = "__anhur_integration_handlers__" as const;
+
+type GlobalHandlers = typeof globalThis & {
+  [GLOBAL_HANDLERS_KEY]?: Map<string, IntegrationHandler>;
+};
+
+/** Shared across jiti + host duplicates of this module. */
+function getHandlers(): Map<string, IntegrationHandler> {
+  const g = globalThis as GlobalHandlers;
+  if (!g[GLOBAL_HANDLERS_KEY]) {
+    g[GLOBAL_HANDLERS_KEY] = new Map();
+  }
+  return g[GLOBAL_HANDLERS_KEY];
+}
 
 /**
  * Register a runner for config entries `{ id, ...options }` that do not carry
@@ -101,18 +114,18 @@ export function registerIntegration(handler: IntegrationHandler): void {
       "@anhur/core: registerIntegration requires a non-empty id.",
     );
   }
-  handlers.set(handler.id, handler);
+  getHandlers().set(handler.id, handler);
 }
 
 export function getIntegrationHandler(
   id: string,
 ): IntegrationHandler | undefined {
-  return handlers.get(id);
+  return getHandlers().get(id);
 }
 
 /** Test helper — clears registered integration handlers. */
 export function clearIntegrationHandlers(): void {
-  handlers.clear();
+  getHandlers().clear();
 }
 
 /**

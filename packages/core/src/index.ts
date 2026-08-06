@@ -86,6 +86,7 @@ export {
   ASSETS_PROCESSOR_ID,
   createBuildContext,
   getBuildContext,
+  pruneEmittedAssets,
   resolveAssetsConfig,
   withBuildContext,
   type AssetsProcessorOptions,

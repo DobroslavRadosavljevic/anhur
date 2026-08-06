@@ -66,7 +66,7 @@ import { allPosts, getPost } from "anhur/generated";
 - Plural folder names are fine: `use_cases` → `UseCase`, `getUseCase`, `allUseCases`. Set `typeName` on `defineCollection` when you need a different document type (not under `generate`)
 - Use folders like `content/posts/en/` and `content/posts/de/` when you need multiple languages
 - List pages can use the light list (`allPosts`); detail pages can load one full document with `getPost("slug")` or `getPost({ slug })` (returns `null` if missing)
-- Each build clears the generate output folder, so renamed or removed collections do not leave stale modules
+- Each successful build replaces the generate output folder (via a staging swap), so renamed or removed collections do not leave stale modules — and a failed rebuild leaves the previous live output intact
 
 ## License
 

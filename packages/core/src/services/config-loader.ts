@@ -64,15 +64,19 @@ export class ConfigLoader extends Context.Service<
       const path = yield* Path.Path;
       const jiti = createJiti(import.meta.url, {
         interopDefault: true,
-        // Keep moduleCache so `@anhur/*` helpers share process state with the host
-        // (document meta / build context). Config files are busted on each load.
+        // Cache within this jiti instance only (not shared with the Vite/CLI host).
+        // Config files are cache-busted on each load below.
         moduleCache: true,
         fsCache: false,
+        // Prefer Node-native loads for published `node_modules/@anhur/*` installs.
+        // Workspace realpaths (packages/*/src) often bypass this match — any
+        // process-wide state must still use globalThis / Symbol.for.
         nativeModules: [
           "@anhur/core",
           "@anhur/mdx",
           "@anhur/markdown",
           "@anhur/assets",
+          "@anhur/orama",
         ],
       });
 

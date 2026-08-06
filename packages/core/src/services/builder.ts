@@ -1,7 +1,8 @@
 import { Context, Effect, Layer, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
+import { rm } from "node:fs/promises";
 import { applyDocumentTransforms } from "../apply-transforms";
-import { createBuildContext } from "../build-context";
+import { createBuildContext, pruneEmittedAssets } from "../build-context";
 import { isCollection, isSingleton, type AnhurConfig } from "../config";
 import {
   ConfigInvalidError,
@@ -9,6 +10,7 @@ import {
   type TransformFailedError,
 } from "../errors";
 import { runIntegrations } from "../integrations";
+import { publishStagingDirectory, stagingDirectoryFor } from "../publish-dir";
 import { resolvePendingReferences } from "../relations";
 import { toBuiltSnapshots } from "../transform";
 import { ConfigLoader, type LoadConfigError } from "./config-loader";
@@ -78,6 +80,10 @@ export class Builder extends Context.Service<
             configDir,
             config.outputDir ?? ".anhur/generated",
           );
+          // Write into a sibling staging dir, then swap only after integrations
+          // and hooks succeed — so a failed rebuild cannot wipe live Orama /
+          // generated modules that Vite is still serving.
+          const stagingOutputDir = stagingDirectoryFor(outputDir);
 
           const buildContext = yield* Effect.tryPromise({
             try: () =>
@@ -159,89 +165,126 @@ export class Builder extends Context.Service<
             }
           }
 
-          yield* generator.write({
-            config,
-            configPath,
-            rootDir,
-            outputDir,
-            built,
+          const removeStaging = Effect.promise(() =>
+            rm(stagingOutputDir, { recursive: true, force: true }),
+          ).pipe(Effect.catch(() => Effect.void));
+
+          const writeAndPublish = Effect.gen(function* () {
+            yield* removeStaging;
+
+            yield* generator.write({
+              config,
+              configPath,
+              rootDir,
+              outputDir: stagingOutputDir,
+              built,
+            });
+
+            const snapshots = toBuiltSnapshots(built);
+            for (const item of built) {
+              const snap = snapshots.find((s) => s.name === item.source.name);
+              if (!snap) continue;
+              const source = item.source;
+              if (isCollection(source) && source.onSuccess) {
+                const onSuccess = source.onSuccess;
+                yield* Effect.tryPromise({
+                  try: async () => {
+                    await onSuccess(snap.documents);
+                  },
+                  catch: (cause) =>
+                    new ConfigInvalidError({
+                      path: configPath,
+                      detail: `onSuccess(${source.name}) failed: ${
+                        cause instanceof Error ? cause.message : String(cause)
+                      }`,
+                    }),
+                });
+              }
+              if (isSingleton(source) && source.onSuccess) {
+                const onSuccess = source.onSuccess;
+                yield* Effect.tryPromise({
+                  try: async () => {
+                    await onSuccess(snap.documents[0]);
+                  },
+                  catch: (cause) =>
+                    new ConfigInvalidError({
+                      path: configPath,
+                      detail: `onSuccess(${source.name}) failed: ${
+                        cause instanceof Error ? cause.message : String(cause)
+                      }`,
+                    }),
+                });
+              }
+            }
+
+            if (config.integrations?.length) {
+              const integrations = config.integrations;
+              yield* Effect.tryPromise({
+                try: async () => {
+                  await runIntegrations(integrations, {
+                    rootDir,
+                    outputDir: stagingOutputDir,
+                    sources: snapshots,
+                    config,
+                  });
+                },
+                catch: (cause) =>
+                  new ConfigInvalidError({
+                    path: configPath,
+                    detail: `integrations failed: ${
+                      cause instanceof Error ? cause.message : String(cause)
+                    }`,
+                  }),
+              });
+            }
+
+            if (config.complete) {
+              const complete = config.complete;
+              yield* Effect.tryPromise({
+                try: async () => {
+                  await complete(snapshots, {
+                    rootDir,
+                    outputDir: stagingOutputDir,
+                  });
+                },
+                catch: (cause) =>
+                  new ConfigInvalidError({
+                    path: configPath,
+                    detail: `complete hook failed: ${
+                      cause instanceof Error ? cause.message : String(cause)
+                    }`,
+                  }),
+              });
+            }
+
+            yield* Effect.tryPromise({
+              try: () => publishStagingDirectory(stagingOutputDir, outputDir),
+              catch: (cause) =>
+                new ConfigInvalidError({
+                  path: configPath,
+                  detail: `failed to publish generated output: ${
+                    cause instanceof Error ? cause.message : String(cause)
+                  }`,
+                }),
+            });
+
+            yield* Effect.tryPromise({
+              try: () => pruneEmittedAssets(buildContext),
+              catch: (cause) =>
+                new ConfigInvalidError({
+                  path: configPath,
+                  detail: `failed to prune assets: ${
+                    cause instanceof Error ? cause.message : String(cause)
+                  }`,
+                }),
+            });
+
+            return { config, configPath, outputDir, built };
           });
 
-          const snapshots = toBuiltSnapshots(built);
-          for (const item of built) {
-            const snap = snapshots.find((s) => s.name === item.source.name);
-            if (!snap) continue;
-            const source = item.source;
-            if (isCollection(source) && source.onSuccess) {
-              const onSuccess = source.onSuccess;
-              yield* Effect.tryPromise({
-                try: async () => {
-                  await onSuccess(snap.documents);
-                },
-                catch: (cause) =>
-                  new ConfigInvalidError({
-                    path: configPath,
-                    detail: `onSuccess(${source.name}) failed: ${
-                      cause instanceof Error ? cause.message : String(cause)
-                    }`,
-                  }),
-              });
-            }
-            if (isSingleton(source) && source.onSuccess) {
-              const onSuccess = source.onSuccess;
-              yield* Effect.tryPromise({
-                try: async () => {
-                  await onSuccess(snap.documents[0]);
-                },
-                catch: (cause) =>
-                  new ConfigInvalidError({
-                    path: configPath,
-                    detail: `onSuccess(${source.name}) failed: ${
-                      cause instanceof Error ? cause.message : String(cause)
-                    }`,
-                  }),
-              });
-            }
-          }
-
-          if (config.integrations?.length) {
-            const integrations = config.integrations;
-            yield* Effect.tryPromise({
-              try: async () => {
-                await runIntegrations(integrations, {
-                  rootDir,
-                  outputDir,
-                  sources: snapshots,
-                  config,
-                });
-              },
-              catch: (cause) =>
-                new ConfigInvalidError({
-                  path: configPath,
-                  detail: `integrations failed: ${
-                    cause instanceof Error ? cause.message : String(cause)
-                  }`,
-                }),
-            });
-          }
-
-          if (config.complete) {
-            const complete = config.complete;
-            yield* Effect.tryPromise({
-              try: async () => {
-                await complete(snapshots, { rootDir, outputDir });
-              },
-              catch: (cause) =>
-                new ConfigInvalidError({
-                  path: configPath,
-                  detail: `complete hook failed: ${
-                    cause instanceof Error ? cause.message : String(cause)
-                  }`,
-                }),
-            });
-          }
-
-          return { config, configPath, outputDir, built };
+          return yield* writeAndPublish.pipe(
+            Effect.onError(() => removeStaging),
+          );
         });
 
       return Builder.of({ build });
