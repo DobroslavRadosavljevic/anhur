@@ -68,10 +68,7 @@ Override with `directory` / `filename` on `orama({…})` if needed.
 Same client works in the browser and in Node:
 
 ```ts
-import {
-  createSearcher,
-  type AnhurOramaIndex,
-} from "@anhur/orama/client";
+import { createSearcher, type AnhurOramaIndex } from "@anhur/orama/client";
 
 import snapshot from "../.anhur/generated/search/orama.json";
 
@@ -93,10 +90,10 @@ for (const hit of result.hits) {
 
 ## ✨ What you get
 
-| Piece | Role |
-| --- | --- |
-| `schema` | Orama field types for matchable columns |
-| `index(doc)` | Values written for those columns |
+| Piece        | Role                                                  |
+| ------------ | ----------------------------------------------------- |
+| `schema`     | Orama field types for matchable columns               |
+| `index(doc)` | Values written for those columns                      |
 | `store(doc)` | Payload returned on each hit (not matched by default) |
 
 - Collection keys must be collection names from `content` (singletons are rejected at typecheck)
