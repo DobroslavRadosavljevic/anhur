@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { BuildResult } from "@anhur/core";
+import { formatAssetsStorageLogLines, type BuildResult } from "@anhur/core";
 
 export type BuildLogKind = "built" | "rebuilt";
 
@@ -36,6 +36,10 @@ export function formatAnhurBuildLog(
           : shown.join(", ");
 
     lines.push(`[anhur]   ${item.source.name} (${ids.length}): ${list}`);
+  }
+
+  if (result.assetsStorage) {
+    lines.push(...formatAssetsStorageLogLines(result.assetsStorage));
   }
 
   return lines;

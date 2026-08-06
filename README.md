@@ -23,6 +23,7 @@ Good fits:
 | Marketing site      | Localized pages + site settings            |
 | Product catalog     | JSON products with images                  |
 | Multi-language site | Same content under `en/` and `de/` folders |
+| CDN asset delivery  | Build-time upload to S3/R2/MinIO via files-sdk |
 
 ## ⚙️ How it works
 
@@ -52,7 +53,7 @@ Install only what you need:
 | [`@anhur/vite`](./packages/vite)         | Vite apps: rebuild on change + `anhur/generated`         |
 | [`@anhur/mdx`](./packages/mdx)           | MDX body fields + React renderer                         |
 | [`@anhur/markdown`](./packages/markdown) | Markdown → HTML body fields                              |
-| [`@anhur/assets`](./packages/assets)     | Images and files next to your content                    |
+| [`@anhur/assets`](./packages/assets)     | Images/files next to content; optional CDN upload (files-sdk) |
 
 ## 🚀 Quick start
 

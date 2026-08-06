@@ -1,6 +1,6 @@
 {
   "name": "@anhur/mdx",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Opt-in MDX compile helpers for @anhur/core documents",
   "keywords": [
     "anhur",

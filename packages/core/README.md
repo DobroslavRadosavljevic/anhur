@@ -22,7 +22,7 @@ Optional extras live in other packages:
 
 - MDX bodies → [`@anhur/mdx`](https://www.npmjs.com/package/@anhur/mdx)
 - Markdown → HTML → [`@anhur/markdown`](https://www.npmjs.com/package/@anhur/markdown)
-- Images and files → [`@anhur/assets`](https://www.npmjs.com/package/@anhur/assets)
+- Images and files (optional CDN sync) → [`@anhur/assets`](https://www.npmjs.com/package/@anhur/assets)
 - Full-text search → [`@anhur/orama`](https://www.npmjs.com/package/@anhur/orama)
 - Vite integration → [`@anhur/vite`](https://www.npmjs.com/package/@anhur/vite)
 

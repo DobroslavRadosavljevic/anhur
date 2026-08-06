@@ -4,8 +4,11 @@ import path from "node:path";
 import type { Connect, Logger, Plugin, UserConfig } from "vite";
 import {
   build,
+  findProcessor,
+  ASSETS_PROCESSOR_ID,
   resolveConfigPath,
   type AnhurConfig,
+  type AssetsProcessorOptions,
   type BuildResult,
 } from "@anhur/core";
 import { formatAnhurBuildLog, type BuildLogKind } from "./build-log";
@@ -72,6 +75,7 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
   let configDir = "";
   let assetsDir = "";
   let assetsBase = "/anhur-assets/";
+  let assetsStorageEnabled = false;
   let initialBuild: Promise<BuildResult> | undefined;
   let disposeWatcher: (() => void) | undefined;
   let logger: Logger | undefined;
@@ -91,6 +95,12 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
   function applyBuildResult(config: AnhurConfig, nextOutputDir: string) {
     outputDir = nextOutputDir;
     const assets = syncAssetsFromConfig(config, configDir);
+    const storage = (
+      findProcessor(config.processors, ASSETS_PROCESSOR_ID)?.options as
+        | AssetsProcessorOptions
+        | undefined
+    )?.storage;
+    assetsStorageEnabled = storage?.enabled === true;
     if (!assets) {
       assetsDir = "";
       return;
@@ -189,6 +199,8 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
 
     async writeBundle(outputOptions) {
       if (!assetsDir || !existsSync(assetsDir)) return;
+      // CDN delivery: skip local outDir copy only when remote sync is enabled.
+      if (assetsStorageEnabled && /^https?:\/\//i.test(assetsBase)) return;
       const outDir = outputOptions.dir;
       if (!outDir) return;
       const basePath = assetsBase.replace(/^\//, "").replace(/\/$/, "");

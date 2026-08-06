@@ -72,4 +72,22 @@ describe("formatAnhurBuildLog", () => {
     const lines = formatAnhurBuildLog(result, "built");
     expect(lines[0]).toContain(path.resolve("/abs/out"));
   });
+
+  it("lists asset storage keys when present", () => {
+    const result = fakeResult([{ name: "posts", ids: ["hello"] }], "/out");
+    result.assetsStorage = {
+      uploaded: ["anhur/new.png"],
+      skipped: ["anhur/old.png"],
+      deleted: ["anhur/gone.png"],
+      dryRun: false,
+    };
+
+    const lines = formatAnhurBuildLog(result, "built");
+    expect(lines).toContain(
+      "[anhur]   assets storage: 1 uploaded, 1 skipped, 1 deleted",
+    );
+    expect(lines).toContain("[anhur]     uploaded (1): anhur/new.png");
+    expect(lines).toContain("[anhur]     skipped (1): anhur/old.png");
+    expect(lines).toContain("[anhur]     deleted (1): anhur/gone.png");
+  });
 });

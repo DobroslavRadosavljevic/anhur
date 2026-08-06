@@ -1,6 +1,6 @@
 ---
 title: "@anhur/assets"
-description: Image and file fields with copy and URL rewrite.
+description: Image and file fields with copy, URL rewrite, and optional CDN upload.
 sidebar:
   label: "@anhur/assets"
   order: 5
@@ -10,9 +10,10 @@ sidebar:
 import { assets, schema as a } from "@anhur/assets";
 ```
 
-- `processors: [assets({ dir?, base? })]` — defaults `.anhur/assets` and `/anhur-assets/`
+- `processors: [assets({ dir?, base?, storage? })]` — defaults `.anhur/assets` and `/anhur-assets/`
 - Schema: `a.image()`, `a.file()`
 - Rewrites relative URLs in MDX/Markdown bodies when those processors run
 - Depends on `sharp`
+- Optional **build-time CDN sync** via `storage` + [files-sdk](https://files-sdk.dev/) (S3, R2, MinIO, …)
 
 Guide: [Assets](/guides/assets)

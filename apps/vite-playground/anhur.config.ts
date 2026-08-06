@@ -9,6 +9,18 @@ import { assets, schema as a } from "@anhur/assets";
 import { markdown, schema as md } from "@anhur/markdown";
 import { mdx, schema as m } from "@anhur/mdx";
 import { orama } from "@anhur/orama";
+import { Files } from "files-sdk";
+import { minio } from "files-sdk/minio";
+
+/** Set `ANHUR_ASSETS_UPLOAD=1` after `docker compose -f docker-compose.minio.yml up`. */
+const uploadAssets = process.env.ANHUR_ASSETS_UPLOAD === "1";
+
+const minioEndpoint = process.env.MINIO_ENDPOINT ?? "http://127.0.0.1:9000";
+const minioBucket = process.env.MINIO_BUCKET ?? "anhur-assets";
+const storagePrefix = "playground";
+
+/** Public URL prefix for hashed files when uploading (path-style MinIO). */
+const cdnBase = `${minioEndpoint}/${minioBucket}/${storagePrefix}/`;
 
 /** Monolingual YAML authors (`localized: false`). */
 const authors = defineCollection({
@@ -158,7 +170,25 @@ export default defineConfig({
     markdown({ gfm: true }),
     assets({
       dir: ".anhur/assets",
-      base: "/anhur-assets/",
+      base: uploadAssets ? cdnBase : "/anhur-assets/",
+      storage: uploadAssets
+        ? {
+            enabled: true,
+            prefix: storagePrefix,
+            prune: true,
+            files: () =>
+              new Files({
+                adapter: minio({
+                  bucket: minioBucket,
+                  endpoint: minioEndpoint,
+                  accessKeyId: process.env.MINIO_ACCESS_KEY_ID ?? "anhur",
+                  secretAccessKey:
+                    process.env.MINIO_SECRET_ACCESS_KEY ?? "anhursecret",
+                  publicBaseUrl: `${minioEndpoint}/${minioBucket}`,
+                }),
+              }),
+          }
+        : { enabled: false },
     }),
   ],
   content: [authors, posts, pages, settings, products, changelog, about],

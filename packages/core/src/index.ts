@@ -90,11 +90,20 @@ export {
   resolveAssetsConfig,
   withBuildContext,
   type AssetsProcessorOptions,
+  type AssetsStorageFilesInput,
+  type AssetsStorageOptions,
+  type AssetStorageClient,
   type BuildContext,
   type CreateBuildContextOptions,
   type EmittedAsset,
   type ResolvedAssetsConfig,
 } from "./build-context";
+
+export {
+  formatAssetsStorageLogLines,
+  syncEmittedAssetsStorage,
+  type AssetsStorageSyncResult,
+} from "./assets-storage";
 
 export {
   getDocumentMeta,

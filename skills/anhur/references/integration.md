@@ -105,7 +105,9 @@ If assets are ignored, production must run Anhur build (Vite plugin does this on
 
 1. Run `anhur build` in a prebuild/CI step.
 2. Resolve `anhur/generated` via bundler alias or `tsconfig` paths to `.anhur/generated`.
-3. Serve `.anhur/assets` at `assets().base` (static copy or server middleware).
+3. Serve assets:
+   - Local/`base` path: serve `.anhur/assets` at `assets().base` (static copy or server middleware).
+   - CDN: set `assets({ storage: { enabled: true }, base: "https://cdn…/" })` so generated `src` points at the CDN (see [assets-storage.md](assets-storage.md)).
 
 There is no official Next adapter yet — wire alias + prebuild manually.
 

@@ -7,11 +7,12 @@ description: >-
   anhur.config.ts, collections, singletons, processors, integrations (orama /
   defineIntegration), Zod content schemas, folder i18n, anhur/generated imports,
   the Vite plugin, CLI build/watch, drafts/hooks, MDX/Markdown bodies, assets,
-  or full-text search — or when the user mentions Anhur, .anhur, or local
-  MD/MDX/YAML/JSON content pipelines.
+  CDN/object storage upload (assets storage + files-sdk), or full-text search —
+  or when the user mentions Anhur, .anhur, or local MD/MDX/YAML/JSON content
+  pipelines.
 license: MIT
 metadata:
-  version: "0.0.8"
+  version: "0.0.9"
   packages: "@anhur/core,@anhur/vite,@anhur/mdx,@anhur/markdown,@anhur/assets,@anhur/orama"
 ---
 
@@ -47,15 +48,16 @@ Anhur is for when content **lives in the repo**, authors edit files, and the app
 
 ## What it is for
 
-| Use                        | Example                                             |
-| -------------------------- | --------------------------------------------------- |
-| Blogs / docs / changelogs  | MDX posts, Markdown pages, YAML authors             |
-| Marketing / product sites  | Localized pages + site settings singleton           |
-| Catalogs / structured data | JSON products with unique SKUs and file attachments |
-| Multi-locale sites         | Same collection under `en/` / `de/` folders         |
-| In-app full-text search    | Orama index over one or many collections            |
+| Use                        | Example                                                 |
+| -------------------------- | ------------------------------------------------------- |
+| Blogs / docs / changelogs  | MDX posts, Markdown pages, YAML authors                 |
+| Marketing / product sites  | Localized pages + site settings singleton               |
+| Catalogs / structured data | JSON products with unique SKUs and file attachments     |
+| Multi-locale sites         | Same collection under `en/` / `de/` folders             |
+| In-app full-text search    | Orama index over one or many collections                |
+| CDN-delivered assets       | Build-time upload via `assets({ storage })` + files-sdk |
 
-**Not for (today):** remote CMS as the source of truth, Next-only adapters, CDN asset upload, non-Zod schema libraries, vector / AI search.
+**Not for (today):** remote CMS as the source of truth, Next-only adapters, browser/signed media uploads (runtime media library), non-Zod schema libraries, vector / AI search.
 
 ## When to use this skill
 
@@ -64,6 +66,7 @@ Anhur is for when content **lives in the repo**, authors edit files, and the app
 - Add/change collections, singletons, processors, schemas, or **integrations**
 - Wire Orama search (`orama({…})` in `integrations`, `createSearcher`)
 - Wire Vite (`anhur/generated` alias + asset serving) or CI (`anhur build`)
+- Wire **remote asset storage** (`assets({ storage })`, files-sdk, CDN `base`, prune)
 - Debug processor/schema mismatches, assets, drafts, localization, or search index output
 
 ## Package map
@@ -74,7 +77,7 @@ Anhur is for when content **lives in the repo**, authors edit files, and the app
 | `@anhur/vite`     | Vite apps        | Plugin: Vite-watcher rebuilds, build logs, `anhur/generated` alias, serve `.anhur/assets`                 |
 | `@anhur/mdx`      | MDX bodies       | `mdx()` processor, `schema as m` → `m.mdx()`, `MDXContent` from `@anhur/mdx/react`                        |
 | `@anhur/markdown` | Markdown→HTML    | `markdown()` processor, `schema as md` → `md.markdown()`                                                  |
-| `@anhur/assets`   | Images/files     | `assets()` processor, `schema as a` → `a.image()` / `a.file()` (sharp)                                    |
+| `@anhur/assets`   | Images/files     | `assets()` processor, `a.image()` / `a.file()`, optional CDN sync via `storage` + files-sdk               |
 | `@anhur/orama`    | Full-text search | `orama()` integration + `createSearcher` (browser/server)                                                 |
 
 **Rule:** every schema helper from an opt-in package needs its processor in `defineConfig({ processors })`. Missing processor → build fails.
@@ -93,6 +96,7 @@ Copy and track:
 - [ ] Register processors matching schema helpers
 - [ ] Define collections / singletons + content files
 - [ ] Optional: integrations: [orama({…})]
+- [ ] Optional: assets({ storage }) for CDN upload (files-sdk peers, enabled in CI/prod only)
 - [ ] Vite: plugins: [anhur()] + tsconfig paths for anhur/generated
 - [ ] Include .anhur/generated in tsconfig; gitignore .anhur/cache (optional commit generated)
 - [ ] Smoke: anhur build OR vite dev; import from anhur/generated (and search index if used)
@@ -226,6 +230,8 @@ export default defineConfig({
 
 Schema helpers, generate splits, hooks: [references/schemas.md](references/schemas.md)
 
+CDN / object storage for assets: [references/assets-storage.md](references/assets-storage.md)
+
 ## Content layout
 
 **Localized** (default when `localization` is set): `{directory}/{locale}/…`
@@ -281,7 +287,7 @@ export function PostBody({ code }: { code: string }) {
 4. Drafts: `draft: true` or `ctx.skip(reason)` in `transform`.
 5. Search / post-codegen packages use `integrations: [orama({…})]`, not `processors` or `complete: orama(…)`.
 6. Use plain `defineConfig({ content: […], integrations: [orama({…})] })` — no `defineConfig<typeof content>`, and never pass `content` into `orama`.
-7. Do not invent CDN upload, Next adapter, Valibot, or Orama vector/AI search — out of scope.
+7. Do not invent a Next adapter, Valibot schemas, or Orama vector/AI search — out of scope. CDN/object upload is supported via `assets({ storage })` + files-sdk (gate with `enabled`, require `prefix`, prefer a `files` factory; empty-emit skips prune unless `pruneEmpty: true`).
 8. Package scope `@anhur` may rename before/after publish; keep config names (`anhur.config.ts`, `.anhur/`, `anhur/generated`) unless the project documents a rename.
 
 ## Failure modes

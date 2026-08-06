@@ -48,6 +48,24 @@
 
 **Fix:** `bun pm untrusted` → trust `sharp` (and related) via `trustedDependencies` as needed.
 
+## Asset storage enabled without CDN `base`
+
+**Symptom:** Build fails: `storage.enabled: true` requires an absolute `http(s)` URL for `base`.
+
+**Fix:** Set `base` to the public CDN origin in prod/CI (e.g. `https://cdn.example.com/anhur/`). Keep `/anhur-assets/` for local with `enabled: false`.
+
+## Asset storage wiped the bucket / unexpected deletes
+
+**Symptom:** Remote objects under the prefix disappeared after a build with few or no assets.
+
+**Fix:** Empty emit skips prune by default. Do not set `pruneEmpty: true` unless you intend a full prefix wipe. Always use a dedicated `prefix`. Do not run concurrent prod builds that share one prefix.
+
+## Asset storage / files-sdk missing peers
+
+**Symptom:** `ERR_MODULE_NOT_FOUND` for `@aws-sdk/client-s3` (or similar) when constructing a MinIO/S3/R2 adapter.
+
+**Fix:** Install `files-sdk` plus the adapter’s optional peers (see [files-sdk adapters](https://files-sdk.dev/) and [assets-storage.md](assets-storage.md)). Prefer a `files: () => new Files(…)` factory so local `enabled: false` builds never load the provider SDK.
+
 ## Cache stale after asset URL rewrite
 
 Asset-rewriting builds skip the disk cache for affected compiles. If something looks stale with `cacheDir` enabled and no assets processor, delete `.anhur/cache` or set `cacheDir: false`.

@@ -4,6 +4,8 @@
 
 It rebuilds your content when files change, makes `anhur/generated` importable, and can serve copied assets from `.anhur/assets`.
 
+With `@anhur/assets` remote storage enabled and a CDN `base`, production builds skip copying assets into the Vite outDir (URLs already point at the CDN). Build logs then include an `assets storage: …` summary line.
+
 ## 📦 Install
 
 ```sh
@@ -53,7 +55,14 @@ On startup and each rebuild, Vite logs a short summary, for example:
 [anhur]   authors (2): ada, grace
 ```
 
-After a content or config change you’ll see the same shape with `rebuilt` instead of `built`.
+After a content or config change you’ll see the same shape with `rebuilt` instead of `built`. When remote asset sync runs, extra lines list counts and keys:
+
+```text
+[anhur]   assets storage: 2 uploaded, 8 skipped, 1 deleted
+[anhur]     uploaded (2): anhur/cover-abc.png, anhur/notes-def.txt
+[anhur]     skipped (8): anhur/ada-….png, … +6 more
+[anhur]     deleted (1): anhur/orphan-….bin
+```
 
 Editing content or the Anhur config both go through that path. Unrelated files outside those roots do not trigger an Anhur rebuild.
 

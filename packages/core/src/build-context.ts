@@ -9,11 +9,87 @@ import { findProcessor, type ProcessorPlugin } from "./processors";
 /** Well-known id for `@anhur/assets` `assets()` processor. */
 export const ASSETS_PROCESSOR_ID = "assets";
 
+/** Minimal files-sdk-compatible client used for upload / exists / list / delete. */
+export type AssetStorageClient = {
+  upload(
+    key: string,
+    body: Uint8Array | string,
+    opts?: { cacheControl?: string; contentType?: string },
+  ): Promise<unknown>;
+  exists(key: string): Promise<boolean>;
+  /**
+   * Delete one key or many. files-sdk bulk delete returns
+   * `{ deleted, errors? }` and does not throw on partial failure — callers
+   * must inspect `errors`.
+   */
+  delete(key: string | string[]): Promise<void | {
+    deleted?: string[];
+    errors?: Array<{ key: string; error: unknown }>;
+  }>;
+  listAll(opts?: { prefix?: string }): AsyncIterable<{ key: string }>;
+};
+
+/**
+ * Duck-typed files-sdk `Files` client (or a factory that returns one).
+ * Prefer a factory so disabled builds never construct the provider client.
+ */
+export type AssetsStorageFilesInput =
+  | AssetStorageClient
+  | (() => AssetStorageClient | Promise<AssetStorageClient>);
+
+type AssetsStorageSharedOptions = {
+  /** Plan uploads/deletes without writing. Default `false`. */
+  dryRun?: boolean;
+  /** Parallel uploads. Default `8`. */
+  concurrency?: number;
+  /** Cache-Control for uploads. Default immutable year-long. */
+  cacheControl?: string;
+  /**
+   * Allow prune when this build emitted zero assets (deletes every key under
+   * prefix). Default `false` — empty emit skips prune to avoid wiping the CDN.
+   */
+  pruneEmpty?: boolean;
+};
+
+/**
+ * Always pass `storage`; gate work with `enabled`.
+ * When disabled, `files` / `prefix` are optional so local config need not
+ * construct a client.
+ */
+export type AssetsStorageOptions =
+  | (AssetsStorageSharedOptions & {
+      enabled: false;
+      files?: AssetsStorageFilesInput;
+      prefix?: string;
+      prune?: boolean;
+    })
+  | (AssetsStorageSharedOptions & {
+      enabled: true;
+      /**
+       * files-sdk `Files` instance (or factory). Do not set a constructor
+       * `prefix` on the client — Anhur applies {@link AssetsStorageOptions}
+       * `prefix`.
+       */
+      files: AssetsStorageFilesInput;
+      /**
+       * Remote key prefix (required when enabled). Isolates list/delete
+       * (e.g. `"anhur"` → keys like `anhur/cover-abc12345.png`).
+       */
+      prefix: string;
+      /** Delete remote keys under prefix that were not emitted. Default `true`. */
+      prune?: boolean;
+    });
+
 export type AssetsProcessorOptions = {
   /** Directory for copied assets, relative to config file. Default `.anhur/assets`. */
   dir?: string;
   /** Public URL prefix (trailing slash). Default `/anhur-assets/`. */
   base?: string;
+  /**
+   * Optional remote storage sync (S3-compatible via files-sdk).
+   * Always pass the object; gate uploads with {@link AssetsStorageOptions.enabled}.
+   */
+  storage?: AssetsStorageOptions;
 };
 
 export type ResolvedAssetsConfig = {

@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { Console, Effect, Layer } from "effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Command, Flag } from "effect/unstable/cli";
+import { formatAssetsStorageLogLines } from "../assets-storage";
 import { buildEffect, type BuildResult } from "../build";
 import { formatAnhurError } from "../errors";
 import { layer as nodeLiveLayer } from "../layers/node-live";
@@ -25,6 +26,21 @@ function countDocuments(result: BuildResult): number {
   return result.built.reduce((n, item) => n + item.documents.length, 0);
 }
 
+function logBuildSummary(kind: "built" | "rebuilt", result: BuildResult) {
+  return Effect.gen(function* () {
+    yield* Console.log(
+      `anhur: ${kind} ${countDocuments(result)} document(s) → ${result.outputDir}`,
+    );
+    if (result.assetsStorage) {
+      for (const line of formatAssetsStorageLogLines(result.assetsStorage, {
+        prefix: "anhur:   ",
+      })) {
+        yield* Console.log(line);
+      }
+    }
+  });
+}
+
 const build = Command.make("build", projectFlags, (config) =>
   Effect.gen(function* () {
     const rootDir = path.resolve(config.root);
@@ -32,9 +48,7 @@ const build = Command.make("build", projectFlags, (config) =>
       rootDir,
       configPath: config.config,
     }).pipe(Effect.tapError((error) => Console.error(formatAnhurError(error))));
-    yield* Console.log(
-      `anhur: built ${countDocuments(result)} document(s) → ${result.outputDir}`,
-    );
+    yield* logBuildSummary("built", result);
   }),
 ).pipe(Command.withDescription("Collect content and write .anhur/generated"));
 
@@ -49,11 +63,7 @@ const watch = Command.make("watch", projectFlags, (config) =>
           { rootDir, configPath: config.config },
           {
             onBuild(result) {
-              return Effect.runPromise(
-                Console.log(
-                  `anhur: rebuilt ${countDocuments(result)} document(s) → ${result.outputDir}`,
-                ),
-              );
+              return Effect.runPromise(logBuildSummary("rebuilt", result));
             },
             onError(error) {
               return Effect.runPromise(

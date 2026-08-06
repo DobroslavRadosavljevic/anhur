@@ -2,6 +2,8 @@ import { Context, Effect, Layer, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { rm } from "node:fs/promises";
 import { applyDocumentTransforms } from "../apply-transforms";
+import { syncEmittedAssetsStorage } from "../assets-storage";
+import type { AssetsStorageSyncResult } from "../assets-storage";
 import { createBuildContext, pruneEmittedAssets } from "../build-context";
 import { isCollection, isSingleton, type AnhurConfig } from "../config";
 import {
@@ -33,6 +35,8 @@ export type BuildResult = {
   configPath: string;
   outputDir: string;
   built: BuiltSource[];
+  /** Present when `assets({ storage: { enabled: true } })` ran. */
+  assetsStorage?: AssetsStorageSyncResult;
 };
 
 export type BuildError =
@@ -268,6 +272,17 @@ export class Builder extends Context.Service<
                 }),
             });
 
+            const assetsStorage = yield* Effect.tryPromise({
+              try: () => syncEmittedAssetsStorage(buildContext),
+              catch: (cause) =>
+                new ConfigInvalidError({
+                  path: configPath,
+                  detail: `failed to sync asset storage: ${
+                    cause instanceof Error ? cause.message : String(cause)
+                  }`,
+                }),
+            });
+
             yield* Effect.tryPromise({
               try: () => pruneEmittedAssets(buildContext),
               catch: (cause) =>
@@ -279,7 +294,13 @@ export class Builder extends Context.Service<
                 }),
             });
 
-            return { config, configPath, outputDir, built };
+            return {
+              config,
+              configPath,
+              outputDir,
+              built,
+              ...(assetsStorage ? { assetsStorage } : {}),
+            };
           });
 
           return yield* writeAndPublish.pipe(

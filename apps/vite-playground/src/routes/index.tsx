@@ -54,6 +54,7 @@ const features = [
       "m.mdx()",
       "a.image()",
       "a.file()",
+      "assets storage",
       "s.unique()",
       "schema.transform",
       "body assets",

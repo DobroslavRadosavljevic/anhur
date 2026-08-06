@@ -1,6 +1,6 @@
 {
   "name": "@anhur/orama",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Build-time Orama full-text search indexes for @anhur/core collections",
   "keywords": [
     "anhur",

@@ -1,6 +1,6 @@
 ---
 title: Assets
-description: Copy images and files next to content with @anhur/assets.
+description: Copy images and files next to content with @anhur/assets, with optional CDN upload.
 sidebar:
   label: Assets
   order: 7
@@ -57,9 +57,59 @@ cover: ./cover.png
 
 With `assets()` registered, relative URLs in MDX/Markdown bodies are copied and rewritten. Without `assets()`, those URLs fail the build.
 
+## Remote storage (S3-compatible)
+
+Optional build-time sync via [files-sdk](https://files-sdk.dev/). Local authoring stays the same; when `storage.enabled` is true, Anhur uploads hashed files after a successful build and can delete unused remote objects under your prefix.
+
+Install peers for the adapter you use (MinIO example):
+
+```sh
+bun add files-sdk @aws-sdk/client-s3 @aws-sdk/s3-presigned-post @aws-sdk/s3-request-presigner
+```
+
+```ts
+import { Files } from "files-sdk";
+import { minio } from "files-sdk/minio";
+import { assets } from "@anhur/assets";
+
+const upload = process.env.ANHUR_ASSETS_UPLOAD === "1";
+
+assets({
+  dir: ".anhur/assets",
+  base: upload ? "https://cdn.example.com/anhur/" : "/anhur-assets/",
+  storage: {
+    enabled: upload,
+    prefix: "anhur",
+    prune: true,
+    files: () =>
+      new Files({
+        adapter: minio({
+          bucket: "anhur-assets",
+          endpoint: process.env.MINIO_ENDPOINT!,
+          accessKeyId: process.env.MINIO_ACCESS_KEY_ID,
+          secretAccessKey: process.env.MINIO_SECRET_ACCESS_KEY,
+          publicBaseUrl: "https://cdn.example.com",
+        }),
+      }),
+  },
+});
+```
+
+Rules:
+
+- Keep `enabled: false` for local/dev (disk + Vite only). `files` / `prefix` are optional when disabled.
+- When `enabled: true`, `base` must be an absolute `http(s)` URL (what generated `src` uses), and `files` + `prefix` are required.
+- Always set a non-empty `prefix` so prune cannot touch unrelated bucket keys.
+- Prefer a `files` factory so disabled builds never construct the client.
+- Do not set a constructor `prefix` on the `Files` instance — Anhur applies `storage.prefix`.
+- Upload failures fail the build; orphans are deleted only after uploads succeed.
+- Prune is skipped when this build emitted zero assets (avoids wiping the prefix). Set `pruneEmpty: true` only if you intentionally want a full prefix wipe.
+- Do not run concurrent production builds that share the same prefix (prune races).
+- Local MinIO: `docker compose -f docker-compose.minio.yml up` at the repo root (local throwaway credentials only).
+
 ## Vite
 
-[`@anhur/vite`](/guides/vite-plugin) serves the assets directory in development and copies them for production builds as needed.
+[`@anhur/vite`](/guides/vite-plugin) serves the assets directory in development and copies them for production builds when `base` is a site path. With `storage.enabled` and an absolute CDN `base`, the outDir copy is skipped.
 
 ## Package page
 

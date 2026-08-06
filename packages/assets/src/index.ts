@@ -5,7 +5,14 @@ export {
   type AnhurImage,
   type AnhurFile,
 } from "./schema";
-export type { AssetsProcessorOptions } from "@anhur/core";
+export type {
+  AssetsProcessorOptions,
+  AssetsStorageFilesInput,
+  AssetsStorageOptions,
+  AssetStorageClient,
+  AssetsStorageSyncResult,
+} from "@anhur/core";
+export { syncEmittedAssetsStorage } from "@anhur/core";
 export {
   isPassThroughUrl,
   isRelativeAssetUrl,

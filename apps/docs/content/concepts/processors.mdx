@@ -53,6 +53,8 @@ export default defineConfig({
 
 When `assets()` is registered, relative images and links inside MDX/Markdown bodies are copied and rewritten to the public base. Without `assets()`, those relative body URLs fail the build.
 
+`assets()` also accepts optional `storage` for build-time CDN upload (files-sdk). See the [Assets guide](/guides/assets#remote-storage-s3-compatible).
+
 ## Next
 
 - [MDX guide](/guides/mdx)

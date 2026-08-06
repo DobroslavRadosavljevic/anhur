@@ -4,9 +4,9 @@
   "type": "module",
   "scripts": {
     "dev": "blume dev",
-    "build": "blume build",
+    "build": "if [ -f .blume/dev.lock ]; then blume build --isolated; else blume build; fi",
     "preview": "blume preview",
-    "check-types": "blume check",
+    "check-types": "if [ -f .blume/dev.lock ]; then blume check --isolated; else blume check; fi",
     "doctor": "blume doctor",
     "validate": "blume validate"
   },

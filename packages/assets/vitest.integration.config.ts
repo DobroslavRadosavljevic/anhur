@@ -5,5 +5,7 @@ export default defineProject({
     name: "integration",
     environment: "node",
     include: ["tests/integration/**/*.{test,spec}.ts"],
+    testTimeout: 120_000,
+    hookTimeout: 120_000,
   },
 });

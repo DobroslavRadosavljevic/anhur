@@ -42,7 +42,9 @@ Does:
 5. Log document counts (and per-source ids) on startup and each rebuild
 6. Middleware for `assets().base` (default `/anhur-assets/`) from `.anhur/assets`
 
-Production: plugin copies assets into the Vite build output so static hosts serve them.
+Production: plugin copies assets into the Vite build output so static hosts serve them. When `assets({ storage: { enabled: true } })` uses an absolute `http(s)` CDN `base`, that local outDir copy is skipped (CDN is the source of truth).
+
+Build logs include an `assets storage: N uploaded, …` line when remote sync ran, plus truncated key lists for uploaded / skipped / deleted.
 
 ## `@anhur/mdx`
 
@@ -70,12 +72,13 @@ import { markdown, schema as md } from "@anhur/markdown";
 import { assets, schema as a } from "@anhur/assets";
 ```
 
-- `processors: [assets({ dir?: string, base?: string })]`
+- `processors: [assets({ dir?: string, base?: string, storage?: … })]`
   - Defaults: `dir: ".anhur/assets"`, `base: "/anhur-assets/"`
 - Schema: `cover: a.image()`, `brochure: a.file()` (optional variants)
 - SVG works with both helpers; the original `.svg` is copied as-is. `a.image()` fills size/blur when sharp can rasterize; otherwise size may come from SVG markup and blur stays empty
 - Rewrites relative URLs in MDX/Markdown **bodies** when those processors run
 - Peer/native: `sharp` — trust lifecycle scripts under Bun if install blocks them (`bun pm untrusted`)
+- **Optional CDN sync:** `storage: { enabled, files, prefix, prune?, … }` via [files-sdk](https://files-sdk.dev/) (optional peer). See [assets-storage.md](assets-storage.md).
 
 ## `@anhur/orama`
 

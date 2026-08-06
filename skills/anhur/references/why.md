@@ -15,6 +15,7 @@ Authors edit `content/…`. Developers import generated modules. The build fails
 | “How do I load all posts in a locale?”          | Folder i18n + generated `allPosts` / getters                     |
 | “Post → author without stringly ids everywhere” | `s.reference("authors", { embed?: true })`                       |
 | “MDX + images without custom Vite glue”         | Opt-in `@anhur/mdx` + `@anhur/assets` + Vite plugin        |
+| “Serve hashed assets from a CDN in prod”        | `assets({ storage })` + files-sdk (build-time sync)       |
 | “Heavy body on every list item”                 | Default **light** list (omit `body`) + `getPost()` for full docs |
 
 ## Why not just…
