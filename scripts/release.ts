@@ -6,6 +6,11 @@
  * yarn/pnpm). This script overlays those fields for pack/publish, then
  * restores `package.json`.
  *
+ * Bun also resolves `workspace:*` from **bun.lock** (not live sibling
+ * package.json). The overlay therefore pins every publishable `@anhur/*`
+ * dependency/peer to the synced release version, and pack gates fail if the
+ * tarball still has a mismatched pin.
+ *
  * Auth: `bun publish --auth-type web` (npm browser 2FA / web login).
  *
  * `pack` / `prepare` / `publish` always run publish gates (source shape,
@@ -141,6 +146,49 @@ function assertSyncedVersions(packages: PackageInfo[]): string {
   return packages[0]!.pkg.version;
 }
 
+/**
+ * bun.lock embeds each workspace package's version. Bun pack uses that for
+ * `workspace:*`, so a stale lockfile after `version` is a publish footgun.
+ */
+async function assertLockfileWorkspaceVersions(
+  packages: PackageInfo[],
+  releaseVersion: string,
+): Promise<void> {
+  const lockPath = path.join(rootDir, "bun.lock");
+  if (!(await exists(lockPath))) {
+    throw new Error("Missing bun.lock — run bun install");
+  }
+  const lockText = await readFile(lockPath, "utf8");
+  const problems: string[] = [];
+
+  for (const info of packages) {
+    const relDir = path.relative(rootDir, info.dir).replaceAll("\\", "/");
+    // bun.lock workspaces block: "packages/core": { "name": "@anhur/core", "version": "…",
+    const pattern = new RegExp(
+      `"${relDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:\\s*\\{[\\s\\S]*?"version"\\s*:\\s*"([^"]+)"`,
+    );
+    const match = lockText.match(pattern);
+    if (!match) {
+      problems.push(`bun.lock missing workspace entry for ${relDir}`);
+      continue;
+    }
+    const locked = match[1]!;
+    if (locked !== releaseVersion) {
+      problems.push(
+        `bun.lock ${relDir} version is ${locked}, expected ${releaseVersion} (run: bun scripts/release.ts version ${releaseVersion})`,
+      );
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new Error(
+      `bun.lock workspace versions are stale (Bun pack would publish wrong @anhur/* pins):\n${problems
+        .map((p) => `  - ${p}`)
+        .join("\n")}`,
+    );
+  }
+}
+
 async function run(
   command: string,
   args: string[],
@@ -231,6 +279,12 @@ function binEntries(bin: PackageJson["bin"] | undefined): Array<[string, string]
   return Object.entries(bin);
 }
 
+const PUBLISHABLE = new Set<string>(PUBLISH_ORDER);
+
+function isPublishableAnhur(name: string): boolean {
+  return PUBLISHABLE.has(name);
+}
+
 function workspaceProtocolProblems(
   label: string,
   deps: Record<string, string> | undefined,
@@ -245,7 +299,44 @@ function workspaceProtocolProblems(
   return problems;
 }
 
-function buildPublishPackageJson(original: PackageJson): PackageJson {
+/**
+ * Bun `pm pack` / `publish` replaces `workspace:*` from **bun.lock**, not from
+ * sibling package.json. After a version bump the lockfile can still say 0.0.5
+ * while package.json says 0.0.6 — and npm gets the stale pin.
+ * Always write the synced release version into the publish overlay.
+ */
+function pinPublishableAnhurDeps(
+  deps: Record<string, string> | undefined,
+  releaseVersion: string,
+): Record<string, string> | undefined {
+  if (!deps) return deps;
+  const out: Record<string, string> = {};
+  for (const [name, range] of Object.entries(deps)) {
+    out[name] = isPublishableAnhur(name) ? releaseVersion : range;
+  }
+  return out;
+}
+
+/** Packed @anhur/* deps/peers must equal the lockstep release version. */
+function anhurLockstepProblems(
+  label: string,
+  deps: Record<string, string> | undefined,
+  releaseVersion: string,
+): string[] {
+  if (!deps) return [];
+  const problems: string[] = [];
+  for (const [name, range] of Object.entries(deps)) {
+    if (!isPublishableAnhur(name)) continue;
+    if (range !== releaseVersion) {
+      problems.push(
+        `${label}.${name} must be exactly "${releaseVersion}" (got "${range}") — Bun may have resolved workspace:* from a stale bun.lock`,
+      );
+    }
+  }
+  return problems;
+}
+
+function buildPublishPackageJson(original: PackageJson, releaseVersion: string): PackageJson {
   const pkg = structuredClone(original);
   const publish = pkg.publishConfig ?? {};
 
@@ -259,6 +350,9 @@ function buildPublishPackageJson(original: PackageJson): PackageJson {
     access: publish.access ?? "public",
   };
 
+  pkg.dependencies = pinPublishableAnhurDeps(pkg.dependencies, releaseVersion);
+  pkg.peerDependencies = pinPublishableAnhurDeps(pkg.peerDependencies, releaseVersion);
+
   delete pkg.scripts;
   delete pkg.devDependencies;
   delete pkg.inlinedDependencies;
@@ -269,9 +363,13 @@ function buildPublishPackageJson(original: PackageJson): PackageJson {
  * Overlay `publishConfig.exports` / `bin` onto the package for Bun pack/publish.
  * Restores the original file afterward.
  */
-async function withPublishOverlay<T>(info: PackageInfo, fn: () => Promise<T>): Promise<T> {
+async function withPublishOverlay<T>(
+  info: PackageInfo,
+  releaseVersion: string,
+  fn: () => Promise<T>,
+): Promise<T> {
   const original = await readFile(info.pkgPath, "utf8");
-  const pkg = buildPublishPackageJson(JSON.parse(original) as PackageJson);
+  const pkg = buildPublishPackageJson(JSON.parse(original) as PackageJson, releaseVersion);
 
   const exportsJson = JSON.stringify(pkg.exports ?? {});
   if (exportsJson.includes("./src/")) {
@@ -465,6 +563,10 @@ async function checkPackedPackage(
 
   problems.push(...workspaceProtocolProblems("dependencies", packedPkg.dependencies));
   problems.push(...workspaceProtocolProblems("peerDependencies", packedPkg.peerDependencies));
+  problems.push(...anhurLockstepProblems("dependencies", packedPkg.dependencies, info.pkg.version));
+  problems.push(
+    ...anhurLockstepProblems("peerDependencies", packedPkg.peerDependencies, info.pkg.version),
+  );
 
   for (const required of ["package.json", "LICENSE", "README.md"] as const) {
     if (!(await exists(path.join(packageRoot, required)))) {
@@ -519,7 +621,7 @@ async function packToTemp(info: PackageInfo): Promise<{
 }> {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "anhur-release-"));
   try {
-    const packOut = await withPublishOverlay(info, async () =>
+    const packOut = await withPublishOverlay(info, info.pkg.version, async () =>
       runCapture("bun", ["pm", "pack", "--destination", tempRoot], info.dir),
     );
     const tarballName = packOut
@@ -610,6 +712,10 @@ async function setAllVersions(version: string): Promise<void> {
     await writeFile(info.pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
     console.log(`set ${info.name} → ${version}`);
   }
+  // Refresh bun.lock workspace package versions so a raw `bun pm pack`
+  // (without our overlay) cannot resurrect the previous release number.
+  console.log("\n→ bun install (refresh lockfile workspace versions)");
+  await run("bun", ["install"]);
 }
 
 async function qualityGates(): Promise<void> {
@@ -638,8 +744,10 @@ async function publishAll(packages: PackageInfo[]): Promise<void> {
       await ensureCliNodeShebang(info.dir);
     }
     console.log(`\nPublishing ${info.name}@${info.pkg.version}…`);
-    await withPublishOverlay(info, async () => {
-      await run("bun", ["publish", "--auth-type", "web", "--access", "public"], { cwd: info.dir });
+    await withPublishOverlay(info, info.pkg.version, async () => {
+      await run("bun", ["publish", "--auth-type", "web", "--access", "public"], {
+        cwd: info.dir,
+      });
     });
   }
 }
@@ -656,7 +764,9 @@ Commands:
   publish                 prepare, then bun publish --auth-type web (local only)
 
 Publish gates fail the release if exports/bin/types/LICENSE/README/workspace
-protocols/shebang/packed package.json shape are invalid.
+protocols/shebang/packed package.json shape are invalid, or if packed
+@anhur/* dependency/peer versions are not exactly the synced release version
+(Bun otherwise resolves workspace:* from a stale bun.lock).
 
 Publishable packages (lockstep versions):
   ${PUBLISH_ORDER.join(", ")}
@@ -685,11 +795,13 @@ async function main(): Promise<void> {
   console.log(packages.map((p) => `  ${p.name}`).join("\n"));
 
   if (command === "sync-check") {
-    console.log("OK — versions match");
+    await assertLockfileWorkspaceVersions(packages, version);
+    console.log("OK — package.json + bun.lock versions match");
     return;
   }
 
   if (command === "verify" || command === "pack") {
+    await assertLockfileWorkspaceVersions(packages, version);
     await buildPackages();
     const refreshed = await loadPublishablePackages();
     assertSyncedVersions(refreshed);
@@ -699,6 +811,7 @@ async function main(): Promise<void> {
   }
 
   if (command === "prepare") {
+    await assertLockfileWorkspaceVersions(packages, version);
     await qualityGates();
     await buildPackages();
     const refreshed = await loadPublishablePackages();
@@ -709,6 +822,7 @@ async function main(): Promise<void> {
   }
 
   if (command === "publish") {
+    await assertLockfileWorkspaceVersions(packages, version);
     await qualityGates();
     await buildPackages();
     const refreshed = await loadPublishablePackages();
