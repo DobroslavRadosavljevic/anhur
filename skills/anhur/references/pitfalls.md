@@ -24,6 +24,18 @@
 
 **Fix:** Run `anhur build` (or Vite build) before typecheck, or commit generated output.
 
+## Wrong document type / getter for plural names
+
+**Symptom:** `use_cases` produced `UseCas` / `getUseCas` on older `@anhur/core` (before pluralize-backed naming).
+
+**Fix:** Upgrade `@anhur/core`. Defaults are `UseCase` / `getUseCase` / `allUseCases`. Set `typeName` on `defineCollection` (not under `generate`) when you need a custom type. Default getter follows `typeName`.
+
+## Stale `allX.js` / `getX.js` after rename or remove
+
+**Symptom:** Old list/getter modules still on disk after deleting a collection (pre-wipe codegen).
+
+**Fix:** Current Anhur clears `outputDir` on every generate. Rebuild once after upgrading; no manual `rm -rf` needed for normal renames.
+
 ## Locale folder mismatch
 
 **Symptom:** Missing documents for a locale, or unexpected monolingual merge.

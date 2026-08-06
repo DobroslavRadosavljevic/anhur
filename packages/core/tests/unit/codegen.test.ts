@@ -25,6 +25,7 @@ describe("codegen helpers", () => {
     expect(collectionGetterName("pages")).toBe("getPage");
     expect(collectionGetterName("changelog")).toBe("getChangelog");
     expect(collectionGetterName("products")).toBe("getProduct");
+    expect(collectionGetterName("use_cases")).toBe("getUseCase");
   });
 
   it("builds locale+id module basenames", () => {
@@ -157,6 +158,32 @@ describe("resolveCollectionGenerate", () => {
     expect(gen.lookupBy).toEqual(["slug"]);
     expect(gen.emitDocuments).toBe(true);
     expect(gen.emitIds).toBe(false);
+  });
+
+  it("defaults getter from typeName, including snake_case plurals", () => {
+    const useCases = defineCollection({
+      name: "use_cases",
+      directory: "content/use_cases",
+      include: "**/*.md",
+      schema,
+    });
+    expect(useCases.typeName).toBe("UseCase");
+    const gen = resolveCollectionGenerate(useCases);
+    expect(gen.getterName).toBe("getUseCase");
+    expect(gen.listName).toBe("allUseCases");
+    expect(gen.listItemTypeName).toBe("UseCaseListItem");
+  });
+
+  it("aligns default getter with typeName override", () => {
+    const items = defineCollection({
+      name: "items",
+      typeName: "UseCase",
+      directory: "content/items",
+      include: "**/*.md",
+      schema,
+    });
+    expect(items.typeName).toBe("UseCase");
+    expect(resolveCollectionGenerate(items).getterName).toBe("getUseCase");
   });
 
   it("honors generate overrides and full split clears omit", () => {

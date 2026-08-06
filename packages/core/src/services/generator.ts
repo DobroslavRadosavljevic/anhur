@@ -353,8 +353,6 @@ export class Generator extends Context.Service<
         built: BuiltSource[],
       ): Effect.Effect<void, PlatformError> =>
         Effect.gen(function* () {
-          yield* removeQuiet(path.join(outputDir, "documents"));
-
           for (const item of built) {
             if (isCollection(item.source)) {
               yield* writeCollection(outputDir, rootDir, item);
@@ -536,6 +534,9 @@ export class Generator extends Context.Service<
       }): Effect.Effect<void, PlatformError> =>
         Effect.gen(function* () {
           const { config, configPath, rootDir, outputDir, built } = options;
+          // Own the whole output dir so renamed/removed collections cannot leave
+          // stale allX.js / getX.js modules. Integrations rewrite their files after.
+          yield* removeQuiet(outputDir);
           yield* fs.makeDirectory(outputDir, { recursive: true });
           yield* writeText(path.join(outputDir, ".keep"), "");
           yield* writeDataModules(config, outputDir, rootDir, built);

@@ -8,16 +8,18 @@ sidebar:
 
 ## Collection `generate`
 
-| Option                  | Default / notes                              |
-| ----------------------- | -------------------------------------------- |
-| `split`                 | `"light"` \| `"full"` \| `"list-only"`       |
-| `listOmit`              | Default `["body"]` for light lists           |
-| `listName`              | e.g. `allPosts`                              |
-| `getterName`            | e.g. `getPost`                               |
-| `lookupBy`              | Extra getter keys (slug included by default) |
-| `emitIds` / `emitSlugs` | Union type exports                           |
-| `listSort`              | `{ by, order?: "asc" \| "desc" }`            |
-| Type name overrides     | Document / list item / array aliases         |
+| Option                  | Default / notes                                                           |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `split`                 | `"light"` \| `"full"` \| `"list-only"`                                    |
+| `listOmit`              | Default `["body"]` for light lists                                        |
+| `listName`              | e.g. `allPosts` from collection `name`                                    |
+| `getterName`            | Default `get${typeName}` (set `typeName` on `defineCollection`, not here) |
+| `lookupBy`              | Extra getter keys (slug included by default)                              |
+| `emitIds` / `emitSlugs` | Union type exports (`PostId` / `PostSlug` from `typeName`)                |
+| `listSort`              | `{ by, order?: "asc" \| "desc" }`                                         |
+| Type name overrides     | List item / array aliases only (`listItemTypeName`, `arrayTypeName`)      |
+
+Document type name: `defineCollection({ typeName })`, not `generate.typeName`.
 
 ## Singleton `generate`
 

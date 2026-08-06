@@ -38,6 +38,8 @@ Inside schema `.transform`, `getDocumentMeta()` from `@anhur/core` yields `_meta
 | `emitIds` / `emitSlugs`                | Union type exports                          |
 | `listSort`                             | `{ by, order?: "asc" \| "desc" }`           |
 
+**Document `typeName`:** set on `defineCollection({ typeName })`, not under `generate`. Default getter is `get${typeName}` (so `use_cases` → `UseCase` / `getUseCase` / `allUseCases`). Each generate clears `outputDir` so removed collections do not leave orphan `allX.js` / `getX.js` modules.
+
 **Splits:**
 
 - `light` — list + per-doc modules + getter (typical for MDX posts)

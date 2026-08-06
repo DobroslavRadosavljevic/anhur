@@ -41,11 +41,26 @@ See [Light lists & getters](/concepts/light-lists-and-getters).
 
 ## Naming
 
-| Option       | Default idea                    |
-| ------------ | ------------------------------- |
-| `listName`   | `allPosts` from `posts`         |
-| `getterName` | `getPost`                       |
-| Type names   | `Post`, `PostListItem`, `Posts` |
+| Option       | Default idea                                                 |
+| ------------ | ------------------------------------------------------------ |
+| `listName`   | `allPosts` / `allUseCases` from collection `name`            |
+| `getterName` | `get${typeName}` (e.g. `getPost`, `getUseCase`)              |
+| Type names   | From `defineCollection({ typeName })` or singularized `name` |
+
+Put `typeName` on **`defineCollection`**, not inside `generate` (that is a TypeScript error). Example override:
+
+```ts
+defineCollection({
+  name: "use_cases",
+  typeName: "UseCase", // optional when auto-singular already matches
+  directory: "content/use_cases",
+  include: "**/*.md",
+  schema: /* … */,
+});
+// → UseCase, getUseCase, allUseCases, UseCaseId (when emitIds)
+```
+
+Each build clears `.anhur/generated` (or your `outputDir`) before writing, so renamed or removed collections do not leave stale `allX.js` / `getX.js` files.
 
 ## Singletons
 

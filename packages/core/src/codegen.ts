@@ -14,7 +14,11 @@ import {
 export const DEFAULT_LIST_OMIT = ["body"] as const;
 export const DEFAULT_LOOKUP_BY = ["slug"] as const;
 
-/** `posts` → `getPost`, `authors` → `getAuthor`, `changelog` → `getChangelog`. */
+/**
+ * Default async getter name from a collection folder name.
+ * Prefer `get${source.typeName}` when a resolved collection is available so
+ * `typeName` overrides stay aligned with the getter.
+ */
 export function collectionGetterName(collectionName: string): string {
   return `get${generateDocumentTypeName(collectionName)}`;
 }
@@ -173,7 +177,7 @@ export function resolveCollectionGenerate(
 
   return {
     listName: g?.listName ?? collectionConstName(source.name),
-    getterName: g?.getterName ?? collectionGetterName(source.name),
+    getterName: g?.getterName ?? `get${documentType}`,
     arrayTypeName:
       g?.arrayTypeName ??
       generateCollectionArrayTypeName(source.name, documentType),

@@ -1,4 +1,4 @@
-import { access, readFile, rm } from "node:fs/promises";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -196,5 +196,31 @@ describe("codegen generate options", () => {
     expect(dts).toContain(
       "export declare function loadSettings(query?: { locale?: string }): Promise<Settings | null>;",
     );
+  });
+
+  it("wipes stale top-level modules on rebuild", async () => {
+    const result = await build({
+      rootDir: path.join(fixturesRoot, fixtureName),
+    });
+
+    const orphanList = path.join(result.outputDir, "allProviders.js");
+    const orphanGetter = path.join(result.outputDir, "getProvider.js");
+    await writeFile(orphanList, "// stale orphan\n");
+    await writeFile(orphanGetter, "// stale orphan\n");
+    expect(await exists(orphanList)).toBe(true);
+    expect(await exists(orphanGetter)).toBe(true);
+
+    const rebuilt = await build({
+      rootDir: path.join(fixturesRoot, fixtureName),
+    });
+
+    expect(await exists(path.join(rebuilt.outputDir, "allProviders.js"))).toBe(
+      false,
+    );
+    expect(await exists(path.join(rebuilt.outputDir, "getProvider.js"))).toBe(
+      false,
+    );
+    expect(await exists(path.join(rebuilt.outputDir, "posts.js"))).toBe(true);
+    expect(await exists(path.join(rebuilt.outputDir, "index.js"))).toBe(true);
   });
 });

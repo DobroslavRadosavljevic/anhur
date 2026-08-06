@@ -1,3 +1,4 @@
+import pluralize from "pluralize";
 import type { z } from "zod";
 import type { ProcessorPlugin } from "./processors";
 import type { Loader } from "./loaders/types";
@@ -57,7 +58,10 @@ export type ListSort = {
 export type CollectionGenerateOptions = {
   /** List export name. Default: `allPosts` from `name`. */
   listName?: string;
-  /** Async getter name. Default: `getPost` from `name`. */
+  /**
+   * Async getter name. Default: `get${typeName}` (e.g. `getPost`, `getUseCase`).
+   * Uses the resolved document `typeName`, not a second pass over `name`.
+   */
   getterName?: string;
   /** Plural array type alias. Default: `Posts`. */
   arrayTypeName?: string;
@@ -274,27 +278,13 @@ export function generateTypeName(name: string): string {
     .join("");
 }
 
-/** `Posts` → `Post`, `Authors` → `Author`, `Changelog` → `Changelog`. */
+/**
+ * `Posts` → `Post`, `UseCases` → `UseCase`, `Categories` → `Category`.
+ * Uses [pluralize](https://github.com/plurals/pluralize) so irregular plurals
+ * stay correct; override with `defineCollection({ typeName })` when needed.
+ */
 export function singularizePascal(pascal: string): string {
-  if (pascal.endsWith("ies") && pascal.length > 3) {
-    return `${pascal.slice(0, -3)}y`;
-  }
-  if (pascal.endsWith("sses")) {
-    return pascal.slice(0, -2);
-  }
-  if (
-    pascal.endsWith("ses") ||
-    pascal.endsWith("xes") ||
-    pascal.endsWith("zes") ||
-    pascal.endsWith("ches") ||
-    pascal.endsWith("shes")
-  ) {
-    return pascal.slice(0, -2);
-  }
-  if (pascal.endsWith("s") && pascal.length > 1 && !pascal.endsWith("ss")) {
-    return pascal.slice(0, -1);
-  }
-  return pascal;
+  return pluralize.singular(pascal);
 }
 
 /**

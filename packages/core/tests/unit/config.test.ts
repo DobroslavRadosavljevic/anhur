@@ -28,6 +28,14 @@ describe("config helpers", () => {
     expect(generateDocumentTypeName("authors")).toBe("Author");
     expect(generateDocumentTypeName("blog-posts")).toBe("BlogPost");
     expect(generateDocumentTypeName("changelog")).toBe("Changelog");
+    expect(generateDocumentTypeName("use_cases")).toBe("UseCase");
+    expect(generateDocumentTypeName("blog_categories")).toBe("BlogCategory");
+    expect(generateDocumentTypeName("blog_posts")).toBe("BlogPost");
+    expect(generateDocumentTypeName("companies")).toBe("Company");
+    expect(generateDocumentTypeName("proxies")).toBe("Proxy");
+    expect(generateDocumentTypeName("classes")).toBe("Class");
+    expect(generateDocumentTypeName("statuses")).toBe("Status");
+    expect(generateDocumentTypeName("buses")).toBe("Bus");
   });
 
   it("generateCollectionArrayTypeName builds plural aliases", () => {
@@ -40,10 +48,14 @@ describe("config helpers", () => {
     );
   });
 
-  it("singularizePascal handles common plurals", () => {
+  it("singularizePascal handles common and irregular plurals", () => {
     expect(singularizePascal("Posts")).toBe("Post");
     expect(singularizePascal("Categories")).toBe("Category");
     expect(singularizePascal("Changelog")).toBe("Changelog");
+    expect(singularizePascal("UseCases")).toBe("UseCase");
+    expect(singularizePascal("Classes")).toBe("Class");
+    expect(singularizePascal("Statuses")).toBe("Status");
+    expect(singularizePascal("Buses")).toBe("Bus");
   });
 
   it("collectionConstName pluralizes exports", () => {
