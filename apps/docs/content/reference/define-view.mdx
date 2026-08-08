@@ -118,7 +118,9 @@ productsByCategory.find((g) => g.key === "pro")?.items;
 
 ## Types
 
-Generated `.d.ts` uses `GetViewByName<typeof configuration, "featuredProducts">` for the **item** type of views, indexes, and groups. `GetViewByName` is constrained to names in `views`.
+Generated `.d.ts` uses `GetViewByName<typeof configuration, "featuredProducts">` for the **item** type of views, indexes, and groups. `GetViewByName` remaps `s.reference(..., { embed: true })` the same way as `GetTypeByName`, so view items stay assignable to collection light-list types when shapes match.
+
+Light list aliases use `OmitListFields<…>` (not plain `Omit`) so omitted keys such as `body` are also stripped from nested embeds — matching runtime list exports.
 
 Indexes and groups also emit **literal key unions** from the build:
 
@@ -135,5 +137,22 @@ export type ProductsByCategoryGroup = {
 ```
 
 In config, `key` / `by` string fields are typed as the collection’s string fields (not `featured: boolean`). Type-predicate `where` + `select` narrows the document into `select`. `ctx.documents(products)` is typed when you pass the collection object.
+
+### Embed fields in callbacks
+
+Generated exports remap embeds automatically. For `where` / `select` / `by` / `key` callbacks that read embedded fields (e.g. `doc.provider.slug`), pass the same content array as `defineConfig`:
+
+```ts
+const content = [providers, proxies] as const;
+
+defineGroup({
+  name: "proxiesByProvider",
+  content,
+  from: proxies,
+  by: (doc) => doc.provider.slug,
+});
+```
+
+Or bind once with `createDerivedHelpers(content)` so each call inherits remapping.
 
 See also [defineConfig](/reference/define-config) (`views`).

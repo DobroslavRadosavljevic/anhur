@@ -12,7 +12,7 @@ description: >-
   mentions Anhur, .anhur, or local MD/MDX/YAML/JSON content pipelines.
 license: MIT
 metadata:
-  version: "0.0.10"
+  version: "0.0.11"
   packages: "@anhur/core,@anhur/vite,@anhur/mdx,@anhur/markdown,@anhur/assets,@anhur/orama"
 ---
 

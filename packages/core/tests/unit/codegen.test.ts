@@ -60,6 +60,56 @@ describe("codegen helpers", () => {
     expect(light._meta).toMatchObject({ id: "t", locale: "en" });
   });
 
+  it("omits list fields inside embedded documents too", () => {
+    const light = toListExport(
+      {
+        title: "Proxy",
+        body: "PROXY_BODY",
+        provider: {
+          name: "Acme",
+          slug: "acme",
+          body: "PROVIDER_BODY",
+          _meta: {
+            id: "acme",
+            filePath: "/p.md",
+            relativePath: "p.md",
+            extension: ".md",
+          },
+        },
+        categories: [
+          {
+            name: "Cat",
+            slug: "cat",
+            body: "CAT_BODY",
+            _meta: {
+              id: "cat",
+              filePath: "/c.md",
+              relativePath: "c.md",
+              extension: ".md",
+            },
+          },
+        ],
+      },
+      {
+        id: "proxy",
+        filePath: "/proxy.md",
+        relativePath: "proxy.md",
+        extension: ".md",
+      },
+      ["body"],
+    );
+    expect(light).not.toHaveProperty("body");
+    expect(light.provider).toMatchObject({ name: "Acme", slug: "acme" });
+    expect(light.provider).not.toHaveProperty("body");
+    expect((light.categories as Record<string, unknown>[])[0]).toMatchObject({
+      name: "Cat",
+      slug: "cat",
+    });
+    expect(
+      (light.categories as Record<string, unknown>[])[0],
+    ).not.toHaveProperty("body");
+  });
+
   it("rewrites absolute _meta.filePath when rootDir is provided", () => {
     const exported = toListExport(
       { title: "T" },

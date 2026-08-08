@@ -124,7 +124,7 @@ export function toDocumentExport(
   return rewriteMetaFilePaths(document, rootDir) as Record<string, unknown>;
 }
 
-/** List row: full document minus omitted heavy fields. */
+/** List row: full document minus omitted heavy fields (including nested embeds). */
 export function toListExport(
   data: Record<string, unknown>,
   meta: ContentMeta,
@@ -133,11 +133,55 @@ export function toListExport(
 ): Record<string, unknown> {
   const full = toDocumentExport(data, meta, rootDir);
   if (listOmit.length === 0) return full;
-  const light: Record<string, unknown> = { ...full };
-  for (const key of listOmit) {
-    delete light[key];
+  return omitListFieldsDeep(full, listOmit);
+}
+
+function isEmbeddedDocumentValue(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    "_meta" in value &&
+    typeof (value as { _meta: unknown })._meta === "object" &&
+    (value as { _meta: unknown })._meta !== null
+  );
+}
+
+/**
+ * Strip `listOmit` keys from a document and from nested embedded documents
+ * (`s.reference(..., { embed: true })` results — objects with `_meta`).
+ */
+export function omitListFieldsDeep(
+  document: Record<string, unknown>,
+  listOmit: readonly string[],
+): Record<string, unknown> {
+  if (listOmit.length === 0) return document;
+  const omit = new Set(listOmit);
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(document)) {
+    if (key === "_meta") {
+      out[key] = value;
+      continue;
+    }
+    if (omit.has(key)) continue;
+    out[key] = lightenListValue(value, listOmit);
   }
-  return light;
+  return out;
+}
+
+function lightenListValue(
+  value: unknown,
+  listOmit: readonly string[],
+): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => lightenListValue(item, listOmit));
+  }
+  if (isEmbeddedDocumentValue(value)) {
+    return omitListFieldsDeep(value, listOmit);
+  }
+  return value;
 }
 
 export function omitKeysUnionType(keys: readonly string[]): string {

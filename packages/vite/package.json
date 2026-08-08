@@ -1,6 +1,6 @@
 {
   "name": "@anhur/vite",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "Vite plugin for @anhur/core",
   "keywords": [
     "anhur",

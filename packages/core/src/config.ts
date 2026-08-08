@@ -373,10 +373,19 @@ export type InferDocument<T> = DocumentWithMeta<InferSchemaData<T>>;
 /**
  * Cross-collection helpers for view / index / group `where` and `select`.
  * Pass a collection/singleton object to `documents()` for a typed array.
+ *
+ * When `TContent` is the project content tuple, `documents(source)` remaps
+ * `embed: true` fields the same way as {@link GetTypeByName}.
  */
-export type ViewContext = {
+export type ViewContext<
+  TContent extends readonly AnyContent[] | undefined = undefined,
+> = {
   documents: {
-    <C extends AnyContent>(source: C): InferDocument<C>[];
+    <C extends AnyContent>(
+      source: C,
+    ): [TContent] extends [readonly AnyContent[]]
+      ? RemapEmbeddedRefs<InferDocument<C>, TContent>[]
+      : InferDocument<C>[];
     (source: string): TransformDocument[];
   };
 };
@@ -595,6 +604,40 @@ type CollectionDocument<TCollection extends AnyCollection> = DocumentWithMeta<
   InferSchemaData<TCollection>
 >;
 
+/**
+ * Collection document with `embed: true` refs remapped against a content tuple.
+ * Pass the same array as `defineConfig({ content })` so `doc.provider.slug` works
+ * in `where` / `select` / `by` / `key` callbacks.
+ */
+export type RemappedCollectionDocument<
+  TCollection extends AnyCollection,
+  TContent extends readonly AnyContent[],
+> = RemapEmbeddedRefs<CollectionDocument<TCollection>, TContent>;
+
+/** Remap when `content` is provided; otherwise keep schema phantoms. */
+type ViewSourceDocument<
+  TCollection extends AnyCollection,
+  TContent extends readonly AnyContent[] | undefined,
+> = [TContent] extends [readonly AnyContent[]]
+  ? RemappedCollectionDocument<TCollection, TContent>
+  : CollectionDocument<TCollection>;
+
+type MultiCollectionDocument<
+  TCollections extends readonly AnyCollection[],
+  TContent extends readonly AnyContent[] | undefined = undefined,
+> = {
+  [I in keyof TCollections]: TCollections[I] extends AnyCollection
+    ? ViewSourceDocument<TCollections[I], TContent> & {
+        collection: TCollections[I]["name"];
+      }
+    : never;
+}[number];
+
+type MultiSelectInput<
+  TCollections extends readonly AnyCollection[],
+  TContent extends readonly AnyContent[] | undefined = undefined,
+> = MultiCollectionDocument<TCollections, TContent>;
+
 /** Top-level document fields whose values are strings (valid index/group keys). */
 type StringFieldKeys<T> = {
   [K in keyof Omit<T, "_meta">]-?: Exclude<T[K], undefined> extends string
@@ -603,36 +646,26 @@ type StringFieldKeys<T> = {
 }[keyof Omit<T, "_meta">] &
   string;
 
-type MultiCollectionDocument<TCollections extends readonly AnyCollection[]> = {
-  [I in keyof TCollections]: TCollections[I] extends AnyCollection
-    ? CollectionDocument<TCollections[I]> & {
-        collection: TCollections[I]["name"];
-      }
-    : never;
-}[number];
-
-type MultiSelectInput<TCollections extends readonly AnyCollection[]> = {
-  [I in keyof TCollections]: TCollections[I] extends AnyCollection
-    ? CollectionDocument<TCollections[I]> & {
-        collection: TCollections[I]["name"];
-      }
-    : never;
-}[number];
-
 export type DefineViewSingleInput<
   TName extends string,
   TCollection extends AnyCollection,
+  TContent extends readonly AnyContent[] | undefined = undefined,
 > = {
   name: TName;
   typeName?: string;
+  /**
+   * Same content array as `defineConfig({ content })`. Enables remapped
+   * `embed: true` fields in `where` / `select` (e.g. `doc.author.slug`).
+   */
+  content?: TContent;
   from: TCollection;
   where?: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => boolean;
   select?: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => Record<string, unknown>;
   generate?: ViewGenerateOptions;
 };
@@ -641,18 +674,20 @@ export type DefineViewMultiInput<
   TName extends string,
   TCollections extends readonly [AnyCollection, ...AnyCollection[]],
   TItem extends Record<string, unknown> = Record<string, unknown>,
+  TContent extends readonly AnyContent[] | undefined = undefined,
 > = {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollections;
   where?: (
-    document: MultiCollectionDocument<TCollections>,
-    context: ViewContext,
+    document: MultiCollectionDocument<TCollections, TContent>,
+    context: ViewContext<TContent>,
   ) => boolean;
   /** Required when merging collections — shared list item shape. */
   select: (
-    document: MultiSelectInput<TCollections>,
-    context: ViewContext,
+    document: MultiSelectInput<TCollections, TContent>,
+    context: ViewContext<TContent>,
   ) => TItem;
   generate?: ViewGenerateOptions;
 };
@@ -690,17 +725,20 @@ function normalizeViewFrom(
 export function defineView<
   TName extends string,
   TCollection extends AnyCollection,
-  TNarrow extends CollectionDocument<TCollection>,
-  TItem extends Record<string, unknown>,
+  const TContent extends readonly AnyContent[] | undefined = undefined,
+  TNarrow extends ViewSourceDocument<TCollection, TContent> =
+    ViewSourceDocument<TCollection, TContent>,
+  TItem extends Record<string, unknown> = Record<string, unknown>,
 >(input: {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollection;
   where: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => document is TNarrow;
-  select: (document: TNarrow, context: ViewContext) => TItem;
+  select: (document: TNarrow, context: ViewContext<TContent>) => TItem;
   generate?: ViewGenerateOptions;
 }): ViewDefinition<TName, TItem>;
 
@@ -710,18 +748,20 @@ export function defineView<
 export function defineView<
   TName extends string,
   TCollection extends AnyCollection,
-  TItem extends Record<string, unknown>,
+  const TContent extends readonly AnyContent[] | undefined = undefined,
+  TItem extends Record<string, unknown> = Record<string, unknown>,
 >(input: {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollection;
   where?: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => boolean;
   select: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => TItem;
   generate?: ViewGenerateOptions;
 }): ViewDefinition<TName, TItem>;
@@ -732,14 +772,17 @@ export function defineView<
 export function defineView<
   TName extends string,
   TCollection extends AnyCollection,
-  TNarrow extends CollectionDocument<TCollection>,
+  const TContent extends readonly AnyContent[] | undefined = undefined,
+  TNarrow extends ViewSourceDocument<TCollection, TContent> =
+    ViewSourceDocument<TCollection, TContent>,
 >(input: {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollection;
   where: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => document is TNarrow;
   generate?: ViewGenerateOptions;
 }): ViewDefinition<TName, TNarrow>;
@@ -748,33 +791,37 @@ export function defineView<
 export function defineView<
   TName extends string,
   TCollection extends AnyCollection,
+  const TContent extends readonly AnyContent[] | undefined = undefined,
 >(input: {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollection;
   where?: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => boolean;
   generate?: ViewGenerateOptions;
-}): ViewDefinition<TName, CollectionDocument<TCollection>>;
+}): ViewDefinition<TName, ViewSourceDocument<TCollection, TContent>>;
 
 /** Multi-collection merged list view (`select` required). */
 export function defineView<
   TName extends string,
   TCollections extends readonly [AnyCollection, ...AnyCollection[]],
-  TItem extends Record<string, unknown>,
+  const TContent extends readonly AnyContent[] | undefined = undefined,
+  TItem extends Record<string, unknown> = Record<string, unknown>,
 >(input: {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollections;
   where?: (
-    document: MultiCollectionDocument<TCollections>,
-    context: ViewContext,
+    document: MultiCollectionDocument<TCollections, TContent>,
+    context: ViewContext<TContent>,
   ) => boolean;
   select: (
-    document: MultiSelectInput<TCollections>,
-    context: ViewContext,
+    document: MultiSelectInput<TCollections, TContent>,
+    context: ViewContext<TContent>,
   ) => TItem;
   generate?: ViewGenerateOptions;
 }): ViewDefinition<TName, TItem>;
@@ -782,6 +829,7 @@ export function defineView<
 export function defineView(input: {
   name: string;
   typeName?: string;
+  content?: readonly AnyContent[];
   from: AnyCollection | readonly AnyCollection[];
   where?: (document: any, context: ViewContext) => boolean;
   select?: (document: any, context: ViewContext) => Record<string, unknown>;
@@ -809,20 +857,23 @@ export function defineView(input: {
 export function defineIndex<
   TName extends string,
   TCollection extends AnyCollection,
-  TNarrow extends CollectionDocument<TCollection>,
-  TItem extends Record<string, unknown>,
+  const TContent extends readonly AnyContent[] | undefined = undefined,
+  TNarrow extends ViewSourceDocument<TCollection, TContent> =
+    ViewSourceDocument<TCollection, TContent>,
+  TItem extends Record<string, unknown> = Record<string, unknown>,
 >(input: {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollection;
   key:
-    | StringFieldKeys<CollectionDocument<TCollection>>
+    | StringFieldKeys<ViewSourceDocument<TCollection, TContent>>
     | ((document: TNarrow) => string);
   where: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => document is TNarrow;
-  select: (document: TNarrow, context: ViewContext) => TItem;
+  select: (document: TNarrow, context: ViewContext<TContent>) => TItem;
   generate?: IndexGenerateOptions;
 }): IndexDefinition<TName, TItem>;
 
@@ -830,21 +881,23 @@ export function defineIndex<
 export function defineIndex<
   TName extends string,
   TCollection extends AnyCollection,
-  TItem extends Record<string, unknown>,
+  const TContent extends readonly AnyContent[] | undefined = undefined,
+  TItem extends Record<string, unknown> = Record<string, unknown>,
 >(input: {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollection;
   key:
-    | StringFieldKeys<CollectionDocument<TCollection>>
-    | ((document: CollectionDocument<TCollection>) => string);
+    | StringFieldKeys<ViewSourceDocument<TCollection, TContent>>
+    | ((document: ViewSourceDocument<TCollection, TContent>) => string);
   where?: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => boolean;
   select: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => TItem;
   generate?: IndexGenerateOptions;
 }): IndexDefinition<TName, TItem>;
@@ -853,17 +906,20 @@ export function defineIndex<
 export function defineIndex<
   TName extends string,
   TCollection extends AnyCollection,
-  TNarrow extends CollectionDocument<TCollection>,
+  const TContent extends readonly AnyContent[] | undefined = undefined,
+  TNarrow extends ViewSourceDocument<TCollection, TContent> =
+    ViewSourceDocument<TCollection, TContent>,
 >(input: {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollection;
   key:
-    | StringFieldKeys<CollectionDocument<TCollection>>
+    | StringFieldKeys<ViewSourceDocument<TCollection, TContent>>
     | ((document: TNarrow) => string);
   where: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => document is TNarrow;
   generate?: IndexGenerateOptions;
 }): IndexDefinition<TName, TNarrow>;
@@ -872,23 +928,26 @@ export function defineIndex<
 export function defineIndex<
   TName extends string,
   TCollection extends AnyCollection,
+  const TContent extends readonly AnyContent[] | undefined = undefined,
 >(input: {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollection;
   key:
-    | StringFieldKeys<CollectionDocument<TCollection>>
-    | ((document: CollectionDocument<TCollection>) => string);
+    | StringFieldKeys<ViewSourceDocument<TCollection, TContent>>
+    | ((document: ViewSourceDocument<TCollection, TContent>) => string);
   where?: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => boolean;
   generate?: IndexGenerateOptions;
-}): IndexDefinition<TName, CollectionDocument<TCollection>>;
+}): IndexDefinition<TName, ViewSourceDocument<TCollection, TContent>>;
 
 export function defineIndex(input: {
   name: string;
   typeName?: string;
+  content?: readonly AnyContent[];
   from: AnyCollection;
   key: string | ((document: any) => string);
   where?: (document: any, context: ViewContext) => boolean;
@@ -915,21 +974,23 @@ export function defineIndex(input: {
 export function defineGroup<
   TName extends string,
   TCollection extends AnyCollection,
-  TItem extends Record<string, unknown>,
+  const TContent extends readonly AnyContent[] | undefined = undefined,
+  TItem extends Record<string, unknown> = Record<string, unknown>,
 >(input: {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollection;
   by:
-    | StringFieldKeys<CollectionDocument<TCollection>>
-    | ((document: CollectionDocument<TCollection>) => string);
+    | StringFieldKeys<ViewSourceDocument<TCollection, TContent>>
+    | ((document: ViewSourceDocument<TCollection, TContent>) => string);
   where?: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => boolean;
   select: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => TItem;
   generate?: GroupGenerateOptions;
 }): GroupDefinition<TName, TItem>;
@@ -938,23 +999,26 @@ export function defineGroup<
 export function defineGroup<
   TName extends string,
   TCollection extends AnyCollection,
+  const TContent extends readonly AnyContent[] | undefined = undefined,
 >(input: {
   name: TName;
   typeName?: string;
+  content?: TContent;
   from: TCollection;
   by:
-    | StringFieldKeys<CollectionDocument<TCollection>>
-    | ((document: CollectionDocument<TCollection>) => string);
+    | StringFieldKeys<ViewSourceDocument<TCollection, TContent>>
+    | ((document: ViewSourceDocument<TCollection, TContent>) => string);
   where?: (
-    document: CollectionDocument<TCollection>,
-    context: ViewContext,
+    document: ViewSourceDocument<TCollection, TContent>,
+    context: ViewContext<TContent>,
   ) => boolean;
   generate?: GroupGenerateOptions;
-}): GroupDefinition<TName, CollectionDocument<TCollection>>;
+}): GroupDefinition<TName, ViewSourceDocument<TCollection, TContent>>;
 
 export function defineGroup(input: {
   name: string;
   typeName?: string;
+  content?: readonly AnyContent[];
   from: AnyCollection;
   by: string | ((document: any) => string);
   where?: (document: any, context: ViewContext) => boolean;
@@ -974,6 +1038,168 @@ export function defineGroup(input: {
     where: input.where,
     select: input.select,
     generate: input.generate,
+  };
+}
+
+/**
+ * Bind `defineView` / `defineIndex` / `defineGroup` to a content tuple so
+ * `embed: true` fields remap in callbacks without repeating `content` on each call.
+ *
+ * @example
+ * ```ts
+ * const content = [providers, proxies] as const;
+ * const { defineGroup } = createDerivedHelpers(content);
+ * defineGroup({
+ *   name: "proxiesByProvider",
+ *   from: proxies,
+ *   by: (doc) => doc.provider.slug,
+ * });
+ * ```
+ */
+export function createDerivedHelpers<
+  const TContent extends readonly AnyContent[],
+>(content: TContent) {
+  return {
+    defineView: ((input: Record<string, unknown>) =>
+      defineView({ ...input, content } as never)) as unknown as {
+      <
+        TName extends string,
+        TCollection extends AnyCollection,
+        TItem extends Record<string, unknown>,
+      >(input: {
+        name: TName;
+        typeName?: string;
+        from: TCollection;
+        where?: (
+          document: RemappedCollectionDocument<TCollection, TContent>,
+          context: ViewContext<TContent>,
+        ) => boolean;
+        select: (
+          document: RemappedCollectionDocument<TCollection, TContent>,
+          context: ViewContext<TContent>,
+        ) => TItem;
+        generate?: ViewGenerateOptions;
+      }): ViewDefinition<TName, TItem>;
+      <TName extends string, TCollection extends AnyCollection>(input: {
+        name: TName;
+        typeName?: string;
+        from: TCollection;
+        where?: (
+          document: RemappedCollectionDocument<TCollection, TContent>,
+          context: ViewContext<TContent>,
+        ) => boolean;
+        generate?: ViewGenerateOptions;
+      }): ViewDefinition<
+        TName,
+        RemappedCollectionDocument<TCollection, TContent>
+      >;
+      <
+        TName extends string,
+        TCollections extends readonly [AnyCollection, ...AnyCollection[]],
+        TItem extends Record<string, unknown>,
+      >(input: {
+        name: TName;
+        typeName?: string;
+        from: TCollections;
+        where?: (
+          document: MultiCollectionDocument<TCollections, TContent>,
+          context: ViewContext<TContent>,
+        ) => boolean;
+        select: (
+          document: MultiSelectInput<TCollections, TContent>,
+          context: ViewContext<TContent>,
+        ) => TItem;
+        generate?: ViewGenerateOptions;
+      }): ViewDefinition<TName, TItem>;
+    },
+    defineIndex: ((input: Record<string, unknown>) =>
+      defineIndex({ ...input, content } as never)) as unknown as {
+      <
+        TName extends string,
+        TCollection extends AnyCollection,
+        TItem extends Record<string, unknown>,
+      >(input: {
+        name: TName;
+        typeName?: string;
+        from: TCollection;
+        key:
+          | StringFieldKeys<RemappedCollectionDocument<TCollection, TContent>>
+          | ((
+              document: RemappedCollectionDocument<TCollection, TContent>,
+            ) => string);
+        where?: (
+          document: RemappedCollectionDocument<TCollection, TContent>,
+          context: ViewContext<TContent>,
+        ) => boolean;
+        select: (
+          document: RemappedCollectionDocument<TCollection, TContent>,
+          context: ViewContext<TContent>,
+        ) => TItem;
+        generate?: IndexGenerateOptions;
+      }): IndexDefinition<TName, TItem>;
+      <TName extends string, TCollection extends AnyCollection>(input: {
+        name: TName;
+        typeName?: string;
+        from: TCollection;
+        key:
+          | StringFieldKeys<RemappedCollectionDocument<TCollection, TContent>>
+          | ((
+              document: RemappedCollectionDocument<TCollection, TContent>,
+            ) => string);
+        where?: (
+          document: RemappedCollectionDocument<TCollection, TContent>,
+          context: ViewContext<TContent>,
+        ) => boolean;
+        generate?: IndexGenerateOptions;
+      }): IndexDefinition<
+        TName,
+        RemappedCollectionDocument<TCollection, TContent>
+      >;
+    },
+    defineGroup: ((input: Record<string, unknown>) =>
+      defineGroup({ ...input, content } as never)) as unknown as {
+      <
+        TName extends string,
+        TCollection extends AnyCollection,
+        TItem extends Record<string, unknown>,
+      >(input: {
+        name: TName;
+        typeName?: string;
+        from: TCollection;
+        by:
+          | StringFieldKeys<RemappedCollectionDocument<TCollection, TContent>>
+          | ((
+              document: RemappedCollectionDocument<TCollection, TContent>,
+            ) => string);
+        where?: (
+          document: RemappedCollectionDocument<TCollection, TContent>,
+          context: ViewContext<TContent>,
+        ) => boolean;
+        select: (
+          document: RemappedCollectionDocument<TCollection, TContent>,
+          context: ViewContext<TContent>,
+        ) => TItem;
+        generate?: GroupGenerateOptions;
+      }): GroupDefinition<TName, TItem>;
+      <TName extends string, TCollection extends AnyCollection>(input: {
+        name: TName;
+        typeName?: string;
+        from: TCollection;
+        by:
+          | StringFieldKeys<RemappedCollectionDocument<TCollection, TContent>>
+          | ((
+              document: RemappedCollectionDocument<TCollection, TContent>,
+            ) => string);
+        where?: (
+          document: RemappedCollectionDocument<TCollection, TContent>,
+          context: ViewContext<TContent>,
+        ) => boolean;
+        generate?: GroupGenerateOptions;
+      }): GroupDefinition<
+        TName,
+        RemappedCollectionDocument<TCollection, TContent>
+      >;
+    },
   };
 }
 
@@ -1163,6 +1389,27 @@ export type RemapEmbeddedRefs<
     : T;
 
 /**
+ * Light-list shape: omit keys from the document and from nested embeds
+ * (objects with `_meta`, from `s.reference(..., { embed: true })`).
+ *
+ * Used by generated `PostListItem` / view list item aliases so TypeScript
+ * matches runtime `toListExport` (parent `body` and embedded `body` both go).
+ */
+export type OmitListFields<T, K extends PropertyKey> = T extends {
+  _meta: ContentMeta;
+}
+  ? Omit<{ [P in keyof T]: OmitListFieldsValue<T[P], K> }, K>
+  : T;
+
+type OmitListFieldsValue<V, K extends PropertyKey> = V extends {
+  _meta: ContentMeta;
+}
+  ? OmitListFields<V, K>
+  : V extends readonly (infer I)[]
+    ? OmitListFieldsValue<I, K>[]
+    : V;
+
+/**
  * Resolve a content source by name from a config object.
  * Used by generated `.d.ts` files.
  */
@@ -1193,13 +1440,20 @@ export type DerivedName<TConfig extends AnhurConfig> =
 /**
  * Resolve a derived item type by name from a config object.
  * Used by generated `.d.ts` files (views, indexes, and groups).
+ *
+ * Remaps `embed: true` references the same way as {@link GetTypeByName},
+ * so view items stay assignable to collection light-list item types when
+ * shapes match.
  */
 export type GetViewByName<
   TConfig extends AnhurConfig,
   TName extends DerivedName<TConfig> = DerivedName<TConfig>,
 > =
   NonNullable<TConfig["views"]> extends readonly AnyDerived[]
-    ? InferViewData<
-        Extract<NonNullable<TConfig["views"]>[number], { name: TName }>
+    ? RemapEmbeddedRefs<
+        InferViewData<
+          Extract<NonNullable<TConfig["views"]>[number], { name: TName }>
+        >,
+        TConfig["content"]
       >
     : never;

@@ -8,9 +8,10 @@ Exports (typical):
 
 - `defineConfig`, `defineCollection`, `defineSingleton`
 - `defineView`, `defineIndex`, `defineGroup` — build-time derived lists / maps / groups
+- `createDerivedHelpers(content)` — bind views to a content tuple for embed remapping in callbacks
 - `schema as s` — Zod plus `raw`, `unique`, `slug`, `reference`, `isodate`, `excerpt`, `metadata`, `toc`
 - `getDocumentMeta()` — ALS meta inside schema `.transform` / field resolvers
-- `GetViewByName`, `DerivedName`, `InferViewData` — view typing helpers
+- `GetViewByName`, `GetTypeByName`, `RemapEmbeddedRefs`, `DerivedName`, `InferViewData` — typing helpers
 - `build` / `watch` (programmatic) and CLI bin `anhur`
 - `formatAnhurError`
 - Integrations: `defineIntegration`, `registerIntegration`, `createIntegrationConfigEntry`, `IntegrationConfigEntry`, …

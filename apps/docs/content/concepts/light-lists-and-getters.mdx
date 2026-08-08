@@ -38,6 +38,8 @@ if (!post) {
 
 Use `list-only` for small YAML/JSON catalogs where every field is cheap. Keep `light` for MDX/Markdown collections. For large catalogs that still need detail lookup or facet pages without a getter, add [`defineIndex`](/reference/define-view) / [`defineGroup`](/reference/define-view) under `views`.
 
+When a light list omits fields (default: `body`), the same keys are stripped from **embedded** documents too (`s.reference(..., { embed: true })`). Full documents from getters keep embedded bodies.
+
 ```ts
 defineCollection({
   name: "products",

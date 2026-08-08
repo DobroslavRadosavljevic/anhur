@@ -103,7 +103,9 @@ describe("codegen list/document split", () => {
     );
 
     expect(dts).toContain("export type Post = GetTypeByName<");
-    expect(dts).toContain('export type PostListItem = Omit<Post, "body">;');
+    expect(dts).toContain(
+      'export type PostListItem = OmitListFields<Post, "body">;',
+    );
     expect(dts).toContain("export type Posts = Array<Post>;");
     expect(dts).toContain(
       "export declare const allPosts: Array<PostListItem>;",

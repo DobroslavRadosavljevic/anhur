@@ -73,7 +73,10 @@ describe("GetViewByName resolved types", () => {
   });
 
   it("list omit wrapper matches generated FeaturedPost d.ts shape", () => {
-    type FeaturedPostListItem = Omit<FeaturedPost, "body">;
+    type FeaturedPostListItem = import("../../src/config").OmitListFields<
+      FeaturedPost,
+      "body"
+    >;
     expectTypeOf<FeaturedPostListItem>().not.toHaveProperty("body");
     expectTypeOf<FeaturedPostListItem["featured"]>().toEqualTypeOf<true>();
     expectTypeOf<FeaturedPostListItem["title"]>().toEqualTypeOf<string>();

@@ -132,6 +132,8 @@ productsByCategory.find((g) => g.key === "widgets")?.items;
 - Use folders like `content/posts/en/` and `content/posts/de/` when you need multiple languages
 - List pages can use the light list (`allPosts`); detail pages can load one full document with `getPost("slug")` or `getPost({ slug })` (returns `null` if missing)
 - Prefer `defineIndex` over filtering a huge `allProducts` for detail routes when using `list-only`
+- For `by` / `where` / `select` that read `embed: true` fields, pass `content` or use `createDerivedHelpers(content)` so TypeScript remaps embeds like collection exports
+- Light lists omit configured fields (default `body`) from the row **and** from nested embeds
 - Each successful build replaces the generate output folder (via a staging swap), so renamed or removed collections do not leave stale modules — and a failed rebuild leaves the previous live output intact
 
 ## License

@@ -55,7 +55,7 @@ describe("codegen generate options", () => {
       path.join(result.outputDir, "index.d.ts"),
       "utf8",
     );
-    expect(dts).toContain("export type PostSummary = Omit<Post,");
+    expect(dts).toContain("export type PostSummary = OmitListFields<Post,");
     expect(dts).toContain("export type PostList = Array<Post>;");
     expect(dts).toContain('export type PostId = "newer" | "older";');
     expect(dts).toContain('export type PostSlug = "newer" | "older";');

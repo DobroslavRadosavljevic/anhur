@@ -54,7 +54,23 @@ Pass the **collection object** for a typed array.
 
 - Item type: `GetViewByName<typeof configuration, "featuredProducts">`
 - Name arg constrained to configured `views` names (`DerivedName<typeof config>`)
+- `GetViewByName` remaps `embed: true` refs like `GetTypeByName` (so view items match collection list types when shapes match)
 - Type-predicate `where` + `select`: `select` sees the narrowed document
+
+### Embed fields in callbacks
+
+Generated exports remap embeds. For `by` / `where` / `select` / `key` that read embeds (`doc.provider.slug`), pass `content` (same tuple as `defineConfig`) or use `createDerivedHelpers(content)`:
+
+```ts
+const content = [providers, proxies] as const;
+const { defineGroup } = createDerivedHelpers(content);
+
+defineGroup({
+  name: "proxiesByProvider",
+  from: proxies,
+  by: (doc) => doc.provider.slug,
+});
+```
 
 ## Pipeline order
 
@@ -66,3 +82,5 @@ validate → refs → transform → prepare → **resolve views/indexes/groups**
 - Multi-collection view without `select` — rejected
 - Index key field omitted by `select` — key is taken from the pre-select light row (OK); missing field on the light row fails the build
 - Relying on string `listSort` for numeric prices (`"99"` vs `"149"`) — use `compare: (a, b) => Number(a.price) - Number(b.price)`
+- Casting embed phantoms with `as unknown as { slug: string }` — pass `content` / use `createDerivedHelpers` instead
+- Expecting embedded `body` on light lists — light lists strip `listOmit` keys from embeds too; use a getter for full embeds

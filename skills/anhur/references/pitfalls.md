@@ -144,3 +144,15 @@ If you author a custom package and `doc` is still `any`, return `createIntegrati
 **Symptom:** `"99"` sorts after `"149"` with `listSort: { by: "price" }`.
 
 **Fix:** Use `generate.compare: (a, b) => Number(a.price) - Number(b.price)` (or store numbers in the schema).
+
+## Embed phantom on view callbacks (`doc.provider.slug` fails)
+
+**Symptom:** `by: (doc) => doc.provider.slug` type-errors, or you need `as unknown as { slug: string }` casts. Generated `allProxies` types are fine.
+
+**Fix:** Pass `content` (same array as `defineConfig`) into `defineView` / `defineIndex` / `defineGroup`, or use `createDerivedHelpers(content)`. Generated view exports remap embeds via `GetViewByName` without that step — this is only for config callbacks.
+
+## Embedded `body` still on light list rows
+
+**Symptom (before 0.0.11):** `allProxies[0].body` missing but `allProxies[0].provider.body` still present.
+
+**Fix:** Light lists strip `listOmit` keys (default `body`) from nested embeds too. Use `getX` / full split when you need embedded bodies.

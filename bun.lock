@@ -64,7 +64,7 @@
     },
     "packages/assets": {
       "name": "@anhur/assets",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "dependencies": {
         "@anhur/core": "workspace:*",
         "sharp": "^0.34.2",
@@ -101,7 +101,7 @@
     },
     "packages/core": {
       "name": "@anhur/core",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "bin": {
         "anhur": "./src/cli.ts",
       },
@@ -132,7 +132,7 @@
     },
     "packages/markdown": {
       "name": "@anhur/markdown",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "dependencies": {
         "@anhur/core": "workspace:*",
         "rehype-raw": "^7.0.0",
@@ -166,7 +166,7 @@
     },
     "packages/mdx": {
       "name": "@anhur/mdx",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "dependencies": {
         "@anhur/core": "workspace:*",
         "@mdx-js/mdx": "^3.1.1",
@@ -207,7 +207,7 @@
     },
     "packages/orama": {
       "name": "@anhur/orama",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "dependencies": {
         "@anhur/core": "workspace:*",
         "@orama/orama": "3.1.18",
@@ -227,7 +227,7 @@
     },
     "packages/vite": {
       "name": "@anhur/vite",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "dependencies": {
         "@anhur/core": "workspace:*",
       },
