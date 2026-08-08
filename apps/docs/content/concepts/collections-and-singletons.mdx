@@ -75,6 +75,33 @@ defineSingleton({
 
 Exports depend on `generate` options: a default-locale value, an all-locales array, and often a getter.
 
+## Views
+
+**Views**, **indexes**, and **groups** are build-time derived exports — filter featured items, look up by sku, or group by category. No extra folders; no getters.
+
+```ts
+defineView({
+  name: "featuredPosts",
+  from: posts,
+  where: (doc) => doc.featured === true,
+  generate: { limit: 12 },
+});
+
+defineIndex({
+  name: "productBySku",
+  from: products,
+  key: "sku",
+});
+
+defineGroup({
+  name: "productsByCategory",
+  from: products,
+  by: "category",
+});
+```
+
+Register under `defineConfig({ views: […] })`. See [defineView](/reference/define-view).
+
 ## Uniqueness
 
 `s.unique()` is unique within a collection. With project localization, uniqueness is **per locale** by default.
@@ -82,4 +109,5 @@ Exports depend on `generate` options: a default-locale value, an all-locales arr
 ## Next
 
 - [Light lists & getters](/concepts/light-lists-and-getters)
+- [defineView](/reference/define-view)
 - [Generate options](/guides/generate-options)

@@ -5,7 +5,10 @@ import {
   generateTypeName,
   singletonConstName,
   type AnyCollection,
+  type AnyGroup,
+  type AnyIndex,
   type AnySingleton,
+  type AnyView,
   type ContentMeta,
   type GenerateSplit,
   type ListSort,
@@ -166,6 +169,36 @@ export type ResolvedSingletonGenerate = {
   emitDocuments: boolean;
 };
 
+export type ResolvedViewGenerate = {
+  listName: string;
+  listItemTypeName: string;
+  arrayTypeName: string;
+  listOmit: readonly string[] | undefined;
+  listSort: ListSort | undefined;
+  limit: number | undefined;
+  /** When true, list item type is `GetViewByName` as-is (select defined the shape). */
+  usesSelect: boolean;
+};
+
+export type ResolvedIndexGenerate = {
+  exportName: string;
+  listItemTypeName: string;
+  recordTypeName: string;
+  keyTypeName: string;
+  listOmit: readonly string[] | undefined;
+  usesSelect: boolean;
+};
+
+export type ResolvedGroupGenerate = {
+  exportName: string;
+  listItemTypeName: string;
+  groupTypeName: string;
+  arrayTypeName: string;
+  keyTypeName: string;
+  listOmit: readonly string[] | undefined;
+  usesSelect: boolean;
+};
+
 export function resolveCollectionGenerate(
   source: AnyCollection,
 ): ResolvedCollectionGenerate {
@@ -189,6 +222,89 @@ export function resolveCollectionGenerate(
     emitSlugs: g?.emitSlugs ?? false,
     listSort: g?.listSort,
     emitDocuments: split === "light",
+  };
+}
+
+export function resolveViewGenerate(view: AnyView): ResolvedViewGenerate {
+  const g = view.generate;
+  const documentType = view.typeName;
+  const pascal = generateTypeName(view.name);
+  const listItemTypeName = g?.listItemTypeName ?? documentType;
+  let arrayTypeName = g?.arrayTypeName ?? pascal;
+  if (arrayTypeName === listItemTypeName) {
+    arrayTypeName = `${pascal}List`;
+  }
+
+  return {
+    listName: g?.listName ?? collectionConstName(view.name),
+    listItemTypeName,
+    arrayTypeName,
+    listOmit: g?.listOmit,
+    listSort: g?.listSort,
+    limit: g?.limit,
+    usesSelect: view.select != null,
+  };
+}
+
+export function resolveIndexGenerate(index: AnyIndex): ResolvedIndexGenerate {
+  const g = index.generate;
+  const documentType = index.typeName;
+  const pascal = generateTypeName(index.name);
+  const listItemTypeName = g?.listItemTypeName ?? documentType;
+  let recordTypeName =
+    g?.recordTypeName ??
+    (pascal === listItemTypeName ? `${pascal}Map` : pascal);
+  if (recordTypeName === listItemTypeName) {
+    recordTypeName = `${pascal}Map`;
+  }
+  let keyTypeName = `${listItemTypeName}Key`;
+  if (keyTypeName === listItemTypeName || keyTypeName === recordTypeName) {
+    keyTypeName = `${pascal}Key`;
+  }
+
+  return {
+    exportName: g?.exportName ?? index.name,
+    listItemTypeName,
+    recordTypeName,
+    keyTypeName,
+    listOmit: g?.listOmit,
+    usesSelect: index.select != null,
+  };
+}
+
+export function resolveGroupGenerate(group: AnyGroup): ResolvedGroupGenerate {
+  const g = group.generate;
+  const documentType = group.typeName;
+  const pascal = generateTypeName(group.name);
+  const listItemTypeName = g?.listItemTypeName ?? documentType;
+  let groupTypeName = g?.groupTypeName ?? `${listItemTypeName}Group`;
+  if (groupTypeName === listItemTypeName) {
+    groupTypeName = `${pascal}Group`;
+  }
+  let arrayTypeName = g?.arrayTypeName ?? pascal;
+  if (arrayTypeName === listItemTypeName || arrayTypeName === groupTypeName) {
+    arrayTypeName = `${pascal}List`;
+  }
+  if (arrayTypeName === listItemTypeName || arrayTypeName === groupTypeName) {
+    arrayTypeName = `${groupTypeName}List`;
+  }
+  let keyTypeName = `${listItemTypeName}Key`;
+  if (
+    keyTypeName === listItemTypeName ||
+    keyTypeName === groupTypeName ||
+    keyTypeName === arrayTypeName
+  ) {
+    keyTypeName = `${pascal}Key`;
+  }
+
+  return {
+    exportName: g?.exportName ?? group.name,
+    listItemTypeName,
+    groupTypeName,
+    arrayTypeName,
+    keyTypeName,
+    listOmit: g?.listOmit,
+    usesSelect: group.select != null,
   };
 }
 

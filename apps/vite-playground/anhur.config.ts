@@ -2,6 +2,9 @@ import {
   defineCollection,
   defineConfig,
   defineSingleton,
+  defineView,
+  defineIndex,
+  defineGroup,
   getDocumentMeta,
   schema as s,
 } from "@anhur/core";
@@ -124,8 +127,68 @@ const products = defineCollection({
     name: s.string(),
     sku: s.unique(),
     price: s.string(),
+    featured: s.boolean().optional(),
+    category: s.string().optional(),
     brochure: a.file().optional(),
   }),
+});
+
+/** Featured products — build-time subset (list-only view). */
+const featuredProducts = defineView({
+  name: "featuredProducts",
+  from: products,
+  where: (doc): doc is typeof doc & { featured: true } => doc.featured === true,
+  generate: {
+    listSort: { by: "price", order: "asc" },
+    limit: 12,
+  },
+});
+
+/** SKU → product card for detail routes. */
+const productBySku = defineIndex({
+  name: "productBySku",
+  from: products,
+  key: "sku",
+  select: (doc) => ({
+    name: doc.name,
+    sku: doc.sku,
+    price: doc.price,
+    featured: doc.featured === true,
+  }),
+});
+
+/** Category facet pages. */
+const productsByCategory = defineGroup({
+  name: "productsByCategory",
+  from: products,
+  by: (doc) => doc.category ?? "uncategorized",
+  select: (doc) => ({
+    name: doc.name,
+    sku: doc.sku,
+    price: doc.price,
+  }),
+  generate: {
+    listSort: { by: "name", order: "asc" },
+  },
+});
+
+/** Mixed posts + pages card feed. */
+const siteFeed = defineView({
+  name: "siteFeed",
+  from: [posts, pages],
+  select: (doc) => ({
+    collection: doc.collection,
+    title: doc.title,
+    slug: doc.slug,
+    href:
+      doc.collection === "posts"
+        ? (doc.permalink ?? `/posts/${doc._meta.locale}/${doc.slug}`)
+        : `/pages/${doc._meta.locale}/${doc.slug}`,
+  }),
+  generate: {
+    listName: "allSiteFeed",
+    listSort: { by: "title", order: "asc" },
+  },
 });
 
 /** Monolingual Markdown changelog. */
@@ -192,6 +255,7 @@ export default defineConfig({
     }),
   ],
   content: [authors, posts, pages, settings, products, changelog, about],
+  views: [featuredProducts, productBySku, productsByCategory, siteFeed],
   integrations: [
     orama({
       collections: {

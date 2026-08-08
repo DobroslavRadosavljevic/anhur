@@ -31,4 +31,16 @@ Document type name: `defineCollection({ typeName })`, not `generate.typeName`.
 | `split`        | `light` vs `full` / `list-only`       |
 | `emitAll`      | Emit all-locales array (default true) |
 
+## View / index / group `generate`
+
+| Option     | Notes                                                      |
+| ---------- | ---------------------------------------------------------- |
+| `listOmit` | Override inherited light-list omit before `select`         |
+| `listSort` | `{ by, order? }`                                           |
+| `compare`  | Custom comparator (wins over `listSort`)                   |
+| `limit`    | Cap rows after sort (views: whole list; groups: per group) |
+| `listName` | Override default `all…` list export (views)                |
+
+Full API: [defineView](/reference/define-view).
+
 Guide: [Generate options](/guides/generate-options)

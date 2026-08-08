@@ -62,6 +62,10 @@ defineCollection({
 
 Each build clears `.anhur/generated` (or your `outputDir`) before writing, so renamed or removed collections do not leave stale `allX.js` / `getX.js` files.
 
+## Views, indexes, and groups
+
+Derived exports use a smaller `generate` surface (`listOmit`, `listSort`, `compare`, `limit`, optional `listName`). See [defineView](/reference/define-view).
+
 ## Singletons
 
 | Option                                       | Notes                                                |

@@ -28,13 +28,14 @@ export default defineConfig({
 | Field          | Role                                           |
 | -------------- | ---------------------------------------------- |
 | `content`      | Collections and singletons                     |
+| `views`        | `defineView` / `defineIndex` / `defineGroup`   |
 | `processors`   | `mdx()`, `markdown()`, `assets()`, …           |
 | `integrations` | `orama({…})`, `defineIntegration({…})`, …      |
 | `localization` | Folder locales catalog                         |
 | `outputDir`    | Generated modules (default `.anhur/generated`) |
 | `cacheDir`     | Cache dir, or `false` to disable               |
 | `loaders`      | Extra file loaders before built-ins            |
-| `prepare`      | Hook after transforms, before codegen          |
+| `prepare`      | Hook after transforms, before views + codegen  |
 | `complete`     | Hook after codegen + integrations              |
 
 ## Content sources
@@ -75,3 +76,4 @@ Defaults to `.anhur/generated` relative to the config file. Override with `outpu
 - [`defineConfig`](/reference/define-config)
 - [`defineCollection`](/reference/define-collection)
 - [`defineSingleton`](/reference/define-singleton)
+- [`defineView`](/reference/define-view) (also indexes and groups)

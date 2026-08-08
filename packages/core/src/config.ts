@@ -196,6 +196,116 @@ export type AnyCollection = CollectionDefinition<string, ContentSchema, any>;
 export type AnySingleton = SingletonDefinition<string, ContentSchema, any>;
 export type AnyContent = AnyCollection | AnySingleton;
 
+/** Shared codegen knobs for views / indexes / groups. */
+export type DerivedGenerateOptions = {
+  /**
+   * Keys omitted before `select` / emit.
+   * Default: inherit each source collection’s light-list omit.
+   */
+  listOmit?: readonly string[];
+  /** Sort before limit (ignored when `compare` is set). */
+  listSort?: ListSort;
+  /** Custom comparator; wins over `listSort`. */
+  compare?: (a: Record<string, unknown>, b: Record<string, unknown>) => number;
+  /** Keep at most this many items after sort (views: whole list; groups: per group). */
+  limit?: number;
+};
+
+/** Codegen knobs for list views (`defineView`). */
+export type ViewGenerateOptions = DerivedGenerateOptions & {
+  /** List export name. Default: `allFeaturedPosts` from `name`. */
+  listName?: string;
+  /** List item type name. Default: singular PascalCase from `name`. */
+  listItemTypeName?: string;
+  /** Plural array type alias. Default: PascalCase from `name`. */
+  arrayTypeName?: string;
+};
+
+/** Codegen knobs for key→item maps (`defineIndex`). */
+export type IndexGenerateOptions = DerivedGenerateOptions & {
+  /** Export name. Default: the index `name` (e.g. `productBySku`). */
+  exportName?: string;
+  /** Value type name. Default: singular PascalCase from `name`. */
+  listItemTypeName?: string;
+  /** `Record<string, Item>` alias. Default: PascalCase from `name`. */
+  recordTypeName?: string;
+};
+
+/** Codegen knobs for grouped lists (`defineGroup`). */
+export type GroupGenerateOptions = DerivedGenerateOptions & {
+  /** Export name. Default: the group `name` (e.g. `productsByCategory`). */
+  exportName?: string;
+  /** Item type name inside each group. Default: singular PascalCase from `name`. */
+  listItemTypeName?: string;
+  /** `{ key, count, items }` type name. Default: `{TypeName}Group`. */
+  groupTypeName?: string;
+  /** Array type alias. Default: PascalCase from `name`. */
+  arrayTypeName?: string;
+};
+
+/**
+ * Named list derived from one or more collections (filter / merge).
+ * List-only — no getters or per-document modules.
+ */
+export type ViewDefinition<TName extends string = string, TData = unknown> = {
+  type: "view";
+  name: TName;
+  typeName: string;
+  /** Source collections (always normalized to an array). */
+  from: readonly AnyCollection[];
+  where?: (document: Record<string, unknown>, context: ViewContext) => boolean;
+  select?: (
+    document: Record<string, unknown>,
+    context: ViewContext,
+  ) => Record<string, unknown>;
+  generate?: ViewGenerateOptions;
+  /** Phantom: list item type after `where` / `select`. */
+  readonly _data?: TData;
+};
+
+/**
+ * Keyed map derived from one collection (`Record<key, item>`).
+ * Useful for detail routes without a full getter tree.
+ */
+export type IndexDefinition<TName extends string = string, TData = unknown> = {
+  type: "index";
+  name: TName;
+  typeName: string;
+  from: AnyCollection;
+  key: string | ((document: Record<string, unknown>) => string);
+  where?: (document: Record<string, unknown>, context: ViewContext) => boolean;
+  select?: (
+    document: Record<string, unknown>,
+    context: ViewContext,
+  ) => Record<string, unknown>;
+  generate?: IndexGenerateOptions;
+  readonly _data?: TData;
+};
+
+/**
+ * Grouped lists derived from one collection (`{ key, count, items }[]`).
+ * Useful for facet / SEO landing pages.
+ */
+export type GroupDefinition<TName extends string = string, TData = unknown> = {
+  type: "group";
+  name: TName;
+  typeName: string;
+  from: AnyCollection;
+  by: string | ((document: Record<string, unknown>) => string);
+  where?: (document: Record<string, unknown>, context: ViewContext) => boolean;
+  select?: (
+    document: Record<string, unknown>,
+    context: ViewContext,
+  ) => Record<string, unknown>;
+  generate?: GroupGenerateOptions;
+  readonly _data?: TData;
+};
+
+export type AnyView = ViewDefinition<string, any>;
+export type AnyIndex = IndexDefinition<string, any>;
+export type AnyGroup = GroupDefinition<string, any>;
+export type AnyDerived = AnyView | AnyIndex | AnyGroup;
+
 /** Document shape passed to optional `transform` hooks after validation. */
 export type TransformDocument = Record<string, unknown> & {
   _meta: ContentMeta;
@@ -203,6 +313,11 @@ export type TransformDocument = Record<string, unknown> & {
 
 export type AnhurConfig = {
   content: readonly AnyContent[];
+  /**
+   * Derived exports: `defineView` lists, `defineIndex` maps, `defineGroup` groups.
+   * Built after transforms/`prepare`, from final collection documents.
+   */
+  views?: readonly AnyDerived[];
   /**
    * Project locale catalog. When set, every source inherits folder locales
    * unless it sets `localized: false`.
@@ -245,12 +360,49 @@ export type DocumentWithMeta<TData> = TData & {
   _meta: ContentMeta;
 };
 
+/** Infer document data type (without `_meta`) from a content definition. */
+export type InferSchemaData<T> =
+  T extends CollectionDefinition<string, ContentSchema, infer TData>
+    ? TData
+    : T extends SingletonDefinition<string, ContentSchema, infer TData>
+      ? TData
+      : never;
+
+export type InferDocument<T> = DocumentWithMeta<InferSchemaData<T>>;
+
+/**
+ * Cross-collection helpers for view / index / group `where` and `select`.
+ * Pass a collection/singleton object to `documents()` for a typed array.
+ */
+export type ViewContext = {
+  documents: {
+    <C extends AnyContent>(source: C): InferDocument<C>[];
+    (source: string): TransformDocument[];
+  };
+};
+
 export function isSingleton(source: AnyContent): source is AnySingleton {
   return source.type === "singleton";
 }
 
 export function isCollection(source: AnyContent): source is AnyCollection {
   return source.type === "collection";
+}
+
+export function isView(value: { type: string }): value is AnyView {
+  return value.type === "view";
+}
+
+export function isIndex(value: { type: string }): value is AnyIndex {
+  return value.type === "index";
+}
+
+export function isGroup(value: { type: string }): value is AnyGroup {
+  return value.type === "group";
+}
+
+export function isDerived(value: { type: string }): value is AnyDerived {
+  return isView(value) || isIndex(value) || isGroup(value);
 }
 
 /** Whether this source uses project localization (inherits unless opted out). */
@@ -439,6 +591,392 @@ export function defineSingleton<
   };
 }
 
+type CollectionDocument<TCollection extends AnyCollection> = DocumentWithMeta<
+  InferSchemaData<TCollection>
+>;
+
+/** Top-level document fields whose values are strings (valid index/group keys). */
+type StringFieldKeys<T> = {
+  [K in keyof Omit<T, "_meta">]-?: Exclude<T[K], undefined> extends string
+    ? K
+    : never;
+}[keyof Omit<T, "_meta">] &
+  string;
+
+type MultiCollectionDocument<TCollections extends readonly AnyCollection[]> = {
+  [I in keyof TCollections]: TCollections[I] extends AnyCollection
+    ? CollectionDocument<TCollections[I]> & {
+        collection: TCollections[I]["name"];
+      }
+    : never;
+}[number];
+
+type MultiSelectInput<TCollections extends readonly AnyCollection[]> = {
+  [I in keyof TCollections]: TCollections[I] extends AnyCollection
+    ? CollectionDocument<TCollections[I]> & {
+        collection: TCollections[I]["name"];
+      }
+    : never;
+}[number];
+
+export type DefineViewSingleInput<
+  TName extends string,
+  TCollection extends AnyCollection,
+> = {
+  name: TName;
+  typeName?: string;
+  from: TCollection;
+  where?: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => boolean;
+  select?: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => Record<string, unknown>;
+  generate?: ViewGenerateOptions;
+};
+
+export type DefineViewMultiInput<
+  TName extends string,
+  TCollections extends readonly [AnyCollection, ...AnyCollection[]],
+  TItem extends Record<string, unknown> = Record<string, unknown>,
+> = {
+  name: TName;
+  typeName?: string;
+  from: TCollections;
+  where?: (
+    document: MultiCollectionDocument<TCollections>,
+    context: ViewContext,
+  ) => boolean;
+  /** Required when merging collections — shared list item shape. */
+  select: (
+    document: MultiSelectInput<TCollections>,
+    context: ViewContext,
+  ) => TItem;
+  generate?: ViewGenerateOptions;
+};
+
+function normalizeViewFrom(
+  from: AnyCollection | readonly AnyCollection[],
+  label: string,
+): AnyCollection[] {
+  const sources = Array.isArray(from) ? [...from] : [from];
+  if (sources.length === 0) {
+    throw new Error(`${label} requires at least one collection in \`from\`.`);
+  }
+  for (const source of sources) {
+    if (!source || source.type !== "collection") {
+      throw new Error(
+        `${label} \`from\` must reference collection definitions.`,
+      );
+    }
+  }
+  const names = new Set<string>();
+  for (const source of sources) {
+    if (names.has(source.name)) {
+      throw new Error(
+        `${label} \`from\` lists collection "${source.name}" more than once.`,
+      );
+    }
+    names.add(source.name);
+  }
+  return sources;
+}
+
+/**
+ * Single-collection view: type-predicate `where` + `select` (select sees narrowed doc).
+ */
+export function defineView<
+  TName extends string,
+  TCollection extends AnyCollection,
+  TNarrow extends CollectionDocument<TCollection>,
+  TItem extends Record<string, unknown>,
+>(input: {
+  name: TName;
+  typeName?: string;
+  from: TCollection;
+  where: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => document is TNarrow;
+  select: (document: TNarrow, context: ViewContext) => TItem;
+  generate?: ViewGenerateOptions;
+}): ViewDefinition<TName, TItem>;
+
+/**
+ * Single-collection view with optional `select` (item type from select return).
+ */
+export function defineView<
+  TName extends string,
+  TCollection extends AnyCollection,
+  TItem extends Record<string, unknown>,
+>(input: {
+  name: TName;
+  typeName?: string;
+  from: TCollection;
+  where?: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => boolean;
+  select: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => TItem;
+  generate?: ViewGenerateOptions;
+}): ViewDefinition<TName, TItem>;
+
+/**
+ * Single-collection view narrowed by a type predicate `where`.
+ */
+export function defineView<
+  TName extends string,
+  TCollection extends AnyCollection,
+  TNarrow extends CollectionDocument<TCollection>,
+>(input: {
+  name: TName;
+  typeName?: string;
+  from: TCollection;
+  where: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => document is TNarrow;
+  generate?: ViewGenerateOptions;
+}): ViewDefinition<TName, TNarrow>;
+
+/** Single-collection filtered list view. */
+export function defineView<
+  TName extends string,
+  TCollection extends AnyCollection,
+>(input: {
+  name: TName;
+  typeName?: string;
+  from: TCollection;
+  where?: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => boolean;
+  generate?: ViewGenerateOptions;
+}): ViewDefinition<TName, CollectionDocument<TCollection>>;
+
+/** Multi-collection merged list view (`select` required). */
+export function defineView<
+  TName extends string,
+  TCollections extends readonly [AnyCollection, ...AnyCollection[]],
+  TItem extends Record<string, unknown>,
+>(input: {
+  name: TName;
+  typeName?: string;
+  from: TCollections;
+  where?: (
+    document: MultiCollectionDocument<TCollections>,
+    context: ViewContext,
+  ) => boolean;
+  select: (
+    document: MultiSelectInput<TCollections>,
+    context: ViewContext,
+  ) => TItem;
+  generate?: ViewGenerateOptions;
+}): ViewDefinition<TName, TItem>;
+
+export function defineView(input: {
+  name: string;
+  typeName?: string;
+  from: AnyCollection | readonly AnyCollection[];
+  where?: (document: any, context: ViewContext) => boolean;
+  select?: (document: any, context: ViewContext) => Record<string, unknown>;
+  generate?: ViewGenerateOptions;
+}): ViewDefinition {
+  const from = normalizeViewFrom(input.from, "defineView");
+  if (from.length > 1 && input.select == null) {
+    throw new Error(
+      `View "${input.name}" merges multiple collections and requires select() to define a shared list item shape.`,
+    );
+  }
+
+  return {
+    type: "view",
+    name: input.name,
+    typeName: input.typeName ?? generateDocumentTypeName(input.name),
+    from,
+    where: input.where,
+    select: input.select,
+    generate: input.generate,
+  };
+}
+
+/** Key→item map from one collection (type-predicate `where` + `select`). */
+export function defineIndex<
+  TName extends string,
+  TCollection extends AnyCollection,
+  TNarrow extends CollectionDocument<TCollection>,
+  TItem extends Record<string, unknown>,
+>(input: {
+  name: TName;
+  typeName?: string;
+  from: TCollection;
+  key:
+    | StringFieldKeys<CollectionDocument<TCollection>>
+    | ((document: TNarrow) => string);
+  where: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => document is TNarrow;
+  select: (document: TNarrow, context: ViewContext) => TItem;
+  generate?: IndexGenerateOptions;
+}): IndexDefinition<TName, TItem>;
+
+/** Key→item map from one collection (`select` defines value type). */
+export function defineIndex<
+  TName extends string,
+  TCollection extends AnyCollection,
+  TItem extends Record<string, unknown>,
+>(input: {
+  name: TName;
+  typeName?: string;
+  from: TCollection;
+  key:
+    | StringFieldKeys<CollectionDocument<TCollection>>
+    | ((document: CollectionDocument<TCollection>) => string);
+  where?: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => boolean;
+  select: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => TItem;
+  generate?: IndexGenerateOptions;
+}): IndexDefinition<TName, TItem>;
+
+/** Key→item map narrowed by a type predicate `where`. */
+export function defineIndex<
+  TName extends string,
+  TCollection extends AnyCollection,
+  TNarrow extends CollectionDocument<TCollection>,
+>(input: {
+  name: TName;
+  typeName?: string;
+  from: TCollection;
+  key:
+    | StringFieldKeys<CollectionDocument<TCollection>>
+    | ((document: TNarrow) => string);
+  where: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => document is TNarrow;
+  generate?: IndexGenerateOptions;
+}): IndexDefinition<TName, TNarrow>;
+
+/** Key→item map (full light document as value). */
+export function defineIndex<
+  TName extends string,
+  TCollection extends AnyCollection,
+>(input: {
+  name: TName;
+  typeName?: string;
+  from: TCollection;
+  key:
+    | StringFieldKeys<CollectionDocument<TCollection>>
+    | ((document: CollectionDocument<TCollection>) => string);
+  where?: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => boolean;
+  generate?: IndexGenerateOptions;
+}): IndexDefinition<TName, CollectionDocument<TCollection>>;
+
+export function defineIndex(input: {
+  name: string;
+  typeName?: string;
+  from: AnyCollection;
+  key: string | ((document: any) => string);
+  where?: (document: any, context: ViewContext) => boolean;
+  select?: (document: any, context: ViewContext) => Record<string, unknown>;
+  generate?: IndexGenerateOptions;
+}): IndexDefinition {
+  if (!input.from || input.from.type !== "collection") {
+    throw new Error("defineIndex `from` must be a collection definition.");
+  }
+
+  return {
+    type: "index",
+    name: input.name,
+    typeName: input.typeName ?? generateDocumentTypeName(input.name),
+    from: input.from,
+    key: input.key as IndexDefinition["key"],
+    where: input.where,
+    select: input.select,
+    generate: input.generate,
+  };
+}
+
+/** Grouped lists with `select` (item type from select return). */
+export function defineGroup<
+  TName extends string,
+  TCollection extends AnyCollection,
+  TItem extends Record<string, unknown>,
+>(input: {
+  name: TName;
+  typeName?: string;
+  from: TCollection;
+  by:
+    | StringFieldKeys<CollectionDocument<TCollection>>
+    | ((document: CollectionDocument<TCollection>) => string);
+  where?: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => boolean;
+  select: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => TItem;
+  generate?: GroupGenerateOptions;
+}): GroupDefinition<TName, TItem>;
+
+/** Grouped lists (full light document as item). */
+export function defineGroup<
+  TName extends string,
+  TCollection extends AnyCollection,
+>(input: {
+  name: TName;
+  typeName?: string;
+  from: TCollection;
+  by:
+    | StringFieldKeys<CollectionDocument<TCollection>>
+    | ((document: CollectionDocument<TCollection>) => string);
+  where?: (
+    document: CollectionDocument<TCollection>,
+    context: ViewContext,
+  ) => boolean;
+  generate?: GroupGenerateOptions;
+}): GroupDefinition<TName, CollectionDocument<TCollection>>;
+
+export function defineGroup(input: {
+  name: string;
+  typeName?: string;
+  from: AnyCollection;
+  by: string | ((document: any) => string);
+  where?: (document: any, context: ViewContext) => boolean;
+  select?: (document: any, context: ViewContext) => Record<string, unknown>;
+  generate?: GroupGenerateOptions;
+}): GroupDefinition {
+  if (!input.from || input.from.type !== "collection") {
+    throw new Error("defineGroup `from` must be a collection definition.");
+  }
+
+  return {
+    type: "group",
+    name: input.name,
+    typeName: input.typeName ?? generateDocumentTypeName(input.name),
+    from: input.from,
+    by: input.by as GroupDefinition["by"],
+    where: input.where,
+    select: input.select,
+    generate: input.generate,
+  };
+}
+
 function assertLocalizationCatalog(localization: Localization): void {
   if (!localization.locales.includes(localization.defaultLocale)) {
     throw new Error(
@@ -467,6 +1005,65 @@ function assertSingletonPaths(
   }
 }
 
+function assertViews(
+  content: readonly AnyContent[],
+  views: readonly AnyDerived[] | undefined,
+): void {
+  if (!views?.length) return;
+
+  const contentNames = new Set(content.map((source) => source.name));
+  const collectionNames = new Set(
+    content.filter(isCollection).map((source) => source.name),
+  );
+  const derivedNames = new Set<string>();
+
+  for (const entry of views) {
+    const label =
+      entry.type === "view"
+        ? "View"
+        : entry.type === "index"
+          ? "Index"
+          : "Group";
+
+    if (contentNames.has(entry.name)) {
+      throw new Error(
+        `${label} "${entry.name}" conflicts with a content source of the same name.`,
+      );
+    }
+    if (derivedNames.has(entry.name)) {
+      throw new Error(`Duplicate derived name "${entry.name}".`);
+    }
+    derivedNames.add(entry.name);
+
+    if (entry.type === "view") {
+      if (entry.from.length === 0) {
+        throw new Error(
+          `View "${entry.name}" requires at least one collection.`,
+        );
+      }
+      if (entry.from.length > 1 && entry.select == null) {
+        throw new Error(
+          `View "${entry.name}" merges multiple collections and requires select().`,
+        );
+      }
+      for (const source of entry.from) {
+        if (!collectionNames.has(source.name)) {
+          throw new Error(
+            `View "${entry.name}" references collection "${source.name}" which is not in content.`,
+          );
+        }
+      }
+      continue;
+    }
+
+    if (!collectionNames.has(entry.from.name)) {
+      throw new Error(
+        `${label} "${entry.name}" references collection "${entry.from.name}" which is not in content.`,
+      );
+    }
+  }
+}
+
 /**
  * Preserve the concrete `content` tuple so generated `.d.ts` can use
  * `GetTypeByName<typeof configuration, "posts">`.
@@ -475,15 +1072,20 @@ function assertSingletonPaths(
  * contextual {@link IntegrationConfigEntry} type, including when `content` is
  * an inline array.
  */
-export function defineConfig<const TContent extends readonly AnyContent[]>(
-  config: Omit<AnhurConfig, "content" | "integrations"> & {
+export function defineConfig<
+  const TContent extends readonly AnyContent[],
+  const TViews extends readonly AnyDerived[] = [],
+>(
+  config: Omit<AnhurConfig, "content" | "integrations" | "views"> & {
     content: TContent;
+    views?: TViews;
     integrations?: readonly import("./integrations").IntegrationInput<
       NoInfer<TContent>
     >[];
   },
-): Omit<AnhurConfig, "content" | "integrations"> & {
+): Omit<AnhurConfig, "content" | "integrations" | "views"> & {
   content: TContent;
+  views?: TViews;
   integrations?: readonly import("./integrations").IntegrationInput<TContent>[];
 } {
   if (!config.content?.length) {
@@ -500,21 +1102,14 @@ export function defineConfig<const TContent extends readonly AnyContent[]>(
     }
   }
 
-  return config as Omit<AnhurConfig, "content" | "integrations"> & {
+  assertViews(config.content, config.views);
+
+  return config as Omit<AnhurConfig, "content" | "integrations" | "views"> & {
     content: TContent;
+    views?: TViews;
     integrations?: readonly import("./integrations").IntegrationInput<TContent>[];
   };
 }
-
-/** Infer document data type (without `_meta`) from a content definition. */
-export type InferSchemaData<T> =
-  T extends CollectionDefinition<string, ContentSchema, infer TData>
-    ? TData
-    : T extends SingletonDefinition<string, ContentSchema, infer TData>
-      ? TData
-      : never;
-
-export type InferDocument<T> = DocumentWithMeta<InferSchemaData<T>>;
 
 type EmbeddedDocumentMarker =
   import("./schema/reference").EmbeddedDocument<string>;
@@ -578,3 +1173,33 @@ export type GetTypeByName<
   InferDocument<Extract<TConfig["content"][number], { name: TName }>>,
   TConfig["content"]
 >;
+
+/** Infer list/map/group item data from a derived definition. */
+export type InferViewData<T> =
+  T extends ViewDefinition<string, infer TData>
+    ? TData
+    : T extends IndexDefinition<string, infer TData>
+      ? TData
+      : T extends GroupDefinition<string, infer TData>
+        ? TData
+        : never;
+
+/** Names of derived exports (`views`) on a config. */
+export type DerivedName<TConfig extends AnhurConfig> =
+  NonNullable<TConfig["views"]> extends readonly AnyDerived[]
+    ? NonNullable<TConfig["views"]>[number]["name"]
+    : never;
+
+/**
+ * Resolve a derived item type by name from a config object.
+ * Used by generated `.d.ts` files (views, indexes, and groups).
+ */
+export type GetViewByName<
+  TConfig extends AnhurConfig,
+  TName extends DerivedName<TConfig> = DerivedName<TConfig>,
+> =
+  NonNullable<TConfig["views"]> extends readonly AnyDerived[]
+    ? InferViewData<
+        Extract<NonNullable<TConfig["views"]>[number], { name: TName }>
+      >
+    : never;

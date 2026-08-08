@@ -79,7 +79,7 @@ if (!full) {
 }
 ```
 
-Singletons export a const (and optional `*All` / getter per `generate`). Generated `_meta.filePath` is relative to the project root (safe to commit if you choose to).
+Singletons export a const (and optional `*All` / getter per `generate`). Views / indexes / groups are list-only exports from `defineConfig({ views })` — see [views.md](views.md). Generated `_meta.filePath` is relative to the project root (safe to commit if you choose to).
 
 ## 7. Without Vite
 

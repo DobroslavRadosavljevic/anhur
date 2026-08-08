@@ -35,6 +35,7 @@ APIs may still change before 1.0. Treat this as early docs and pin versions care
 - **Typed imports** — `import { allPosts, getPost } from "anhur/generated"`
 - **Light lists** — indexes omit heavy fields (default: `body`) so listing pages stay cheap
 - **On-demand documents** — `getPost(...)` loads one full document when you need it
+- **Derived views** — `defineView` / `defineIndex` / `defineGroup` for featured lists, SKU maps, and category groups
 - **Folder locales** — `content/posts/en/…` and `content/posts/de/…` when you want i18n
 - **Opt-in processors** — MDX, Markdown→HTML, and assets via separate packages
 
@@ -44,16 +45,17 @@ APIs may still change before 1.0. Treat this as early docs and pin versions care
 | ---------------------------------------- | ------------------------------------------ |
 | Blogs, docs, changelogs, marketing pages | Remote CMS as the source of truth          |
 | Product catalogs in JSON/YAML            | Official Next.js adapter (use CLI + alias) |
-| Multi-locale sites with folder layout    | Non-Zod schema libraries                   |
+| Directories with facet / SEO landings    | Non-Zod schema libraries                   |
+| Multi-locale sites with folder layout    | Field-level (not folder) translation       |
 
 ## Packages
 
-| Package                                 | Role                 |
-| --------------------------------------- | -------------------- |
-| [`@anhur/core`](/packages/core)         | Config, schemas, CLI |
-| [`@anhur/vite`](/packages/vite)         | Vite plugin          |
-| [`@anhur/mdx`](/packages/mdx)           | MDX bodies + React   |
-| [`@anhur/markdown`](/packages/markdown) | Markdown → HTML      |
+| Package                                 | Role                               |
+| --------------------------------------- | ---------------------------------- |
+| [`@anhur/core`](/packages/core)         | Config, schemas, CLI               |
+| [`@anhur/vite`](/packages/vite)         | Vite plugin                        |
+| [`@anhur/mdx`](/packages/mdx)           | MDX bodies + React                 |
+| [`@anhur/markdown`](/packages/markdown) | Markdown → HTML                    |
 | [`@anhur/assets`](/packages/assets)     | Images, files, optional CDN upload |
 
 ## Next

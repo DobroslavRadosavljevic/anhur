@@ -1,5 +1,7 @@
 {
   "name": "Pro Pack",
   "sku": "pro-02",
-  "price": "129"
+  "price": "129",
+  "featured": true,
+  "category": "pro"
 }

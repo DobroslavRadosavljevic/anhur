@@ -36,7 +36,7 @@ if (!post) {
 | `full`            | Full documents in the list | Optional / none | Optional |
 | `list-only`       | Everything in the list     | No              | No       |
 
-Use `list-only` for small YAML/JSON catalogs where every field is cheap. Keep `light` for MDX/Markdown collections.
+Use `list-only` for small YAML/JSON catalogs where every field is cheap. Keep `light` for MDX/Markdown collections. For large catalogs that still need detail lookup or facet pages without a getter, add [`defineIndex`](/reference/define-view) / [`defineGroup`](/reference/define-view) under `views`.
 
 ```ts
 defineCollection({
@@ -68,4 +68,6 @@ import type { Post, PostListItem, Posts } from "anhur/generated";
 ## Next
 
 - [Generate options](/guides/generate-options)
+- [defineView](/reference/define-view)
+- [Recipes: YAML / JSON catalog](/recipes/yaml-json-catalog)
 - [Recipes: blog](/recipes/blog)

@@ -8,15 +8,16 @@ Authors edit `content/…`. Developers import generated modules. The build fails
 
 ## Problem it solves
 
-| Pain                                            | Anhur answer                                                  |
+| Pain                                            | Anhur answer                                                     |
 | ----------------------------------------------- | ---------------------------------------------------------------- |
-| “What’s the shape of a post?”                   | Zod schema in `anhur.config.ts`                               |
+| “What’s the shape of a post?”                   | Zod schema in `anhur.config.ts`                                  |
 | “Did we forget `title` on this MDX?”            | Build error at collect time                                      |
 | “How do I load all posts in a locale?”          | Folder i18n + generated `allPosts` / getters                     |
 | “Post → author without stringly ids everywhere” | `s.reference("authors", { embed?: true })`                       |
-| “MDX + images without custom Vite glue”         | Opt-in `@anhur/mdx` + `@anhur/assets` + Vite plugin        |
-| “Serve hashed assets from a CDN in prod”        | `assets({ storage })` + files-sdk (build-time sync)       |
+| “MDX + images without custom Vite glue”         | Opt-in `@anhur/mdx` + `@anhur/assets` + Vite plugin              |
+| “Serve hashed assets from a CDN in prod”        | `assets({ storage })` + files-sdk (build-time sync)              |
 | “Heavy body on every list item”                 | Default **light** list (omit `body`) + `getPost()` for full docs |
+| “Featured / SKU map / category pages at build”  | `defineView` / `defineIndex` / `defineGroup` under `views`       |
 
 ## Why not just…
 

@@ -73,11 +73,23 @@ transform: (doc, ctx) => {
 
 Prefer body compile via schema fields, not transform.
 
+## View / index / group `generate`
+
+Shared with derived exports (`defineConfig({ views })`). See [views.md](views.md).
+
+| Option     | Notes                                                      |
+| ---------- | ---------------------------------------------------------- |
+| `listOmit` | Override inherited light-list omit before `select`         |
+| `listSort` | `{ by, order? }`                                           |
+| `compare`  | Custom comparator (wins over `listSort`)                   |
+| `limit`    | Cap rows after sort (views: whole list; groups: per group) |
+| `listName` | Override default `all…` list export (views)                |
+
 ## Lifecycle hooks
 
-Order: validate → refs → **transform** (skip/draft) → **prepare** → codegen → source **onSuccess** → **complete**.
+Order: validate → refs → **transform** (skip/draft) → **prepare** → **views/indexes/groups** → codegen → source **onSuccess** → integrations → **complete**.
 
-- `prepare(sources)` — mutate documents before write
+- `prepare(sources)` — mutate documents before views + write
 - `onSuccess` on collection/singleton — after that source’s codegen
 - `complete` — project-wide after all success hooks
 

@@ -15,10 +15,10 @@ export type {
 
 export type TransformableSource = {
   source: { name: string };
-  documents: Array<{
+  documents: readonly {
     data: Record<string, unknown>;
     _meta: ContentMeta;
-  }>;
+  }[];
 };
 
 /**

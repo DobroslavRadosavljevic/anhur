@@ -17,12 +17,13 @@ Anhur is for when **authors edit files in the project**, and the app should trea
 
 Good fits:
 
-| Use                 | Example                                    |
-| ------------------- | ------------------------------------------ |
-| Blog or docs        | MDX posts, Markdown pages                  |
-| Marketing site      | Localized pages + site settings            |
-| Product catalog     | JSON products with images                  |
-| Multi-language site | Same content under `en/` and `de/` folders |
+| Use                 | Example                                        |
+| ------------------- | ---------------------------------------------- |
+| Blog or docs        | MDX posts, Markdown pages                      |
+| Marketing site      | Localized pages + site settings                |
+| Product catalog     | JSON products with images                      |
+| Directories / SEO   | Featured lists, SKU maps, category groups      |
+| Multi-language site | Same content under `en/` and `de/` folders     |
 | CDN asset delivery  | Build-time upload to S3/R2/MinIO via files-sdk |
 
 ## ⚙️ How it works
@@ -43,16 +44,18 @@ const post = await getPost("hello");
 // or: await getPost({ locale: "en", slug: "hello" })
 ```
 
+Need a **featured subset**, a **SKU → card map**, or **category groups** without runtime `.filter()`? Use `defineView` / `defineIndex` / `defineGroup` in config — see [`@anhur/core`](./packages/core) and the docs reference for `defineView`.
+
 ## 📦 Packages
 
 Install only what you need:
 
-| Package                                  | What it’s for                                            |
-| ---------------------------------------- | -------------------------------------------------------- |
-| [`@anhur/core`](./packages/core)         | Config, schemas, and the `anhur` CLI — always start here |
-| [`@anhur/vite`](./packages/vite)         | Vite apps: rebuild on change + `anhur/generated`         |
-| [`@anhur/mdx`](./packages/mdx)           | MDX body fields + React renderer                         |
-| [`@anhur/markdown`](./packages/markdown) | Markdown → HTML body fields                              |
+| Package                                  | What it’s for                                                 |
+| ---------------------------------------- | ------------------------------------------------------------- |
+| [`@anhur/core`](./packages/core)         | Config, schemas, and the `anhur` CLI — always start here      |
+| [`@anhur/vite`](./packages/vite)         | Vite apps: rebuild on change + `anhur/generated`              |
+| [`@anhur/mdx`](./packages/mdx)           | MDX body fields + React renderer                              |
+| [`@anhur/markdown`](./packages/markdown) | Markdown → HTML body fields                                   |
 | [`@anhur/assets`](./packages/assets)     | Images/files next to content; optional CDN upload (files-sdk) |
 
 ## 🚀 Quick start

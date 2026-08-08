@@ -4,15 +4,15 @@ description: >-
   Build, review, debug, configure, migrate, teach, or plan Anhur typed content
   (@anhur/core, @anhur/vite, @anhur/mdx, @anhur/markdown, @anhur/assets,
   @anhur/orama). Use when integrating Anhur into an app, writing or changing
-  anhur.config.ts, collections, singletons, processors, integrations (orama /
-  defineIntegration), Zod content schemas, folder i18n, anhur/generated imports,
-  the Vite plugin, CLI build/watch, drafts/hooks, MDX/Markdown bodies, assets,
-  CDN/object storage upload (assets storage + files-sdk), or full-text search —
-  or when the user mentions Anhur, .anhur, or local MD/MDX/YAML/JSON content
-  pipelines.
+  anhur.config.ts, collections, singletons, views (defineView / defineIndex /
+  defineGroup), processors, integrations (orama / defineIntegration), Zod
+  content schemas, folder i18n, anhur/generated imports, the Vite plugin, CLI
+  build/watch, drafts/hooks, MDX/Markdown bodies, assets, CDN/object storage
+  upload (assets storage + files-sdk), or full-text search — or when the user
+  mentions Anhur, .anhur, or local MD/MDX/YAML/JSON content pipelines.
 license: MIT
 metadata:
-  version: "0.0.9"
+  version: "0.0.10"
   packages: "@anhur/core,@anhur/vite,@anhur/mdx,@anhur/markdown,@anhur/assets,@anhur/orama"
 ---
 
@@ -53,6 +53,7 @@ Anhur is for when content **lives in the repo**, authors edit files, and the app
 | Blogs / docs / changelogs  | MDX posts, Markdown pages, YAML authors                 |
 | Marketing / product sites  | Localized pages + site settings singleton               |
 | Catalogs / structured data | JSON products with unique SKUs and file attachments     |
+| Directories / SEO facets   | `defineView` / `defineIndex` / `defineGroup` at build   |
 | Multi-locale sites         | Same collection under `en/` / `de/` folders             |
 | In-app full-text search    | Orama index over one or many collections                |
 | CDN-delivered assets       | Build-time upload via `assets({ storage })` + files-sdk |
@@ -63,22 +64,22 @@ Anhur is for when content **lives in the repo**, authors edit files, and the app
 
 - Explain Anhur to a user or choose it vs CMS / hand loaders
 - Greenfield or migrate a site/app onto Anhur content
-- Add/change collections, singletons, processors, schemas, or **integrations**
+- Add/change collections, singletons, **views/indexes/groups**, processors, schemas, or **integrations**
 - Wire Orama search (`orama({…})` in `integrations`, `createSearcher`)
 - Wire Vite (`anhur/generated` alias + asset serving) or CI (`anhur build`)
 - Wire **remote asset storage** (`assets({ storage })`, files-sdk, CDN `base`, prune)
-- Debug processor/schema mismatches, assets, drafts, localization, or search index output
+- Debug processor/schema mismatches, assets, drafts, localization, views, or search index output
 
 ## Package map
 
-| Package           | Install when     | Provides                                                                                                  |
-| ----------------- | ---------------- | --------------------------------------------------------------------------------------------------------- |
-| `@anhur/core`     | Always           | `defineConfig`, collections/singletons, `schema as s`, CLI `anhur`, `build`/`watch`, integrations runtime |
-| `@anhur/vite`     | Vite apps        | Plugin: Vite-watcher rebuilds, build logs, `anhur/generated` alias, serve `.anhur/assets`                 |
-| `@anhur/mdx`      | MDX bodies       | `mdx()` processor, `schema as m` → `m.mdx()`, `MDXContent` from `@anhur/mdx/react`                        |
-| `@anhur/markdown` | Markdown→HTML    | `markdown()` processor, `schema as md` → `md.markdown()`                                                  |
-| `@anhur/assets`   | Images/files     | `assets()` processor, `a.image()` / `a.file()`, optional CDN sync via `storage` + files-sdk               |
-| `@anhur/orama`    | Full-text search | `orama()` integration + `createSearcher` (browser/server)                                                 |
+| Package           | Install when     | Provides                                                                                                                                            |
+| ----------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@anhur/core`     | Always           | `defineConfig`, collections/singletons, `defineView`/`defineIndex`/`defineGroup`, `schema as s`, CLI `anhur`, `build`/`watch`, integrations runtime |
+| `@anhur/vite`     | Vite apps        | Plugin: Vite-watcher rebuilds, build logs, `anhur/generated` alias, serve `.anhur/assets`                                                           |
+| `@anhur/mdx`      | MDX bodies       | `mdx()` processor, `schema as m` → `m.mdx()`, `MDXContent` from `@anhur/mdx/react`                                                                  |
+| `@anhur/markdown` | Markdown→HTML    | `markdown()` processor, `schema as md` → `md.markdown()`                                                                                            |
+| `@anhur/assets`   | Images/files     | `assets()` processor, `a.image()` / `a.file()`, optional CDN sync via `storage` + files-sdk                                                         |
+| `@anhur/orama`    | Full-text search | `orama()` integration + `createSearcher` (browser/server)                                                                                           |
 
 **Rule:** every schema helper from an opt-in package needs its processor in `defineConfig({ processors })`. Missing processor → build fails.
 
@@ -95,6 +96,7 @@ Copy and track:
 - [ ] Add anhur.config.ts next to content (or set configPath)
 - [ ] Register processors matching schema helpers
 - [ ] Define collections / singletons + content files
+- [ ] Optional: views: [defineView / defineIndex / defineGroup]
 - [ ] Optional: integrations: [orama({…})]
 - [ ] Optional: assets({ storage }) for CDN upload (files-sdk peers, enabled in CI/prod only)
 - [ ] Vite: plugins: [anhur()] + tsconfig paths for anhur/generated
@@ -178,7 +180,14 @@ Full options, client usage, custom integrations: [references/search.md](referenc
 ## Config shape
 
 ```ts
-import { defineCollection, defineConfig, schema as s } from "@anhur/core";
+import {
+  defineCollection,
+  defineConfig,
+  defineGroup,
+  defineIndex,
+  defineView,
+  schema as s,
+} from "@anhur/core";
 import { assets, schema as a } from "@anhur/assets";
 import { markdown, schema as md } from "@anhur/markdown";
 import { mdx, schema as m } from "@anhur/mdx";
@@ -192,6 +201,7 @@ const posts = defineCollection({
   schema: s.object({
     title: s.string(),
     slug: s.slug(),
+    featured: s.boolean().optional(),
     draft: s.boolean().optional(),
     cover: a.image().optional(),
     body: m.mdx(),
@@ -200,6 +210,50 @@ const posts = defineCollection({
     if (doc.draft === true) return ctx.skip("draft");
     return doc;
   },
+});
+
+const products = defineCollection({
+  name: "products",
+  directory: "content/products",
+  include: "**/*.json",
+  localized: false,
+  generate: { split: "list-only", listOmit: [] },
+  schema: s.object({
+    name: s.string(),
+    sku: s.unique(),
+    category: s.string(),
+    featured: s.boolean().optional(),
+    price: s.string(),
+  }),
+});
+
+const featuredPosts = defineView({
+  name: "featuredPosts",
+  from: posts,
+  where: (doc): doc is typeof doc & { featured: true } => doc.featured === true,
+  generate: { limit: 12 },
+});
+
+const productBySku = defineIndex({
+  name: "productBySku",
+  from: products,
+  key: "sku",
+  select: (doc) => ({
+    name: doc.name,
+    sku: doc.sku,
+    price: doc.price,
+  }),
+});
+
+const productsByCategory = defineGroup({
+  name: "productsByCategory",
+  from: products,
+  by: "category",
+  select: (doc) => ({
+    name: doc.name,
+    sku: doc.sku,
+    price: doc.price,
+  }),
 });
 
 export default defineConfig({
@@ -213,7 +267,8 @@ export default defineConfig({
     markdown({ gfm: true }),
     assets({ dir: ".anhur/assets", base: "/anhur-assets/" }),
   ],
-  content: [posts],
+  content: [posts, products],
+  views: [featuredPosts, productBySku, productsByCategory],
   integrations: [
     orama({
       collections: {
@@ -229,6 +284,8 @@ export default defineConfig({
 ```
 
 Schema helpers, generate splits, hooks: [references/schemas.md](references/schemas.md)
+
+Views / indexes / groups: [references/views.md](references/views.md)
 
 CDN / object storage for assets: [references/assets-storage.md](references/assets-storage.md)
 
@@ -248,11 +305,22 @@ For collection `posts`:
 - `getPost(idOrSlug)` or `getPost({ locale?, id?, slug? })` — full document, or `null` if missing
 - Optional: `PostId`, `PostSlug` when `generate.emitIds` / `emitSlugs`
 
+From `views` (list-only — no getters):
+
+| Helper        | Example export                                   |
+| ------------- | ------------------------------------------------ |
+| `defineView`  | `allFeaturedPosts`                               |
+| `defineIndex` | `productBySku` + `ProductBySkuKey` literal union |
+| `defineGroup` | `productsByCategory` → `{ key, count, items }[]` |
+
 ```ts
-import { allPosts, getPost, settings } from "anhur/generated";
+import { allPosts, getPost, productBySku, productsByCategory, settings } from "anhur/generated";
 
 const post = await getPost("hello");
 if (!post) throw notFound(); // or your router’s missing-page helper
+
+productBySku["W-100"]?.price;
+productsByCategory.find((g) => g.key === "widgets")?.items;
 ```
 
 Import id is always `anhur/generated` (not a relative path).
@@ -287,8 +355,10 @@ export function PostBody({ code }: { code: string }) {
 4. Drafts: `draft: true` or `ctx.skip(reason)` in `transform`.
 5. Search / post-codegen packages use `integrations: [orama({…})]`, not `processors` or `complete: orama(…)`.
 6. Use plain `defineConfig({ content: […], integrations: [orama({…})] })` — no `defineConfig<typeof content>`, and never pass `content` into `orama`.
-7. Do not invent a Next adapter, Valibot schemas, or Orama vector/AI search — out of scope. CDN/object upload is supported via `assets({ storage })` + files-sdk (gate with `enabled`, require `prefix`, prefer a `files` factory; empty-emit skips prune unless `pruneEmpty: true`).
-8. Package scope `@anhur` may rename before/after publish; keep config names (`anhur.config.ts`, `.anhur/`, `anhur/generated`) unless the project documents a rename.
+7. Put `defineView` / `defineIndex` / `defineGroup` in `views`, never in `content`. Multi-collection views require `select`. Index keys must be unique or the build fails.
+8. Prefer `defineIndex` over filtering a huge `list-only` collection for detail routes. Prefer `generate.compare` over string `listSort` for numeric fields stored as strings.
+9. Do not invent a Next adapter, Valibot schemas, or Orama vector/AI search — out of scope. CDN/object upload is supported via `assets({ storage })` + files-sdk (gate with `enabled`, require `prefix`, prefer a `files` factory; empty-emit skips prune unless `pruneEmpty: true`).
+10. Package scope `@anhur` may rename before/after publish; keep config names (`anhur.config.ts`, `.anhur/`, `anhur/generated`) unless the project documents a rename.
 
 ## Failure modes
 
@@ -301,3 +371,4 @@ See [references/pitfalls.md](references/pitfalls.md).
 - Opt-in fields used only with matching processors
 - Localized folders match `locales` / `defaultLocale` (or `localized: false`)
 - If search is configured: `.anhur/generated/search/orama.json` exists and `createSearcher` works in app
+- If views are configured: derived exports import and typecheck (`allFeatured…`, indexes, groups)

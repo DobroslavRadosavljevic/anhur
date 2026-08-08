@@ -19,8 +19,10 @@ The CLI (`anhur build`, `anhur watch`) is included — no separate package.
 ## Exports (typical)
 
 - `defineConfig`, `defineCollection`, `defineSingleton`
+- `defineView`, `defineIndex`, `defineGroup`
 - `schema as s`
 - `getDocumentMeta`
+- `GetViewByName` (and related view typing helpers)
 - `defineIntegration`, `registerIntegration`
 - Programmatic `build` / `watch`
 - `formatAnhurError`
@@ -41,6 +43,8 @@ export default defineConfig({
   ],
 });
 ```
+
+Derived lists / maps / groups go in `views` — see [defineView](/reference/define-view).
 
 ## Guides
 

@@ -120,3 +120,27 @@ If you author a custom package and `doc` is still `any`, return `createIntegrati
 **Symptom:** `@anhur/core: unknown integration "…"`.
 
 **Fix:** Import the package that calls `registerIntegration` (e.g. `import { orama } from "@anhur/orama"`), or use `defineIntegration({ id, onComplete })` for one-offs.
+
+## Duplicate index key
+
+**Symptom:** Build fails because two documents share the same `defineIndex` key (e.g. SKU).
+
+**Fix:** Make the key unique in content (`s.unique()`), or change `key` / filter with `where` so only one row wins.
+
+## Multi-collection view without `select`
+
+**Symptom:** Config/build rejects a `defineView` with `from: [posts, pages]`.
+
+**Fix:** Always provide `select`. Rows are tagged with `collection`.
+
+## Views in `content`
+
+**Symptom:** Type error or unused helpers when putting `defineView` / `defineIndex` / `defineGroup` in `content`.
+
+**Fix:** Register them under `defineConfig({ views: […] })` only.
+
+## String sort on numeric prices
+
+**Symptom:** `"99"` sorts after `"149"` with `listSort: { by: "price" }`.
+
+**Fix:** Use `generate.compare: (a, b) => Number(a.price) - Number(b.price)` (or store numbers in the schema).

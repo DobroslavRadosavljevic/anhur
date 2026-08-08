@@ -2,5 +2,6 @@
   "name": "Starter Kit",
   "sku": "kit-01",
   "price": "49",
+  "category": "starter",
   "brochure": "./kit-brochure.pdf"
 }

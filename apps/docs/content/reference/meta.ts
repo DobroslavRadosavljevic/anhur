@@ -8,6 +8,7 @@ export default defineMeta({
     "define-config",
     "define-collection",
     "define-singleton",
+    "define-view",
     "schema-helpers",
     "generate-options",
     "cli",

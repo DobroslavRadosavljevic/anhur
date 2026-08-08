@@ -3,16 +3,23 @@ import {
   collectionConstName,
   defineCollection,
   defineConfig,
+  defineGroup,
+  defineIndex,
   defineSingleton,
+  defineView,
   generateCollectionArrayTypeName,
   generateDocumentTypeName,
   generateTypeName,
   isCollection,
+  isGroup,
+  isIndex,
   isLocalized,
+  isView,
   resolveLocalization,
   singularizePascal,
   singletonConstName,
   type GetTypeByName,
+  type GetViewByName,
 } from "../../src/config";
 import { schema as s } from "../../src/schema";
 import type { TocEntry } from "../../src/schema/toc";
@@ -295,5 +302,116 @@ describe("defineCollection / defineSingleton / defineConfig", () => {
     type Post = GetTypeByName<typeof config, "posts">;
     expectTypeOf<Post["relatedCount"]>().toEqualTypeOf<number>();
     expectTypeOf<Post["title"]>().toEqualTypeOf<string>();
+  });
+});
+
+describe("defineView", () => {
+  const posts = defineCollection({
+    name: "posts",
+    directory: "content/posts",
+    include: "**/*.md",
+    schema: s.object({
+      title: s.string(),
+      featured: s.boolean().optional(),
+    }),
+  });
+
+  const pages = defineCollection({
+    name: "pages",
+    directory: "content/pages",
+    include: "**/*.md",
+    schema: s.object({
+      title: s.string(),
+    }),
+  });
+
+  it("defines a filtered single-source view", () => {
+    const featuredPosts = defineView({
+      name: "featuredPosts",
+      from: posts,
+      where: (doc): doc is typeof doc & { featured: true } =>
+        doc.featured === true,
+    });
+
+    expect(isView(featuredPosts)).toBe(true);
+    expect(featuredPosts.type).toBe("view");
+    expect(featuredPosts.typeName).toBe("FeaturedPost");
+    expect(featuredPosts.from.map((c) => c.name)).toEqual(["posts"]);
+  });
+
+  it("requires select when merging collections", () => {
+    expect(() =>
+      defineView({
+        name: "feed",
+        from: [posts, pages],
+        // @ts-expect-error select is required for multi-source views
+        select: undefined,
+      }),
+    ).toThrow(/requires select/);
+  });
+
+  it("rejects unknown collections in defineConfig views", () => {
+    const orphan = defineCollection({
+      name: "orphan",
+      directory: "content/orphan",
+      include: "**/*.md",
+      schema: s.object({ title: s.string() }),
+    });
+    const dangling = defineView({
+      name: "dangling",
+      from: orphan,
+      where: () => true,
+    });
+
+    expect(() =>
+      defineConfig({
+        content: [posts],
+        views: [dangling],
+      }),
+    ).toThrow(/not in content/);
+  });
+
+  it("infers GetViewByName from select return type", () => {
+    const feed = defineView({
+      name: "siteFeed",
+      from: [posts, pages],
+      select: (doc) => ({
+        collection: doc.collection,
+        title: doc.title,
+      }),
+    });
+    const config = defineConfig({
+      content: [posts, pages],
+      views: [feed],
+    });
+
+    type Item = GetViewByName<typeof config, "siteFeed">;
+    expectTypeOf<Item>().toEqualTypeOf<{
+      collection: "posts" | "pages";
+      title: string;
+    }>();
+  });
+
+  it("defines indexes and groups", () => {
+    const bySlug = defineIndex({
+      name: "postBySlug",
+      from: posts,
+      key: "title",
+    });
+    const byFeatured = defineGroup({
+      name: "postsByFeatured",
+      from: posts,
+      by: (doc) => (doc.featured === true ? "yes" : "no"),
+    });
+
+    expect(isIndex(bySlug)).toBe(true);
+    expect(isGroup(byFeatured)).toBe(true);
+
+    const config = defineConfig({
+      content: [posts],
+      views: [bySlug, byFeatured],
+    });
+    type Indexed = GetViewByName<typeof config, "postBySlug">;
+    expectTypeOf<Indexed["title"]>().toEqualTypeOf<string>();
   });
 });

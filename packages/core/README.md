@@ -15,6 +15,7 @@ This also installs the **`anhur` CLI** (`anhur build`, `anhur watch`). After ins
 ## ✨ What you get
 
 - `defineConfig` / `defineCollection` / `defineSingleton` — describe your content
+- `defineView` / `defineIndex` / `defineGroup` — build-time derived lists, maps, and groups
 - `schema` helpers — fields like strings, dates, unique slugs, and references
 - `anhur` CLI — included with this package; no separate install
 
@@ -31,20 +32,62 @@ Optional extras live in other packages:
 `anhur.config.ts`:
 
 ```ts
-import { defineCollection, defineConfig, schema as s } from "@anhur/core";
+import {
+  defineCollection,
+  defineConfig,
+  defineGroup,
+  defineIndex,
+  defineView,
+  schema as s,
+} from "@anhur/core";
 
-const posts = defineCollection({
-  name: "posts",
-  directory: "content/posts",
-  include: "**/*.{md,mdx}",
+const products = defineCollection({
+  name: "products",
+  directory: "content/products",
+  include: "**/*.json",
+  localized: false,
+  generate: { split: "list-only", listOmit: [] },
   schema: s.object({
-    title: s.string(),
-    slug: s.unique(),
+    name: s.string(),
+    sku: s.unique(),
+    category: s.string(),
+    featured: s.boolean().optional(),
+    price: s.string(),
+  }),
+});
+
+const featuredProducts = defineView({
+  name: "featuredProducts",
+  from: products,
+  where: (doc): doc is typeof doc & { featured: true } => doc.featured === true,
+  generate: { limit: 12 },
+});
+
+const productBySku = defineIndex({
+  name: "productBySku",
+  from: products,
+  key: "sku",
+  select: (doc) => ({
+    name: doc.name,
+    sku: doc.sku,
+    price: doc.price,
+  }),
+});
+
+const productsByCategory = defineGroup({
+  name: "productsByCategory",
+  from: products,
+  by: "category",
+  select: (doc) => ({
+    name: doc.name,
+    sku: doc.sku,
+    price: doc.price,
   }),
 });
 
 export default defineConfig({
-  content: [posts],
+  content: [products],
+  views: [featuredProducts, productBySku, productsByCategory],
 });
 ```
 
@@ -57,8 +100,30 @@ anhur build
 Then import the generated data (with `@anhur/vite`, the import path is `anhur/generated`):
 
 ```ts
-import { allPosts, getPost } from "anhur/generated";
+import {
+  allProducts,
+  allFeaturedProducts,
+  productBySku,
+  productsByCategory,
+} from "anhur/generated";
+
+productBySku["W-100"]?.price;
+productsByCategory.find((g) => g.key === "widgets")?.items;
 ```
+
+## Derived exports (`views`)
+
+| Helper        | Emits                     | Best for                        |
+| ------------- | ------------------------- | ------------------------------- |
+| `defineView`  | `T[]`                     | featured / top-N / merged feeds |
+| `defineIndex` | `Record<Key, T>`          | detail lookup by slug/sku       |
+| `defineGroup` | `{ key, count, items }[]` | facet / SEO landing pages       |
+
+- Run after transforms / `prepare`
+- List-only (no getters / `documents/` modules)
+- `where` / `select` get `(doc, ctx)` — use `ctx.documents(otherCollection)` for joins
+- `generate.limit` / `compare` / `listSort` for top-N and sorting
+- Indexes and groups emit **literal key unions** in `.d.ts` (e.g. `ProductBySkuKey`)
 
 ## 💡 Tips
 
@@ -66,6 +131,7 @@ import { allPosts, getPost } from "anhur/generated";
 - Plural folder names are fine: `use_cases` → `UseCase`, `getUseCase`, `allUseCases`. Set `typeName` on `defineCollection` when you need a different document type (not under `generate`)
 - Use folders like `content/posts/en/` and `content/posts/de/` when you need multiple languages
 - List pages can use the light list (`allPosts`); detail pages can load one full document with `getPost("slug")` or `getPost({ slug })` (returns `null` if missing)
+- Prefer `defineIndex` over filtering a huge `allProducts` for detail routes when using `list-only`
 - Each successful build replaces the generate output folder (via a staging swap), so renamed or removed collections do not leave stale modules — and a failed rebuild leaves the previous live output intact
 
 ## License

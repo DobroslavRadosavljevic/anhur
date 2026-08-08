@@ -11,7 +11,7 @@ bun run dev   # from repo root (turbo → this app) or from this directory
 
 `bun --bun` runs Vite so Bun can load TypeScript from `@anhur/vite` and friends when resolving `vite.config.ts`.
 
-Home route imports `allPosts`, `settings`, and `allSettings` from `anhur/generated`. Posts use `m.mdx()`; settings use `s.raw()`.
+Home route imports `allPosts`, `settings`, `allSettings`, and derived exports such as `allFeaturedProducts`, `productBySku`, and `productsByCategory` from `anhur/generated`. Posts use `m.mdx()`; settings use `s.raw()`. See `anhur.config.ts` for `defineView` / `defineIndex` / `defineGroup` examples.
 
 ## Assets → MinIO (optional)
 

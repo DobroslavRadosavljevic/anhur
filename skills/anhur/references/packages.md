@@ -7,8 +7,10 @@ Always required.
 Exports (typical):
 
 - `defineConfig`, `defineCollection`, `defineSingleton`
+- `defineView`, `defineIndex`, `defineGroup` — build-time derived lists / maps / groups
 - `schema as s` — Zod plus `raw`, `unique`, `slug`, `reference`, `isodate`, `excerpt`, `metadata`, `toc`
 - `getDocumentMeta()` — ALS meta inside schema `.transform` / field resolvers
+- `GetViewByName`, `DerivedName`, `InferViewData` — view typing helpers
 - `build` / `watch` (programmatic) and CLI bin `anhur`
 - `formatAnhurError`
 - Integrations: `defineIntegration`, `registerIntegration`, `createIntegrationConfigEntry`, `IntegrationConfigEntry`, …
@@ -18,14 +20,17 @@ Config highlights:
 | Field          | Role                                                                              |
 | -------------- | --------------------------------------------------------------------------------- |
 | `content`      | Collections + singletons                                                          |
+| `views`        | `defineView` / `defineIndex` / `defineGroup` (after prepare, before codegen)      |
 | `localization` | `{ strategy: "folder", locales, defaultLocale }`                                  |
 | `outputDir`    | Default `.anhur/generated` (relative to config file)                              |
 | `cacheDir`     | Default `.anhur/cache`; `false` disables. Skipped when `assets()` rewrites bodies |
 | `loaders`      | Extra loaders before matter/yaml/json                                             |
 | `processors`   | `mdx()`, `markdown()`, `assets()`, …                                              |
 | `integrations` | `orama({…})`, `defineIntegration({…})`, … — after codegen, before `complete`      |
-| `prepare`      | After transforms/filters, before codegen                                          |
+| `prepare`      | After transforms/filters, before views + codegen                                  |
 | `complete`     | After codegen + per-source `onSuccess` + integrations                             |
+
+Views detail: [views.md](views.md)
 
 Engines: Node `^22.18.0` or `>=24.11.0`.
 

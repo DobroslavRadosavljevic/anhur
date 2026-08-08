@@ -11,7 +11,10 @@ import {
   literalUnionType,
   omitKeysUnionType,
   resolveCollectionGenerate,
+  resolveGroupGenerate,
+  resolveIndexGenerate,
   resolveSingletonGenerate,
+  resolveViewGenerate,
   sortByListSort,
   toDocumentExport,
   toListExport,
@@ -19,6 +22,7 @@ import {
 import type { AnyContent, AnhurConfig } from "../config";
 import { isCollection, isSingleton, resolveLocalization } from "../config";
 import type { CollectedDocument } from "./content-collector";
+import { resolveViews, type BuiltDerived } from "../views";
 
 export type BuiltSource = {
   source: AnyContent;
@@ -135,6 +139,9 @@ function collectionGetterDts(
  * - light list without `listOmit` fields (default: `body`)
  * - per-document modules under `documents/{name}/`
  * - async getter for on-demand full documents
+ *
+ * Views (`defineView` / `defineIndex` / `defineGroup`):
+ * - list, map, or grouped exports (no getters / documents)
  *
  * `index.js` re-exports with `export { … } from` so unused collections can tree-shake.
  */
@@ -351,6 +358,7 @@ export class Generator extends Context.Service<
         outputDir: string,
         rootDir: string,
         built: BuiltSource[],
+        derived: BuiltDerived[],
       ): Effect.Effect<void, PlatformError> =>
         Effect.gen(function* () {
           for (const item of built) {
@@ -360,12 +368,88 @@ export class Generator extends Context.Service<
               yield* writeSingleton(config, outputDir, rootDir, item);
             }
           }
+          for (const entry of derived) {
+            yield* writeDerived(outputDir, entry);
+          }
+        });
+
+      const listItemTypeLines = (
+        built: BuiltSource[],
+        name: string,
+        listItemTypeName: string,
+        usesSelect: boolean,
+        listOmit: readonly string[] | undefined,
+        from: { name: string } | readonly { name: string }[],
+      ): string[] => {
+        const viewTypeExpr = `GetViewByName<typeof configuration, "${name}">`;
+        const lines: string[] = [];
+
+        if (usesSelect) {
+          lines.push(`export type ${listItemTypeName} = ${viewTypeExpr};`);
+          return lines;
+        }
+
+        const sourceRef = Array.isArray(from) ? from[0] : from;
+        const builtSource = sourceRef
+          ? built.find((entry) => entry.source.name === sourceRef.name)
+          : undefined;
+        const source =
+          builtSource && isCollection(builtSource.source)
+            ? builtSource.source
+            : undefined;
+        const sourceOmit = source
+          ? resolveCollectionGenerate(source).listOmit
+          : [];
+        const effectiveOmit =
+          listOmit !== undefined
+            ? listOmit
+            : builtSource
+              ? effectiveListOmit(sourceOmit, builtSource.documents)
+              : sourceOmit;
+
+        if (effectiveOmit.length === 0) {
+          lines.push(`export type ${listItemTypeName} = ${viewTypeExpr};`);
+        } else {
+          lines.push(
+            `export type ${listItemTypeName} = Omit<${viewTypeExpr}, ${omitKeysUnionType(effectiveOmit)}>;`,
+          );
+        }
+        return lines;
+      };
+
+      const writeDerived = (
+        outputDir: string,
+        entry: BuiltDerived,
+      ): Effect.Effect<void, PlatformError> =>
+        Effect.gen(function* () {
+          if (entry.kind === "view") {
+            const gen = resolveViewGenerate(entry.derived);
+            yield* writeText(
+              path.join(outputDir, `${gen.listName}.js`),
+              jsModule(`export default ${serializeValue(entry.items)}`),
+            );
+            return;
+          }
+          if (entry.kind === "index") {
+            const gen = resolveIndexGenerate(entry.derived);
+            yield* writeText(
+              path.join(outputDir, `${gen.exportName}.js`),
+              jsModule(`export default ${serializeValue(entry.record)}`),
+            );
+            return;
+          }
+          const gen = resolveGroupGenerate(entry.derived);
+          yield* writeText(
+            path.join(outputDir, `${gen.exportName}.js`),
+            jsModule(`export default ${serializeValue(entry.groups)}`),
+          );
         });
 
       const writeIndexJs = (
         config: AnhurConfig,
         outputDir: string,
         built: BuiltSource[],
+        derived: BuiltDerived[],
       ): Effect.Effect<void, PlatformError> =>
         Effect.gen(function* () {
           const lines: string[] = [
@@ -407,6 +491,25 @@ export class Generator extends Context.Service<
             }
           }
 
+          for (const entry of derived) {
+            if (entry.kind === "view") {
+              const gen = resolveViewGenerate(entry.derived);
+              lines.push(
+                `export { default as ${gen.listName} } from "./${gen.listName}.js";`,
+              );
+            } else if (entry.kind === "index") {
+              const gen = resolveIndexGenerate(entry.derived);
+              lines.push(
+                `export { default as ${gen.exportName} } from "./${gen.exportName}.js";`,
+              );
+            } else {
+              const gen = resolveGroupGenerate(entry.derived);
+              lines.push(
+                `export { default as ${gen.exportName} } from "./${gen.exportName}.js";`,
+              );
+            }
+          }
+
           lines.push("");
           yield* writeText(path.join(outputDir, "index.js"), lines.join("\n"));
         });
@@ -427,12 +530,16 @@ export class Generator extends Context.Service<
         outputDir: string,
         configPath: string,
         built: BuiltSource[],
+        derived: BuiltDerived[],
       ): Effect.Effect<void, PlatformError> =>
         Effect.gen(function* () {
           const importPath = toImportPath(outputDir, configPath);
+          const hasDerived = derived.length > 0;
           const lines: string[] = [
             "// generated by @anhur/core — do not edit",
-            `import type { GetTypeByName } from "@anhur/core";`,
+            hasDerived
+              ? `import type { GetTypeByName, GetViewByName } from "@anhur/core";`
+              : `import type { GetTypeByName } from "@anhur/core";`,
             `import type configuration from "${importPath}";`,
             "",
           ];
@@ -516,6 +623,85 @@ export class Generator extends Context.Service<
             lines.push("");
           }
 
+          for (const entry of derived) {
+            if (entry.kind === "view") {
+              const { derived: view } = entry;
+              const gen = resolveViewGenerate(view);
+              lines.push(
+                ...listItemTypeLines(
+                  built,
+                  view.name,
+                  gen.listItemTypeName,
+                  gen.usesSelect,
+                  gen.listOmit,
+                  view.from,
+                ),
+              );
+              if (gen.arrayTypeName !== gen.listItemTypeName) {
+                lines.push(
+                  `export type ${gen.arrayTypeName} = Array<${gen.listItemTypeName}>;`,
+                );
+              }
+              lines.push(
+                `export declare const ${gen.listName}: Array<${gen.listItemTypeName}>;`,
+              );
+              lines.push("");
+              continue;
+            }
+
+            if (entry.kind === "index") {
+              const { derived: index } = entry;
+              const gen = resolveIndexGenerate(index);
+              const keyUnion = literalUnionType(Object.keys(entry.record));
+              lines.push(
+                ...listItemTypeLines(
+                  built,
+                  index.name,
+                  gen.listItemTypeName,
+                  gen.usesSelect,
+                  gen.listOmit,
+                  index.from,
+                ),
+              );
+              lines.push(`export type ${gen.keyTypeName} = ${keyUnion};`);
+              lines.push(
+                `export type ${gen.recordTypeName} = Record<${gen.keyTypeName}, ${gen.listItemTypeName}>;`,
+              );
+              lines.push(
+                `export declare const ${gen.exportName}: ${gen.recordTypeName};`,
+              );
+              lines.push("");
+              continue;
+            }
+
+            const { derived: group } = entry;
+            const gen = resolveGroupGenerate(group);
+            const keyUnion = literalUnionType(entry.groups.map((g) => g.key));
+            lines.push(
+              ...listItemTypeLines(
+                built,
+                group.name,
+                gen.listItemTypeName,
+                gen.usesSelect,
+                gen.listOmit,
+                group.from,
+              ),
+            );
+            lines.push(`export type ${gen.keyTypeName} = ${keyUnion};`);
+            lines.push(
+              `export type ${gen.groupTypeName} = { key: ${gen.keyTypeName}; count: number; items: Array<${gen.listItemTypeName}> };`,
+            );
+            if (gen.arrayTypeName !== gen.groupTypeName) {
+              lines.push(
+                `export type ${gen.arrayTypeName} = Array<${gen.groupTypeName}>;`,
+              );
+            }
+            lines.push(
+              `export declare const ${gen.exportName}: ${gen.arrayTypeName === gen.groupTypeName ? `Array<${gen.groupTypeName}>` : gen.arrayTypeName};`,
+            );
+            lines.push("");
+          }
+
           lines.push("export {};");
           lines.push("");
 
@@ -534,6 +720,7 @@ export class Generator extends Context.Service<
       }): Effect.Effect<void, PlatformError> =>
         Effect.gen(function* () {
           const { config, configPath, rootDir, outputDir, built } = options;
+          const derived = resolveViews(config.views ?? [], built, rootDir);
           // Stage into a sibling dir first (see Builder). Own the staging tree so
           // renamed/removed collections cannot leave stale allX.js / getX.js
           // modules. Integrations rewrite their files after; live output swaps
@@ -541,9 +728,9 @@ export class Generator extends Context.Service<
           yield* removeQuiet(outputDir);
           yield* fs.makeDirectory(outputDir, { recursive: true });
           yield* writeText(path.join(outputDir, ".keep"), "");
-          yield* writeDataModules(config, outputDir, rootDir, built);
-          yield* writeIndexJs(config, outputDir, built);
-          yield* writeIndexDts(config, outputDir, configPath, built);
+          yield* writeDataModules(config, outputDir, rootDir, built, derived);
+          yield* writeIndexJs(config, outputDir, built, derived);
+          yield* writeIndexDts(config, outputDir, configPath, built, derived);
         });
 
       return Generator.of({ write });
