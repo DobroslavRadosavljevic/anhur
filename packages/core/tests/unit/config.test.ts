@@ -18,6 +18,7 @@ import {
   resolveLocalization,
   singularizePascal,
   singletonConstName,
+  type ConfigLocale,
   type GetTypeByName,
   type GetViewByName,
 } from "../../src/config";
@@ -79,10 +80,10 @@ describe("defineCollection / defineSingleton / defineConfig", () => {
   const zodSchema = s.object({ title: s.string(), content: s.string() });
 
   const localization = {
-    strategy: "folder" as const,
-    locales: ["en", "de"] as const,
+    strategy: "folder",
+    locales: ["en", "de"],
     defaultLocale: "en",
-  };
+  } as const;
 
   it("defines a collection with a Zod schema", () => {
     const posts = defineCollection({
@@ -204,6 +205,51 @@ describe("defineCollection / defineSingleton / defineConfig", () => {
       title: string;
       _meta: { id: string };
     }>();
+    expectTypeOf<Post["_meta"]["locale"]>().toEqualTypeOf<undefined>();
+  });
+
+  it("types _meta.locale from localization.locales", () => {
+    const posts = defineCollection({
+      name: "posts",
+      directory: "content/posts",
+      include: "**/*.md",
+      schema: s.object({ title: s.string() }),
+    });
+    const authors = defineCollection({
+      name: "authors",
+      directory: "content/authors",
+      include: "**/*.yml",
+      localized: false,
+      schema: s.object({ name: s.string() }),
+    });
+    const config = defineConfig({
+      localization: {
+        strategy: "folder",
+        locales: ["en", "cs"],
+        defaultLocale: "en",
+      },
+      content: [posts, authors],
+    });
+
+    type Post = GetTypeByName<typeof config, "posts">;
+    type Author = GetTypeByName<typeof config, "authors">;
+    type Locale = ConfigLocale<typeof config>;
+
+    expectTypeOf<Locale>().toEqualTypeOf<"en" | "cs">();
+    expectTypeOf<Post["_meta"]["locale"]>().toEqualTypeOf<"en" | "cs">();
+    expectTypeOf<Author["_meta"]["locale"]>().toEqualTypeOf<undefined>();
+  });
+
+  it("rejects defaultLocale outside locales at the type level", () => {
+    const _bad = {
+      strategy: "folder" as const,
+      locales: ["en", "cs"] as const,
+      // @ts-expect-error defaultLocale must be a configured locale
+      defaultLocale: "de",
+    } satisfies import("../../src/config").FolderLocalization<
+      readonly ["en", "cs"]
+    >;
+    void _bad;
   });
 
   it("remaps embed:true references to the target document type", () => {

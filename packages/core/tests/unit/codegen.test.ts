@@ -153,6 +153,17 @@ describe("codegen helpers", () => {
     expect(getterQueryTypeFields(["slug", "sku"])).toBe(
       "locale?: string; id?: string; slug?: string; sku?: string",
     );
+    expect(
+      getterQueryTypeFields(["slug"], {
+        localeType: "Locale",
+        localeRequired: true,
+      }),
+    ).toBe("locale: Locale; id?: string; slug?: string");
+    expect(
+      getterQueryTypeFields(["slug"], {
+        includeLocale: false,
+      }),
+    ).toBe("id?: string; slug?: string");
   });
 
   it("picks lookup key parts in id-then-lookupBy order", () => {

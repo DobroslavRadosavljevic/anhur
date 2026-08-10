@@ -12,7 +12,8 @@ Authors edit `content/…`. Developers import generated modules. The build fails
 | ----------------------------------------------- | ---------------------------------------------------------------- |
 | “What’s the shape of a post?”                   | Zod schema in `anhur.config.ts`                                  |
 | “Did we forget `title` on this MDX?”            | Build error at collect time                                      |
-| “How do I load all posts in a locale?”          | Folder i18n + generated `allPosts` / getters                     |
+| “How do I load all posts in a locale?”          | Folder i18n + `allPosts.filter(p => p._meta.locale === locale)` / getters |
+| “How do I load one post in the right locale?”   | `getPost({ locale, slug })` — not custom lang fields                      |
 | “Post → author without stringly ids everywhere” | `s.reference("authors", { embed?: true })`                       |
 | “MDX + images without custom Vite glue”         | Opt-in `@anhur/mdx` + `@anhur/assets` + Vite plugin              |
 | “Serve hashed assets from a CDN in prod”        | `assets({ storage })` + files-sdk (build-time sync)              |

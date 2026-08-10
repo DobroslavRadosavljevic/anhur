@@ -398,13 +398,35 @@ export function literalUnionType(values: readonly string[]): string {
   return unique.map((v) => JSON.stringify(v)).join(" | ");
 }
 
-export function getterQueryTypeFields(lookupBy: readonly string[]): string {
-  const names = new Set<string>(["locale", "id"]);
+export function getterQueryTypeFields(
+  lookupBy: readonly string[],
+  options?: {
+    /** TypeScript type for `locale` (e.g. `Locale` or `string`). */
+    localeType?: string;
+    /** When true, `locale` is required on the query object. */
+    localeRequired?: boolean;
+    /** When false, omit `locale` from the query object entirely. */
+    includeLocale?: boolean;
+  },
+): string {
+  const includeLocale = options?.includeLocale !== false;
+  const localeType = options?.localeType ?? "string";
+  const localeRequired = options?.localeRequired === true;
+  const names = new Set<string>(includeLocale ? ["locale", "id"] : ["id"]);
   for (const key of lookupBy) {
     if (key === "id" || key === "locale") continue;
     names.add(key);
   }
-  return [...names].map((name) => `${name}?: string`).join("; ");
+  return [...names]
+    .map((name) => {
+      if (name === "locale") {
+        return localeRequired
+          ? `locale: ${localeType}`
+          : `locale?: ${localeType}`;
+      }
+      return `${name}?: string`;
+    })
+    .join("; ");
 }
 
 /**

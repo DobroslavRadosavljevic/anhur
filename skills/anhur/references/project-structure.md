@@ -141,6 +141,7 @@ Rules:
 2. Mix freely: e.g. localized `posts` + monolingual `authors` (`localized: false`).
 3. App getters for folder i18n take `{ locale, id?, slug? }`. Monolingual sources use the internal locale key `default`.
 4. Do **not** invent a second i18n system beside Anhur’s folder strategy unless the project already documents one.
+5. Consume locale data with generated APIs + `_meta.locale` — see [localization.md](localization.md).
 
 ### Localized collection module
 

@@ -24,10 +24,12 @@ export type ContentMeta = {
   locale?: string;
 };
 
-export type FolderLocalization = {
+export type FolderLocalization<
+  TLocales extends readonly string[] = readonly string[],
+> = {
   strategy: "folder";
-  locales: readonly string[];
-  defaultLocale: string;
+  locales: TLocales;
+  defaultLocale: TLocales[number];
 };
 
 export type Localization = FolderLocalization;
@@ -525,9 +527,13 @@ export function defineCollection<
   TName extends string,
   TSchema extends ContentSchema,
   TOut = DocumentWithMeta<SchemaOutput<TSchema>>,
+  const TLocalized extends boolean | undefined = undefined,
 >(
-  input: DefineCollectionInput<TName, TSchema, TOut>,
-): CollectionDefinition<TName, TSchema, DataFromTransformOut<TOut>> {
+  input: DefineCollectionInput<TName, TSchema, TOut> & {
+    localized?: TLocalized;
+  },
+): CollectionDefinition<TName, TSchema, DataFromTransformOut<TOut>> &
+  (undefined extends TLocalized ? unknown : { localized: TLocalized }) {
   if (!isZodSchema(input.schema)) {
     throw new Error(
       `Collection "${input.name}" schema must be a Zod schema (use \`schema as s\` from @anhur/core).`,
@@ -547,7 +553,8 @@ export function defineCollection<
     onSuccess: input.onSuccess,
     listOmit: input.listOmit,
     generate: input.generate,
-  };
+  } as CollectionDefinition<TName, TSchema, DataFromTransformOut<TOut>> &
+    (undefined extends TLocalized ? unknown : { localized: TLocalized });
 }
 
 export type DefineSingletonInput<
@@ -575,9 +582,13 @@ export function defineSingleton<
   TName extends string,
   TSchema extends ContentSchema,
   TOut = DocumentWithMeta<SchemaOutput<TSchema>>,
+  const TLocalized extends boolean | undefined = undefined,
 >(
-  input: DefineSingletonInput<TName, TSchema, TOut>,
-): SingletonDefinition<TName, TSchema, DataFromTransformOut<TOut>> {
+  input: DefineSingletonInput<TName, TSchema, TOut> & {
+    localized?: TLocalized;
+  },
+): SingletonDefinition<TName, TSchema, DataFromTransformOut<TOut>> &
+  (undefined extends TLocalized ? unknown : { localized: TLocalized }) {
   if (!isZodSchema(input.schema)) {
     throw new Error(
       `Singleton "${input.name}" schema must be a Zod schema (use \`schema as s\` from @anhur/core).`,
@@ -597,7 +608,8 @@ export function defineSingleton<
     transform: input.transform as DocumentTransform | undefined,
     onSuccess: input.onSuccess,
     generate: input.generate,
-  };
+  } as SingletonDefinition<TName, TSchema, DataFromTransformOut<TOut>> &
+    (undefined extends TLocalized ? unknown : { localized: TLocalized });
 }
 
 type CollectionDocument<TCollection extends AnyCollection> = DocumentWithMeta<
@@ -1291,8 +1303,9 @@ function assertViews(
 }
 
 /**
- * Preserve the concrete `content` tuple so generated `.d.ts` can use
- * `GetTypeByName<typeof configuration, "posts">`.
+ * Preserve the concrete `content` tuple and locale literals so generated
+ * `.d.ts` can use `GetTypeByName<typeof configuration, "posts">` with a
+ * typed `_meta.locale`.
  *
  * Package integration factories receive the exact content tuple through the
  * contextual {@link IntegrationConfigEntry} type, including when `content` is
@@ -1300,20 +1313,57 @@ function assertViews(
  */
 export function defineConfig<
   const TContent extends readonly AnyContent[],
+  const TLocales extends readonly string[],
   const TViews extends readonly AnyDerived[] = [],
 >(
-  config: Omit<AnhurConfig, "content" | "integrations" | "views"> & {
+  config: Omit<
+    AnhurConfig,
+    "content" | "integrations" | "views" | "localization"
+  > & {
     content: TContent;
     views?: TViews;
+    localization: FolderLocalization<TLocales>;
     integrations?: readonly import("./integrations").IntegrationInput<
       NoInfer<TContent>
     >[];
   },
-): Omit<AnhurConfig, "content" | "integrations" | "views"> & {
+): Omit<AnhurConfig, "content" | "integrations" | "views" | "localization"> & {
+  content: TContent;
+  views?: TViews;
+  localization: FolderLocalization<TLocales>;
+  integrations?: readonly import("./integrations").IntegrationInput<TContent>[];
+};
+
+export function defineConfig<
+  const TContent extends readonly AnyContent[],
+  const TViews extends readonly AnyDerived[] = [],
+>(
+  config: Omit<
+    AnhurConfig,
+    "content" | "integrations" | "views" | "localization"
+  > & {
+    content: TContent;
+    views?: TViews;
+    localization?: undefined;
+    integrations?: readonly import("./integrations").IntegrationInput<
+      NoInfer<TContent>
+    >[];
+  },
+): Omit<AnhurConfig, "content" | "integrations" | "views" | "localization"> & {
   content: TContent;
   views?: TViews;
   integrations?: readonly import("./integrations").IntegrationInput<TContent>[];
-} {
+};
+
+export function defineConfig(
+  config: Omit<AnhurConfig, "content" | "integrations" | "views"> & {
+    content: readonly AnyContent[];
+    views?: readonly AnyDerived[];
+    integrations?: readonly import("./integrations").IntegrationInput<
+      readonly AnyContent[]
+    >[];
+  },
+): AnhurConfig {
   if (!config.content?.length) {
     throw new Error("defineConfig requires at least one content source.");
   }
@@ -1330,11 +1380,7 @@ export function defineConfig<
 
   assertViews(config.content, config.views);
 
-  return config as Omit<AnhurConfig, "content" | "integrations" | "views"> & {
-    content: TContent;
-    views?: TViews;
-    integrations?: readonly import("./integrations").IntegrationInput<TContent>[];
-  };
+  return config as AnhurConfig;
 }
 
 type EmbeddedDocumentMarker =
@@ -1367,26 +1413,77 @@ type ContainsEmbeddedRef<
  *
  * Types with no embedded refs (e.g. `TocEntry[]`) are left unchanged so named
  * aliases survive `GetTypeByName` instead of becoming anonymous `items: …[]`.
+ *
+ * When `TConfig` includes `localization`, embedded docs get a typed
+ * `_meta.locale` (or no locale when the target sets `localized: false`).
  */
 export type RemapEmbeddedRefs<
   T,
   TContent extends readonly AnyContent[],
+  TConfig extends AnhurConfig = AnhurConfig & { content: TContent },
 > = T extends import("./schema/reference").EmbeddedDocument<infer TName>
   ? TName extends string
     ? RemapEmbeddedRefs<
-        DocumentWithMeta<
-          InferSchemaData<Extract<TContent[number], { name: TName }>>
-        >,
-        TContent
+        DocumentForConfig<TConfig, Extract<TContent[number], { name: TName }>>,
+        TContent,
+        TConfig
       >
     : never
   : ContainsEmbeddedRef<T> extends true
     ? T extends readonly (infer TItem)[]
-      ? RemapEmbeddedRefs<TItem, TContent>[]
+      ? RemapEmbeddedRefs<TItem, TContent, TConfig>[]
       : T extends object
-        ? { [K in keyof T]: RemapEmbeddedRefs<T[K], TContent> }
+        ? { [K in keyof T]: RemapEmbeddedRefs<T[K], TContent, TConfig> }
         : T
     : T;
+
+/**
+ * Locale union from `config.localization.locales` (e.g. `"en" | "cs"`).
+ * `never` when the project has no localization block.
+ */
+export type ConfigLocale<TConfig extends AnhurConfig> = TConfig extends {
+  localization: { locales: readonly (infer L)[] };
+}
+  ? Extract<L, string>
+  : never;
+
+type SourceIsLocalized<
+  TConfig extends AnhurConfig,
+  TSource extends AnyContent,
+> = TConfig extends { localization: Localization }
+  ? TSource extends { localized: false }
+    ? false
+    : true
+  : false;
+
+/** `_meta` shape for a content source under a concrete config. */
+export type ContentMetaFor<
+  TConfig extends AnhurConfig,
+  TSource extends AnyContent,
+> = Omit<ContentMeta, "locale"> &
+  (SourceIsLocalized<TConfig, TSource> extends true
+    ? { locale: ConfigLocale<TConfig> }
+    : { locale?: undefined });
+
+/** Document data + locale-aware `_meta` for a content source. */
+export type DocumentForConfig<
+  TConfig extends AnhurConfig,
+  TSource extends AnyContent,
+> = InferSchemaData<TSource> & {
+  _meta: ContentMetaFor<TConfig, TSource>;
+};
+
+/** Align top-level `_meta.locale` with the project locale catalog. */
+type AlignMetaLocale<T, TConfig extends AnhurConfig> = T extends {
+  _meta: ContentMeta;
+}
+  ? Omit<T, "_meta"> & {
+      _meta: Omit<ContentMeta, "locale"> &
+        ([ConfigLocale<TConfig>] extends [never]
+          ? { locale?: undefined }
+          : { locale: ConfigLocale<TConfig> });
+    }
+  : T;
 
 /**
  * Light-list shape: omit keys from the document and from nested embeds
@@ -1417,8 +1514,12 @@ export type GetTypeByName<
   TConfig extends AnhurConfig,
   TName extends TConfig["content"][number]["name"],
 > = RemapEmbeddedRefs<
-  InferDocument<Extract<TConfig["content"][number], { name: TName }>>,
-  TConfig["content"]
+  DocumentForConfig<
+    TConfig,
+    Extract<TConfig["content"][number], { name: TName }>
+  >,
+  TConfig["content"],
+  TConfig
 >;
 
 /** Infer list/map/group item data from a derived definition. */
@@ -1443,17 +1544,22 @@ export type DerivedName<TConfig extends AnhurConfig> =
  *
  * Remaps `embed: true` references the same way as {@link GetTypeByName},
  * so view items stay assignable to collection light-list item types when
- * shapes match.
+ * shapes match. Top-level `_meta.locale` matches {@link ConfigLocale} when
+ * folder i18n is enabled.
  */
 export type GetViewByName<
   TConfig extends AnhurConfig,
   TName extends DerivedName<TConfig> = DerivedName<TConfig>,
 > =
   NonNullable<TConfig["views"]> extends readonly AnyDerived[]
-    ? RemapEmbeddedRefs<
-        InferViewData<
-          Extract<NonNullable<TConfig["views"]>[number], { name: TName }>
+    ? AlignMetaLocale<
+        RemapEmbeddedRefs<
+          InferViewData<
+            Extract<NonNullable<TConfig["views"]>[number], { name: TName }>
+          >,
+          TConfig["content"],
+          TConfig
         >,
-        TConfig["content"]
+        TConfig
       >
     : never;

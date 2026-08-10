@@ -60,11 +60,14 @@ describe("codegen generate options", () => {
     expect(dts).toContain('export type PostId = "newer" | "older";');
     expect(dts).toContain('export type PostSlug = "newer" | "older";');
     expect(dts).toContain("export declare const posts: Array<PostSummary>;");
-    expect(dts).toContain(
+    expect(dts).toContain("export type Locale =");
+    expect(dts).toContain("export declare const locales:");
+    expect(dts).toContain("export declare const defaultLocale:");
+    expect(dts).not.toContain(
       "export declare function loadPost(idOrSlug: string): Promise<Post | null>;",
     );
     expect(dts).toContain(
-      "export declare function loadPost(query?: { locale?: string; id?: string; slug?: string }): Promise<Post | null>;",
+      "export declare function loadPost(query: { locale: Locale; id?: string; slug?: string }): Promise<Post | null>;",
     );
 
     const index = await readFile(
@@ -155,7 +158,7 @@ describe("codegen generate options", () => {
       "export declare function getInventory(idOrSlug: string): Promise<Inventory | null>;",
     );
     expect(dts).toContain(
-      "export declare function getInventory(query?: { locale?: string; id?: string; sku?: string }): Promise<Inventory | null>;",
+      "export declare function getInventory(query?: { id?: string; sku?: string }): Promise<Inventory | null>;",
     );
   });
 
@@ -194,7 +197,7 @@ describe("codegen generate options", () => {
     );
     expect(dts).toContain("export declare const allSettings: Array<Settings>;");
     expect(dts).toContain(
-      "export declare function loadSettings(query?: { locale?: string }): Promise<Settings | null>;",
+      "export declare function loadSettings(query: { locale: Locale }): Promise<Settings | null>;",
     );
   });
 

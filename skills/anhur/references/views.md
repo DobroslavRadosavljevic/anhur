@@ -104,3 +104,4 @@ validate → refs → transform → prepare → **resolve views/indexes/groups**
 - Relying on string `listSort` for numeric prices (`"99"` vs `"149"`) — use `compare: (a, b) => Number(a.price) - Number(b.price)`
 - Casting embed phantoms with `as unknown as { slug: string }` — pass `content` / use `createDerivedHelpers` instead
 - Expecting embedded `body` on light lists — light lists strip `listOmit` keys from embeds too; use a getter for full embeds
+- `defineIndex({ key: "slug" })` on localized collections when the same slug exists in multiple locales — build fails; use `getX({ locale, slug })` or a composite key. Locale picking: [localization.md](localization.md)

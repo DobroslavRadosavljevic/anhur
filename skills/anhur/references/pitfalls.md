@@ -54,6 +54,12 @@
 
 **Fix:** Localized sources need `{directory}/{locale}/…` (e.g. `cms/content/posts/en/…`). Opt out with `localized: false`. `defaultLocale` must be listed in `locales`.
 
+## Wrong locale / null from getter / mixed-locale lists
+
+**Symptom:** `getPost({ slug })` is `null`; detail page shows the wrong language; index page lists every locale; `defineIndex({ key: "slug" })` fails the build; TypeScript rejects `locale: "cz"`.
+
+**Fix:** Pass `{ locale, slug }` with generated `Locale` (`locale` is required on localized getters). Scope lists with `allX.filter((d) => d._meta.locale === locale)`. Import `Locale` / `locales` / `defaultLocale` from `anhur/generated` instead of hand-rolling unions. Do not index bare `slug` when the same slug exists in multiple locales. See [localization.md](localization.md).
+
 ## Sharp / Bun lifecycle
 
 **Symptom:** `@anhur/assets` install fails or sharp missing under Bun.

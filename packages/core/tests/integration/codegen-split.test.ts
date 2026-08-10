@@ -1,4 +1,4 @@
-import { readFile, rm, stat } from "node:fs/promises";
+import { access, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
@@ -6,6 +6,15 @@ import { build } from "../../src/build";
 
 const fixturesRoot = path.join(import.meta.dirname, "../fixtures");
 const fixtureName = "codegen-split";
+
+async function exists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 describe("codegen list/document split", () => {
   afterEach(async () => {
@@ -110,11 +119,16 @@ describe("codegen list/document split", () => {
     expect(dts).toContain(
       "export declare const allPosts: Array<PostListItem>;",
     );
+    expect(dts).toContain('export type Locale = "de" | "en";');
     expect(dts).toContain(
+      'export declare const locales: readonly ["en", "de"];',
+    );
+    expect(dts).toContain('export declare const defaultLocale: "en";');
+    expect(dts).not.toContain(
       "export declare function getPost(idOrSlug: string): Promise<Post | null>;",
     );
     expect(dts).toContain(
-      "export declare function getPost(query?: { locale?: string; id?: string; slug?: string }): Promise<Post | null>;",
+      "export declare function getPost(query: { locale: Locale; id?: string; slug?: string }): Promise<Post | null>;",
     );
   });
 
@@ -127,6 +141,7 @@ describe("codegen list/document split", () => {
       `${pathToFileURL(path.join(result.outputDir, "getPost.js")).href}?t=${Date.now()}`
     );
 
+    // Runtime still accepts a bare slug (first match); typed API requires locale.
     const bySlug = await getPost("alpha");
     expect(bySlug.title).toBe("Alpha");
     expect(bySlug.body).toContain("BODY_ALPHA_UNIQUE_MARKER");
@@ -136,6 +151,28 @@ describe("codegen list/document split", () => {
 
     const missingQuery = await getPost({ locale: "en", slug: "nope" });
     expect(missingQuery).toBeNull();
+  });
+
+  it("emits locales runtime module and re-exports", async () => {
+    const result = await build({
+      rootDir: path.join(fixturesRoot, fixtureName),
+    });
+
+    expect(await exists(path.join(result.outputDir, "locales.js"))).toBe(true);
+
+    const { locales, defaultLocale } = await import(
+      `${pathToFileURL(path.join(result.outputDir, "locales.js")).href}?t=${Date.now()}`
+    );
+    expect(locales).toEqual(["en", "de"]);
+    expect(defaultLocale).toBe("en");
+
+    const index = await readFile(
+      path.join(result.outputDir, "index.js"),
+      "utf8",
+    );
+    expect(index).toContain(
+      'export { locales, defaultLocale } from "./locales.js";',
+    );
   });
 
   it("emits project-relative _meta.filePath", async () => {
