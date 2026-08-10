@@ -3,6 +3,26 @@
 Build-time derived exports registered on `defineConfig({ views: […] })`.
 They run **after** transforms and `prepare`, and emit list-only modules (no getters / `documents/`).
 
+## Project placement
+
+- One view / index / group per file under `cms/views/`.
+- Bind helpers once:
+
+```ts
+// cms/views/helpers.ts
+import { createDerivedHelpers } from "@anhur/core";
+import { content } from "../content";
+
+export const { defineView, defineGroup, defineIndex } =
+  createDerivedHelpers(content);
+```
+
+Import `defineView` / `defineIndex` / `defineGroup` from `./helpers` in view modules (not from `@anhur/core`) so embed fields remap in `where` / `select` / `key` / `by`.
+
+Register each export in the thin `anhur.config.ts` `views` array. Do not put views in the `content` tuple.
+
+See [project-structure.md](project-structure.md).
+
 ## Helpers
 
 | Helper        | Emits                     | Best for                        |

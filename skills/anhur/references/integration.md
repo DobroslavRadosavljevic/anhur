@@ -19,7 +19,9 @@ For `orama({…})` in `integrations`, see [search.md](search.md).
 
 ## 2. Config file
 
-Place `anhur.config.ts` at the Vite root (or pass `anhur({ configPath: "…" })`). Paths in config (`directory`, `outputDir`, asset `dir`) are relative to the **config file’s directory**.
+Place a **thin** `anhur.config.ts` at the Vite root (or pass `anhur({ configPath: "…" })`). Paths in config (`directory`, `outputDir`, asset `dir`) are relative to the **config file’s directory**.
+
+Do not inline collections/views in the config. Use the modular `cms/` tree — see [project-structure.md](project-structure.md).
 
 ## 3. Vite
 
@@ -50,22 +52,24 @@ Run a build once so `.anhur/generated` exists before `tsc` in CI, or commit gene
 
 ## 5. Content files
 
+Author files under `cms/content/` (schemas stay in `cms/collections` etc.).
+
 Example localized MDX:
 
 ```text
-content/posts/en/hello.mdx
-content/posts/de/hello.mdx
+cms/content/posts/en/hello.mdx
+cms/content/posts/de/hello.mdx
 ```
 
 Front matter + body; schema fields must match.
 
-Monolingual YAML authors:
+Monolingual YAML authors (`localized: false` on that collection):
 
 ```text
-content/authors/jane.yml
+cms/content/authors/jane.yml
 ```
 
-with `localized: false` on that collection.
+Full layout rules: [project-structure.md](project-structure.md).
 
 ## 6. App imports
 

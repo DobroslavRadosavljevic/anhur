@@ -1,5 +1,17 @@
 # Pitfalls
 
+## Monolithic `anhur.config.ts`
+
+**Symptom:** Config file owns every `defineCollection`, inline enums, and views; hard to review and reuse.
+
+**Fix:** Split into `cms/collections`, `singletons`, `enums`, `objects`, `views`, plus `cms/content.ts`. Keep config as wire-up only. See [project-structure.md](project-structure.md).
+
+## Views from `@anhur/core` instead of helpers
+
+**Symptom:** Embed/reference fields mistyped or not remapped in `where` / `select` when using `createDerivedHelpers` elsewhere.
+
+**Fix:** Import `defineView` / `defineIndex` / `defineGroup` from `cms/views/helpers.ts` (`createDerivedHelpers(content)`).
+
 ## Processor missing
 
 **Symptom:** Build error that `m.mdx()` / `md.markdown()` / `a.image()` requires a processor.
@@ -40,7 +52,7 @@
 
 **Symptom:** Missing documents for a locale, or unexpected monolingual merge.
 
-**Fix:** Localized sources need `{directory}/{locale}/…`. Opt out with `localized: false`. `defaultLocale` must be listed in `locales`.
+**Fix:** Localized sources need `{directory}/{locale}/…` (e.g. `cms/content/posts/en/…`). Opt out with `localized: false`. `defaultLocale` must be listed in `locales`.
 
 ## Sharp / Bun lifecycle
 
