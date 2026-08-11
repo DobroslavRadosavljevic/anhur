@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { ModuleNode, ViteDevServer } from "vite";
+import type { ViteDevServer } from "vite";
 import {
   build,
   collectWatchPaths,
@@ -22,25 +22,113 @@ export function syncAssetsFromConfig(
   return resolveAssetsConfig(config, configDir) ?? null;
 }
 
+/** Match virtual id, resolved url, or absolute `.anhur/generated` file path. */
+export function isAnhurGeneratedId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    (value.includes("anhur/generated") || value.includes(".anhur/generated"))
+  );
+}
+
+type GraphModule = {
+  id?: string | null;
+  url?: string;
+  file?: string | null;
+};
+
+type ModuleGraphLike = {
+  getModuleById?: (id: string) => GraphModule | undefined;
+  idToModuleMap?: Map<string, GraphModule>;
+  urlToModuleMap: Map<string, GraphModule>;
+  // Vite graphs use concrete ModuleNode types; accept any module shape here.
+  invalidateModule: (mod: GraphModule, seen?: Set<GraphModule>) => void;
+};
+
+type EnvironmentLike = {
+  name: string;
+  moduleGraph: ModuleGraphLike;
+  hot?: { send?: (payload: { type: string }) => void };
+  runner?: { clearCache?: () => void };
+};
+
+function asModuleGraphLike(graph: unknown): ModuleGraphLike {
+  return graph as ModuleGraphLike;
+}
+
+function listEnvironments(server: ViteDevServer): EnvironmentLike[] {
+  if (!server.environments) return [];
+  return Object.values(server.environments) as unknown as EnvironmentLike[];
+}
+
+function invalidateGraphModules(
+  graph: ModuleGraphLike,
+  importId: string,
+): void {
+  const seen = new Set<GraphModule>();
+  const modules = new Set<GraphModule>();
+
+  const byId = graph.getModuleById?.(importId);
+  if (byId) modules.add(byId);
+
+  if (graph.idToModuleMap) {
+    for (const mod of graph.idToModuleMap.values()) {
+      if (
+        isAnhurGeneratedId(mod.id) ||
+        isAnhurGeneratedId(mod.url) ||
+        isAnhurGeneratedId(mod.file)
+      ) {
+        modules.add(mod);
+      }
+    }
+  }
+
+  for (const [url, mod] of graph.urlToModuleMap) {
+    if (isAnhurGeneratedId(url)) modules.add(mod);
+  }
+
+  for (const module of modules) {
+    graph.invalidateModule(module, seen);
+  }
+}
+
+/**
+ * Invalidate Anhur generated modules in every Vite environment graph, then
+ * clear non-client ModuleRunner caches so SSR re-imports fresh exports.
+ */
 export function invalidateGeneratedModules(
   server: ViteDevServer,
   importId = IMPORT_ID,
 ): void {
-  const mod = server.moduleGraph.getModuleById(importId);
-  const byPath = [...server.moduleGraph.urlToModuleMap.entries()]
-    .filter(
-      ([url]) =>
-        url.includes("anhur/generated") || url.includes(".anhur/generated"),
-    )
-    .map(([, m]) => m);
+  for (const environment of listEnvironments(server)) {
+    invalidateGraphModules(environment.moduleGraph, importId);
 
-  const modules = [mod, ...byPath].filter(Boolean) as ModuleNode[];
-  for (const module of modules) {
-    server.moduleGraph.invalidateModule(module);
+    if (
+      environment.name !== "client" &&
+      "runner" in environment &&
+      typeof environment.runner?.clearCache === "function"
+    ) {
+      environment.runner.clearCache();
+    }
   }
+
+  // Legacy / compat mixed module graph (also present alongside environments).
+  invalidateGraphModules(asModuleGraphLike(server.moduleGraph), importId);
 }
 
+/**
+ * Full-reload every environment.hot channel (Vite 6+).
+ * Falls back to server.ws when environments are unavailable.
+ */
 export function sendFullReload(server: ViteDevServer): void {
+  const environments = listEnvironments(server);
+
+  if (environments.length > 0) {
+    for (const environment of environments) {
+      environment.hot?.send?.({ type: "full-reload" });
+    }
+    return;
+  }
+
   server.ws.send({ type: "full-reload" });
 }
 
