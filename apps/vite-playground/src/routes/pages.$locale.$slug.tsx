@@ -1,5 +1,5 @@
 import { Link, createFileRoute, notFound } from "@tanstack/react-router";
-import { getPage } from "anhur/generated";
+import { getPage, type Locale } from "anhur/generated";
 import { FeatureBadges } from "~/components/feature-badges";
 import { Badge } from "~/components/ui/badge";
 import { buttonVariants } from "~/components/ui/button";
@@ -9,7 +9,7 @@ import { cn } from "~/lib/utils";
 export const Route = createFileRoute("/pages/$locale/$slug")({
   loader: async ({ params }) => {
     const page = await getPage({
-      locale: params.locale,
+      locale: params.locale as Locale,
       slug: params.slug,
     });
     if (!page) throw notFound();

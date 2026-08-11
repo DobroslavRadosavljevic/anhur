@@ -1,6 +1,6 @@
 import { Link, createFileRoute, notFound } from "@tanstack/react-router";
 import { MDXContent } from "@anhur/mdx/react";
-import { getPost } from "anhur/generated";
+import { getPost, type Locale } from "anhur/generated";
 import { FeatureBadges } from "~/components/feature-badges";
 import { Badge } from "~/components/ui/badge";
 import { buttonVariants } from "~/components/ui/button";
@@ -10,7 +10,7 @@ import { cn } from "~/lib/utils";
 export const Route = createFileRoute("/posts/$locale/$slug")({
   loader: async ({ params }) => {
     const post = await getPost({
-      locale: params.locale,
+      locale: params.locale as Locale,
       slug: params.slug,
     });
     if (!post) throw notFound();

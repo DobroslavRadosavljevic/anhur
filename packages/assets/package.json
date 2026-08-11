@@ -1,6 +1,6 @@
 {
   "name": "@anhur/assets",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "Opt-in image/file asset helpers for @anhur/core documents, with optional CDN sync via files-sdk",
   "keywords": [
     "anhur",
