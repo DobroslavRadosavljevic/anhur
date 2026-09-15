@@ -10,11 +10,11 @@ import { packageVersion } from "../package-version";
 import { watchEffect } from "../watch";
 
 const projectFlags = {
-  root: Flag.directory("root", { mustExist: true }).pipe(
+  root: Flag.Directory("root", { mustExist: true }).pipe(
     Flag.withDescription("Project root directory"),
     Flag.withDefault("."),
   ),
-  config: Flag.string("config").pipe(
+  config: Flag.String("config").pipe(
     Flag.withDescription(
       "Config path relative to root (default: anhur.config.ts)",
     ),

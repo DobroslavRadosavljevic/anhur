@@ -13,12 +13,23 @@ export type UniqueOptions = {
   group?: string;
 };
 
+function isDraftInput(input: unknown): boolean {
+  return (
+    input !== null &&
+    typeof input === "object" &&
+    !Array.isArray(input) &&
+    (input as { draft?: unknown }).draft === true
+  );
+}
+
 /**
  * Ensure a string field is unique within the chosen scope for this build.
  */
 export function unique(options: UniqueOptions = {}) {
   return z.string().superRefine((value, ctx) => {
     const meta = getDocumentMeta();
+    // Drafts are omitted after collect; they must not occupy unique slots.
+    if (isDraftInput(meta.input)) return;
     const build = getBuildContext();
     const group = options.group ?? "default";
     const scope =

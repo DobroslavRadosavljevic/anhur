@@ -26,14 +26,16 @@ export function collectionGetterName(collectionName: string): string {
   return `get${generateDocumentTypeName(collectionName)}`;
 }
 
-/** Safe module basename: `en__hello` (locale + document id). */
+/**
+ * Safe module basename: `en__hello` (locale + document id).
+ * `encodeURIComponent` keeps `a/b` and `a_b` as distinct files.
+ */
 export function documentModuleBasename(
   locale: string | undefined,
   id: string,
 ): string {
   const loc = locale ?? "default";
-  const safeId = id.replace(/[^a-zA-Z0-9._-]+/g, "_");
-  return `${loc}__${safeId}`;
+  return `${loc}__${encodeURIComponent(id)}`;
 }
 
 export function documentLookupKey(
@@ -83,22 +85,22 @@ export function toPublicFilePath(
   return fallbackRelativePath.replace(/\\/g, "/");
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
 function rewriteMetaFilePaths(value: unknown, rootDir: string): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => rewriteMetaFilePaths(item, rootDir));
   }
-  if (value === null || typeof value !== "object") {
+  if (!isPlainObject(value)) {
     return value;
   }
-  const obj = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(obj)) {
-    if (
-      key === "_meta" &&
-      child !== null &&
-      typeof child === "object" &&
-      !Array.isArray(child)
-    ) {
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "_meta" && isPlainObject(child)) {
       const meta = child as ContentMeta;
       out[key] = {
         ...meta,

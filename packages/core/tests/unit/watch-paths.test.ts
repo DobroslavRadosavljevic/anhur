@@ -37,6 +37,58 @@ describe("collectWatchPaths", () => {
       canonicalizePath(path.join(root, "anhur.config.ts")),
     );
     expect(paths).toContain(canonicalizePath(path.join(root, "content/posts")));
+    expect(paths).toContain(canonicalizePath(path.join(root, "cms")));
+  });
+
+  it("watches parent dirs of emitAsset sources outside content roots", () => {
+    const root = path.resolve("/tmp/anhur-watch-paths-proj");
+    const config = defineConfig({
+      content: [
+        defineCollection({
+          name: "posts",
+          directory: "content/posts",
+          include: "**/*.md",
+          schema,
+        }),
+      ],
+    });
+
+    const sharedLogo = path.join(root, "shared", "logo.png");
+    const paths = collectWatchPaths(
+      config,
+      root,
+      path.join(root, "anhur.config.ts"),
+      [sharedLogo],
+    );
+
+    expect(paths).toContain(canonicalizePath(path.join(root, "shared")));
+    expect(paths).not.toContain(canonicalizePath(sharedLogo));
+  });
+
+  it("does not add extra roots for assets already under a content directory", () => {
+    const root = path.resolve("/tmp/anhur-watch-paths-proj");
+    const config = defineConfig({
+      content: [
+        defineCollection({
+          name: "posts",
+          directory: "content/posts",
+          include: "**/*.md",
+          schema,
+        }),
+      ],
+    });
+
+    const nested = path.join(root, "content/posts/cover.png");
+    const paths = collectWatchPaths(
+      config,
+      root,
+      path.join(root, "anhur.config.ts"),
+      [nested],
+    );
+
+    expect(
+      paths.filter((p) => p.endsWith(`${path.sep}content${path.sep}posts`)),
+    ).toHaveLength(1);
   });
 
   it("includes singleton file paths", () => {

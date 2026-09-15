@@ -265,6 +265,46 @@ describe("remarkCopyLinkedFiles", () => {
 
     expect(code).toMatch(/\/anhur-assets\/lake-[a-f0-9]+\.png/);
   });
+
+  it("rewrites srcset candidates in MDX JSX and keeps descriptors", async () => {
+    const { docPath, config, buildContext } = await setup();
+    await writePng(path.join(dir, "lake2.png"), { r: 80, g: 20, b: 20 });
+
+    const code = await withBuildContext(buildContext, () =>
+      withDocumentMeta({ path: docPath, sourceName: "posts", config }, () =>
+        compileWithCopy(
+          '<img src="./lake.png" srcSet="./lake.png 1x, ./lake2.png 2x" alt="Lake" />',
+          docPath,
+        ),
+      ),
+    );
+
+    expect(code).toMatch(/\/anhur-assets\/lake-[a-f0-9]+\.png/);
+    expect(code).toMatch(/\/anhur-assets\/lake2-[a-f0-9]+\.png/);
+    expect(code).toMatch(/1x/);
+    expect(code).toMatch(/2x/);
+    expect(code).not.toContain("./lake.png");
+    expect(code).not.toContain("./lake2.png");
+  });
+
+  it("rewrites lowercase srcset candidates on JSX img", async () => {
+    const { docPath, config, buildContext } = await setup();
+    await writePng(path.join(dir, "lake2.png"), { r: 80, g: 20, b: 20 });
+
+    const code = await withBuildContext(buildContext, () =>
+      withDocumentMeta({ path: docPath, sourceName: "posts", config }, () =>
+        compileWithCopy(
+          '<img src="./lake.png" srcset="./lake.png 1x, ./lake2.png 2x" alt="Lake" />',
+          docPath,
+        ),
+      ),
+    );
+
+    expect(code).toMatch(/\/anhur-assets\/lake-[a-f0-9]+\.png/);
+    expect(code).toMatch(/\/anhur-assets\/lake2-[a-f0-9]+\.png/);
+    expect(code).toMatch(/1x/);
+    expect(code).toMatch(/2x/);
+  });
 });
 
 describe("remarkRejectRelativeLinkedFiles", () => {
@@ -280,6 +320,24 @@ describe("remarkRejectRelativeLinkedFiles", () => {
         },
       ),
     ).rejects.toThrow(/Found: \.\/x\.png/);
+  });
+
+  it("throws listing relative srcset urls", async () => {
+    await expect(
+      compile(
+        {
+          value:
+            '<img src="./a.png" srcSet="./a.png 1x, ./b.png 2x" alt="x" />',
+          path: "/tmp/a.mdx",
+        },
+        {
+          outputFormat: "function-body",
+          remarkPlugins: [
+            remarkRejectRelativeLinkedFiles,
+          ] as CompileOptions["remarkPlugins"],
+        },
+      ),
+    ).rejects.toThrow(/Found:.*\.\/a\.png.*\.\/b\.png/);
   });
 
   it("allows pass-through urls", async () => {

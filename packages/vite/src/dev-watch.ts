@@ -5,9 +5,7 @@ import {
   collectWatchPaths,
   formatAnhurError,
   isAnhurWatchTarget,
-  resolveAssetsConfig,
   resolveConfigPath,
-  type AnhurConfig,
   type BuildResult,
 } from "@anhur/core";
 
@@ -15,19 +13,19 @@ export const IMPORT_ID = "anhur/generated";
 
 export const REBUILD_DEBOUNCE_MS = 50;
 
-export function syncAssetsFromConfig(
-  config: AnhurConfig,
-  configDir: string,
-): { dir: string; base: string } | null {
-  return resolveAssetsConfig(config, configDir) ?? null;
-}
-
-/** Match virtual id, resolved url, or absolute `.anhur/generated` file path. */
-export function isAnhurGeneratedId(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    (value.includes("anhur/generated") || value.includes(".anhur/generated"))
-  );
+/** Match virtual id, resolved url, or generated output file path. */
+export function isAnhurGeneratedId(
+  value: unknown,
+  outputDir?: string,
+): value is string {
+  if (typeof value !== "string") return false;
+  if (value.includes("anhur/generated") || value.includes(".anhur/generated")) {
+    return true;
+  }
+  if (!outputDir) return false;
+  const file = value.replace(/\\/g, "/");
+  const dir = outputDir.replace(/\\/g, "/").replace(/\/+$/, "");
+  return file === dir || file.includes(`${dir}/`);
 }
 
 type GraphModule = {
@@ -63,6 +61,7 @@ function listEnvironments(server: ViteDevServer): EnvironmentLike[] {
 function invalidateGraphModules(
   graph: ModuleGraphLike,
   importId: string,
+  outputDir?: string,
 ): void {
   const seen = new Set<GraphModule>();
   const modules = new Set<GraphModule>();
@@ -73,9 +72,9 @@ function invalidateGraphModules(
   if (graph.idToModuleMap) {
     for (const mod of graph.idToModuleMap.values()) {
       if (
-        isAnhurGeneratedId(mod.id) ||
-        isAnhurGeneratedId(mod.url) ||
-        isAnhurGeneratedId(mod.file)
+        isAnhurGeneratedId(mod.id, outputDir) ||
+        isAnhurGeneratedId(mod.url, outputDir) ||
+        isAnhurGeneratedId(mod.file, outputDir)
       ) {
         modules.add(mod);
       }
@@ -83,7 +82,7 @@ function invalidateGraphModules(
   }
 
   for (const [url, mod] of graph.urlToModuleMap) {
-    if (isAnhurGeneratedId(url)) modules.add(mod);
+    if (isAnhurGeneratedId(url, outputDir)) modules.add(mod);
   }
 
   for (const module of modules) {
@@ -98,9 +97,10 @@ function invalidateGraphModules(
 export function invalidateGeneratedModules(
   server: ViteDevServer,
   importId = IMPORT_ID,
+  outputDir?: string,
 ): void {
   for (const environment of listEnvironments(server)) {
-    invalidateGraphModules(environment.moduleGraph, importId);
+    invalidateGraphModules(environment.moduleGraph, importId, outputDir);
 
     if (
       environment.name !== "client" &&
@@ -112,7 +112,11 @@ export function invalidateGeneratedModules(
   }
 
   // Legacy / compat mixed module graph (also present alongside environments).
-  invalidateGraphModules(asModuleGraphLike(server.moduleGraph), importId);
+  invalidateGraphModules(
+    asModuleGraphLike(server.moduleGraph),
+    importId,
+    outputDir,
+  );
 }
 
 /**
@@ -164,7 +168,12 @@ export function watchRootsFromBuild(
   configFileName: string,
 ): string[] {
   const absoluteConfig = resolveConfigPath(rootDir, configFileName);
-  return collectWatchPaths(result.config, rootDir, absoluteConfig);
+  return collectWatchPaths(
+    result.config,
+    rootDir,
+    absoluteConfig,
+    result.emittedAssetSources,
+  );
 }
 
 export type AttachDevWatcherOptions = {
@@ -172,6 +181,7 @@ export type AttachDevWatcherOptions = {
   rootDir: string;
   configFileName: string;
   debounceMs?: number;
+  publicPathPrefix?: string;
   onBuildResult: (result: BuildResult) => void | Promise<void>;
   getWatchState: () => DevWatchState;
 };
@@ -188,6 +198,7 @@ export function attachAnhurDevWatcher(
     rootDir,
     configFileName,
     debounceMs = REBUILD_DEBOUNCE_MS,
+    publicPathPrefix,
     onBuildResult,
     getWatchState,
   } = options;
@@ -206,7 +217,11 @@ export function attachAnhurDevWatcher(
       pending = false;
       building = true;
       try {
-        const result = await build({ rootDir, configPath: configFileName });
+        const result = await build({
+          rootDir,
+          configPath: configFileName,
+          publicPathPrefix,
+        });
         const roots = watchRootsFromBuild(result, rootDir, configFileName);
         syncViteWatchRoots(server, getWatchState(), roots);
         await onBuildResult(result);

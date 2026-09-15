@@ -37,9 +37,16 @@ function deriveSlug(options: SlugOptions): string {
           .pop() ??
         "");
 
+  base = base.replace(/\\/g, "/");
+
   if (options.removeIndex) {
     if (base === "index") base = "";
     else if (base.endsWith("/index")) base = base.slice(0, -"/index".length);
+  }
+
+  // Nested ids (`guides/intro`) must become URL-safe before the default pattern.
+  if (options.from !== "path") {
+    base = base.replaceAll("/", "-");
   }
 
   return base;

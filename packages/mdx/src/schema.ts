@@ -1,5 +1,6 @@
 import {
   defineProcessor,
+  fingerprintCacheValue,
   getBuildContext,
   getDocumentMeta,
   type ProcessorPlugin,
@@ -73,8 +74,18 @@ function mdxField(fieldOptions: MdxFieldOptions = {}) {
         >) ?? []),
       ];
 
-      const { gfm: _regGfm, ...regRest } = registered;
-      const { gfm: _fieldGfm, ...fieldRest } = fieldOptions;
+      const {
+        gfm: _regGfm,
+        remarkPlugins: _regRemark,
+        rehypePlugins: _regRehype,
+        ...regRest
+      } = registered;
+      const {
+        gfm: _fieldGfm,
+        remarkPlugins: _fieldRemark,
+        rehypePlugins: _fieldRehype,
+        ...fieldRest
+      } = fieldOptions;
 
       const compile = () =>
         compileMdx(
@@ -95,12 +106,14 @@ function mdxField(fieldOptions: MdxFieldOptions = {}) {
 
       return persist.getOrCompute(
         `mdx:${meta.path}`,
-        {
+        fingerprintCacheValue({
           source,
           gfm,
-          remarkPluginCount: remarkPlugins.length,
-          rehypePluginCount: rehypePlugins.length,
-        },
+          remarkPlugins,
+          rehypePlugins,
+          ...regRest,
+          ...fieldRest,
+        }),
         compile,
       );
     });

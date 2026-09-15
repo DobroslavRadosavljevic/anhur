@@ -9,9 +9,9 @@
   },
   "files": ["src"],
   "peerDependencies": {
-    "oxfmt": "^0.62.0"
+    "oxfmt": "^0.68.0"
   },
   "devDependencies": {
-    "oxfmt": "^0.62.0"
+    "oxfmt": "^0.68.0"
   }
 }

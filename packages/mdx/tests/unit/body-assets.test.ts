@@ -211,4 +211,55 @@ describe("schema.mdx body assets", () => {
       expect(result.data.body).toContain("https://example.com/r.png");
     }
   });
+
+  it("rewrites JSX srcSet candidates when assets() is registered", async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "anhur-mdx-srcset-"));
+    await writePng(path.join(dir, "inline.png"));
+    await writePng(path.join(dir, "inline2.png"));
+    const docPath = path.join(dir, "hello.mdx");
+
+    const zodSchema = s.object({
+      title: s.string(),
+      body: m.mdx(),
+    });
+    const config = defineConfig({
+      processors: [mdx({ gfm: true }), assets()],
+      content: [
+        {
+          type: "collection",
+          name: "posts",
+          typeName: "Posts",
+          directory: "content",
+          include: "**/*.mdx",
+          schema: zodSchema,
+        },
+      ],
+    });
+    const buildContext = await createBuildContext(config, {
+      rootDir: dir,
+      configDir: dir,
+    });
+
+    const result = await withBuildContext(buildContext, () =>
+      withDocumentMeta(
+        {
+          path: docPath,
+          content:
+            '<img src="./inline.png" srcSet="./inline.png 1x, ./inline2.png 2x" alt="x" />',
+          sourceName: "posts",
+          config,
+        },
+        () => zodSchema.safeParseAsync({ title: "Hi" }),
+      ),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.body).toMatch(/\/anhur-assets\/inline-[a-f0-9]+\.png/);
+      expect(result.data.body).toMatch(
+        /\/anhur-assets\/inline2-[a-f0-9]+\.png/,
+      );
+      expect(result.data.body).not.toContain("./inline.png");
+    }
+  });
 });

@@ -57,6 +57,11 @@ function findReferencedDocument(
 
     const monolingual = matches.find((d) => d._meta.locale === undefined);
     if (monolingual) return { ok: true, doc: monolingual };
+
+    return {
+      ok: false,
+      detail: `no ${collection} with ${by} "${value}" in locale "${locale}"`,
+    };
   }
 
   if (matches.length > 1) {
@@ -69,6 +74,10 @@ function findReferencedDocument(
   return { ok: true, doc: matches[0]! };
 }
 
+function documentKey(doc: RelationDocument): string {
+  return doc._meta.filePath;
+}
+
 function resolveValue(
   value: unknown,
   built: readonly RelationSource[],
@@ -76,6 +85,7 @@ function resolveValue(
   locale: string | undefined,
   fieldPath: Array<string | number>,
   failures: ReferenceResolveFailure[],
+  ancestors: Set<string>,
 ): unknown {
   if (isReferenceMarker(value)) {
     const found = findReferencedDocument(
@@ -94,6 +104,32 @@ function resolveValue(
       return value.value;
     }
     if (value.embed) {
+      const key = documentKey(found.doc);
+      if (ancestors.has(key)) {
+        // Cycle: keep the id/slug instead of infinite nesting.
+        return value.value;
+      }
+      ancestors.add(key);
+      const resolvedData = resolveValue(
+        found.doc.data,
+        built,
+        found.doc._meta.filePath,
+        found.doc._meta.locale,
+        [],
+        failures,
+        ancestors,
+      );
+      ancestors.delete(key);
+      if (
+        resolvedData !== null &&
+        typeof resolvedData === "object" &&
+        !Array.isArray(resolvedData)
+      ) {
+        return {
+          ...(resolvedData as Record<string, unknown>),
+          _meta: found.doc._meta,
+        };
+      }
       return {
         ...found.doc.data,
         _meta: found.doc._meta,
@@ -111,16 +147,13 @@ function resolveValue(
         locale,
         [...fieldPath, index],
         failures,
+        ancestors,
       ),
     );
   }
 
   if (value !== null && typeof value === "object") {
     const obj = value as Record<string, unknown>;
-    // Do not walk into already-embedded `_meta` trees from other docs.
-    if ("_meta" in obj && typeof obj._meta === "object") {
-      // Still resolve sibling fields on this object.
-    }
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(obj)) {
       if (key === "_meta") {
@@ -134,6 +167,7 @@ function resolveValue(
         locale,
         [...fieldPath, key],
         failures,
+        ancestors,
       );
     }
     return out;
@@ -159,6 +193,7 @@ export function resolvePendingReferences(
         doc._meta.locale,
         [],
         failures,
+        new Set([documentKey(doc)]),
       );
       if (next !== null && typeof next === "object" && !Array.isArray(next)) {
         doc.data = next as Record<string, unknown>;

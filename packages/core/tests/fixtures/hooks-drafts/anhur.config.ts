@@ -14,6 +14,9 @@ const posts = defineCollection({
   }),
   transform: (doc, ctx) => {
     if (doc.slug === "manual-skip") return ctx.skip("manual");
+    if (doc.slug === "from-transform-draft") {
+      return { ...doc, draft: true };
+    }
     return { ...doc, tagged: true };
   },
   onSuccess: async (docs) => {

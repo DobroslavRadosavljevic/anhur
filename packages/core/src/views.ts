@@ -158,22 +158,28 @@ function buildIndexRecord(
     return String(av).localeCompare(String(bv)) * dir;
   });
 
-  if (generate?.limit != null && generate.limit < 0) {
-    throw new Error(`generate.limit must be >= 0 (got ${generate.limit}).`);
-  }
-  const limited =
-    generate?.limit != null ? sorted.slice(0, generate.limit) : sorted;
-
   const record: Record<string, Record<string, unknown>> = {};
-  for (const entry of limited) {
+  const order: string[] = [];
+  for (const entry of sorted) {
     if (entry.key in record) {
       throw new Error(
         `Index "${indexName}" has duplicate key ${JSON.stringify(entry.key)}.`,
       );
     }
     record[entry.key] = entry.row;
+    order.push(entry.key);
   }
-  return record;
+
+  if (generate?.limit != null && generate.limit < 0) {
+    throw new Error(`generate.limit must be >= 0 (got ${generate.limit}).`);
+  }
+  if (generate?.limit == null) return record;
+
+  const limited: Record<string, Record<string, unknown>> = {};
+  for (const key of order.slice(0, generate.limit)) {
+    limited[key] = record[key]!;
+  }
+  return limited;
 }
 
 export function resolveGroupEntries(
@@ -203,8 +209,9 @@ export function resolveGroupEntries(
 
   const keys = [...buckets.keys()].sort((a, b) => a.localeCompare(b));
   return keys.map((key) => {
-    const items = finalizeRows(buckets.get(key) ?? [], group.generate);
-    return { key, count: items.length, items };
+    const bucket = buckets.get(key) ?? [];
+    const items = finalizeRows(bucket, group.generate);
+    return { key, count: bucket.length, items };
   });
 }
 
@@ -254,20 +261,11 @@ function collectProjectedRows(
         continue;
       }
 
-      let row: Record<string, unknown> = toListExport(
-        doc.data,
-        doc._meta,
-        listOmit,
-        rootDir,
-      );
-      if (isMulti) {
-        row = { ...row, collection: collection.name };
-      }
+      const key = options?.keyOf ? options.keyOf(whereInput) : undefined;
 
-      const key = options?.keyOf ? options.keyOf(row) : undefined;
-
+      let row: Record<string, unknown>;
       if (derived.select) {
-        const selected = derived.select(row, ctx);
+        const selected = derived.select(whereInput, ctx);
         if (
           selected === null ||
           typeof selected !== "object" ||
@@ -278,6 +276,11 @@ function collectProjectedRows(
           );
         }
         row = selected;
+      } else {
+        row = toListExport(doc.data, doc._meta, listOmit, rootDir);
+        if (isMulti) {
+          row = { ...row, collection: collection.name };
+        }
       }
       rows.push({ key, row });
     }

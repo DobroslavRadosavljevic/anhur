@@ -198,9 +198,9 @@ export async function syncEmittedAssetsStorage(
       "assets storage sync requires an assets() processor with a resolved assets directory.",
     );
   }
-  if (!isAbsoluteHttpUrl(ctx.assets.base)) {
+  if (!isAbsoluteHttpUrl(ctx.assets.configuredBase)) {
     throw new Error(
-      `assets({ storage.enabled: true }) requires base to be an absolute http(s) URL (got "${ctx.assets.base}").`,
+      `assets({ storage.enabled: true }) requires base to be an absolute http(s) URL (got "${ctx.assets.configuredBase}").`,
     );
   }
 

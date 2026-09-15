@@ -2,12 +2,18 @@ import type { Root } from "mdast";
 import type { Plugin } from "unified";
 import { visit } from "unist-util-visit";
 import {
+  collectHtmlAssetUrls,
+  collectSrcsetUrls,
+  isLinkedAssetAttrName,
+  isSrcsetAttrName,
+  mapSrcsetUrls,
+  rewriteHtmlAssetAttrValue,
+} from "@anhur/core";
+import {
   isRelativeAssetUrl,
   requireAssetsProcessor,
   resolveAndEmit,
 } from "./resolve";
-
-const LINKED_ATTR_NAMES = new Set(["href", "src", "poster"]);
 
 type UrlHolder = { url?: string };
 
@@ -21,6 +27,8 @@ type JsxElement = {
   type: string;
   attributes?: JsxAttribute[];
 };
+
+type HtmlNode = { value?: string };
 
 type Rewrite = (next: string) => void;
 
@@ -47,13 +55,34 @@ function collectRelativeRewrites(tree: Root): Map<string, Rewrite[]> {
       return;
     }
 
+    if (type === "html") {
+      const n = node as HtmlNode;
+      if (typeof n.value !== "string") return;
+      for (const url of collectHtmlAssetUrls(n.value)) {
+        register(url, (next) => {
+          if (typeof n.value !== "string") return;
+          n.value = rewriteHtmlAssetAttrValue(n.value, url, next);
+        });
+      }
+      return;
+    }
+
     if (type === "mdxJsxFlowElement" || type === "mdxJsxTextElement") {
       const el = node as unknown as JsxElement;
       for (const attr of el.attributes ?? []) {
         if (attr.type !== "mdxJsxAttribute") continue;
-        if (!attr.name || !LINKED_ATTR_NAMES.has(attr.name)) continue;
-        // String literal only — skip src={expr}
-        if (typeof attr.value === "string") {
+        if (!attr.name || !isLinkedAssetAttrName(attr.name)) continue;
+        if (typeof attr.value !== "string") continue;
+        if (isSrcsetAttrName(attr.name)) {
+          for (const url of collectSrcsetUrls(attr.value)) {
+            register(url, (next) => {
+              if (typeof attr.value !== "string") return;
+              attr.value = mapSrcsetUrls(attr.value, (candidate) =>
+                candidate === url ? next : candidate,
+              );
+            });
+          }
+        } else {
           register(attr.value, (next) => {
             attr.value = next;
           });

@@ -1,20 +1,26 @@
 import type { Root } from "mdast";
 import type { Plugin } from "unified";
 import { visit } from "unist-util-visit";
-
-const LINKED_ATTR_NAMES = new Set(["href", "src", "poster"]);
+import {
+  collectHtmlAssetUrls,
+  collectSrcsetUrls,
+  isLinkedAssetAttrName,
+  isSrcsetAttrName,
+} from "@anhur/core";
 
 function isRelativeAssetUrl(value: string): boolean {
   if (!value || value.trim() === "") return false;
+  const trimmed = value.trim();
+  const lower = trimmed.toLowerCase();
   return !(
-    value.startsWith("http://") ||
-    value.startsWith("https://") ||
-    value.startsWith("//") ||
-    value.startsWith("/") ||
-    value.startsWith("#") ||
-    value.startsWith("mailto:") ||
-    value.startsWith("data:") ||
-    value.startsWith("tel:")
+    lower.startsWith("http://") ||
+    lower.startsWith("https://") ||
+    trimmed.startsWith("//") ||
+    trimmed.startsWith("/") ||
+    trimmed.startsWith("#") ||
+    lower.startsWith("mailto:") ||
+    lower.startsWith("data:") ||
+    lower.startsWith("tel:")
   );
 }
 
@@ -25,6 +31,7 @@ type JsxAttribute = {
   value?: string | null;
 };
 type JsxElement = { attributes?: JsxAttribute[] };
+type HtmlNode = { value?: string };
 
 /**
  * Fail when relative body asset URLs appear without an assets() processor.
@@ -45,15 +52,27 @@ export const remarkRejectRelativeLinkedFiles: Plugin<[], Root> = () => {
         return;
       }
 
+      if (type === "html") {
+        const n = node as HtmlNode;
+        if (typeof n.value === "string") {
+          for (const url of collectHtmlAssetUrls(n.value)) {
+            if (isRelativeAssetUrl(url)) found.push(url);
+          }
+        }
+        return;
+      }
+
       if (type === "mdxJsxFlowElement" || type === "mdxJsxTextElement") {
         const el = node as unknown as JsxElement;
         for (const attr of el.attributes ?? []) {
           if (attr.type !== "mdxJsxAttribute") continue;
-          if (!attr.name || !LINKED_ATTR_NAMES.has(attr.name)) continue;
-          if (
-            typeof attr.value === "string" &&
-            isRelativeAssetUrl(attr.value)
-          ) {
+          if (!attr.name || !isLinkedAssetAttrName(attr.name)) continue;
+          if (typeof attr.value !== "string") continue;
+          if (isSrcsetAttrName(attr.name)) {
+            for (const url of collectSrcsetUrls(attr.value)) {
+              if (isRelativeAssetUrl(url)) found.push(url);
+            }
+          } else if (isRelativeAssetUrl(attr.value)) {
             found.push(attr.value);
           }
         }

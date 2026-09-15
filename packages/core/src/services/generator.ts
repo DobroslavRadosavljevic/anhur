@@ -225,11 +225,18 @@ export class Generator extends Context.Service<
           if (!gen.emitDocuments) return;
 
           const loaderEntries: string[] = [];
-          const seenKeys = new Set<string>();
+          const loaderByKey = new Map<string, string>();
+          const basenameById = new Map<string, string>();
 
           const addLoader = (key: string, importPath: string) => {
-            if (seenKeys.has(key)) return;
-            seenKeys.add(key);
+            const existing = loaderByKey.get(key);
+            if (existing !== undefined) {
+              if (existing === importPath) return;
+              throw new Error(
+                `Collection "${source.name}" getter key ${JSON.stringify(key)} matches more than one document.`,
+              );
+            }
+            loaderByKey.set(key, importPath);
             loaderEntries.push(
               `  ${JSON.stringify(key)}: () => import(${JSON.stringify(importPath)}),`,
             );
@@ -240,6 +247,13 @@ export class Generator extends Context.Service<
               doc._meta.locale,
               doc._meta.id,
             );
+            const owner = basenameById.get(basename);
+            if (owner !== undefined && owner !== doc._meta.id) {
+              throw new Error(
+                `Collection "${source.name}" documents ${JSON.stringify(owner)} and ${JSON.stringify(doc._meta.id)} map to the same generated module "${basename}.js".`,
+              );
+            }
+            basenameById.set(basename, doc._meta.id);
             const fileName = `${basename}.js`;
             const absDocPath = path.join(docsDir, fileName);
             const full = toDocumentExport(doc.data, doc._meta, rootDir);

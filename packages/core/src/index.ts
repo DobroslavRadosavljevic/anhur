@@ -149,6 +149,31 @@ export {
 } from "./build-context";
 
 export {
+  joinPublicAssetBase,
+  resolvePublicAndLocalAssetBases,
+  assetsOutDirSegment,
+  relativeAssetRequestPath,
+  isRemoteAssetBase,
+  ensureTrailingSlash,
+  normalizeAppPublicBase,
+} from "./asset-urls";
+
+export {
+  parseSrcset,
+  serializeSrcset,
+  collectSrcsetUrls,
+  mapSrcsetUrls,
+  isSrcsetAttrName,
+  isLinkedAssetAttrName,
+  collectHtmlAssetUrls,
+  rewriteHtmlAssetAttrValue,
+  matchHtmlAssetAttrs,
+  type SrcsetCandidate,
+} from "./srcset";
+
+export { fingerprintCacheValue } from "./cache-fingerprint";
+
+export {
   formatAssetsStorageLogLines,
   syncEmittedAssetsStorage,
   type AssetsStorageSyncResult,
@@ -220,6 +245,7 @@ export {
 export {
   build,
   buildEffect,
+  loadConfig,
   resolveConfigPath,
   type BuildOptions,
   type BuildResult,

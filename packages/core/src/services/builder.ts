@@ -4,7 +4,11 @@ import { rm } from "node:fs/promises";
 import { applyDocumentTransforms } from "../apply-transforms";
 import { syncEmittedAssetsStorage } from "../assets-storage";
 import type { AssetsStorageSyncResult } from "../assets-storage";
-import { createBuildContext, pruneEmittedAssets } from "../build-context";
+import {
+  createBuildContext,
+  pruneEmittedAssets,
+  type ResolvedAssetsConfig,
+} from "../build-context";
 import { isCollection, isSingleton, type AnhurConfig } from "../config";
 import {
   ConfigInvalidError,
@@ -28,6 +32,11 @@ export type BuildOptions = {
   rootDir?: string;
   /** Path to config file, absolute or relative to rootDir. */
   configPath?: string;
+  /**
+   * Host app public URL prefix (Vite `resolved.base`). Joined with
+   * `assets({ base })` for generated asset `src` values. CLI builds omit this.
+   */
+  publicPathPrefix?: string;
 };
 
 export type BuildResult = {
@@ -35,6 +44,10 @@ export type BuildResult = {
   configPath: string;
   outputDir: string;
   built: BuiltSource[];
+  /** Present when an `assets()` processor is registered. */
+  assets?: ResolvedAssetsConfig;
+  /** Absolute source files copied via `emitAsset` (watch roots outside content). */
+  emittedAssetSources: readonly string[];
   /** Present when `assets({ storage: { enabled: true } })` ran. */
   assetsStorage?: AssetsStorageSyncResult;
 };
@@ -94,6 +107,7 @@ export class Builder extends Context.Service<
               createBuildContext(config, {
                 rootDir,
                 configDir,
+                publicPathPrefix: options.publicPathPrefix,
               }),
             catch: (cause) =>
               new ConfigInvalidError({
@@ -121,6 +135,14 @@ export class Builder extends Context.Service<
               );
               built.push({ source, documents });
             }
+          }
+
+          // Drop frontmatter drafts before relations so they neither occupy
+          // unique slots (handled in `s.unique()`) nor become embed targets.
+          for (const item of built) {
+            item.documents = item.documents.filter(
+              (doc) => doc.data.draft !== true,
+            );
           }
 
           const refFailures = resolvePendingReferences(built);
@@ -299,6 +321,8 @@ export class Builder extends Context.Service<
               configPath,
               outputDir,
               built,
+              emittedAssetSources: buildContext.getEmittedAssetSources(),
+              ...(buildContext.assets ? { assets: buildContext.assets } : {}),
               ...(assetsStorage ? { assetsStorage } : {}),
             };
           });

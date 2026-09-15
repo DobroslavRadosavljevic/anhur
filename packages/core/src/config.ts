@@ -612,9 +612,16 @@ export function defineSingleton<
     (undefined extends TLocalized ? unknown : { localized: TLocalized });
 }
 
-type CollectionDocument<TCollection extends AnyCollection> = DocumentWithMeta<
-  InferSchemaData<TCollection>
->;
+type CollectionMeta<TCollection extends AnyCollection> = TCollection extends {
+  localized: false;
+}
+  ? Omit<ContentMeta, "locale"> & { locale?: undefined }
+  : ContentMeta;
+
+type CollectionDocument<TCollection extends AnyCollection> =
+  InferSchemaData<TCollection> & {
+    _meta: CollectionMeta<TCollection>;
+  };
 
 /**
  * Collection document with `embed: true` refs remapped against a content tuple.
@@ -1450,7 +1457,9 @@ export type ConfigLocale<TConfig extends AnhurConfig> = TConfig extends {
 type SourceIsLocalized<
   TConfig extends AnhurConfig,
   TSource extends AnyContent,
-> = TConfig extends { localization: Localization }
+> = TConfig extends {
+  localization: Localization;
+}
   ? TSource extends { localized: false }
     ? false
     : true
@@ -1473,16 +1482,25 @@ export type DocumentForConfig<
   _meta: ContentMetaFor<TConfig, TSource>;
 };
 
+/** True when `_meta.locale` can only be undefined (monolingual source). */
+type MetaLocaleIsUnset<M> = M extends { locale?: infer L }
+  ? [Exclude<L, undefined>] extends [never]
+    ? true
+    : false
+  : false;
+
 /** Align top-level `_meta.locale` with the project locale catalog. */
 type AlignMetaLocale<T, TConfig extends AnhurConfig> = T extends {
-  _meta: ContentMeta;
+  _meta: infer M;
 }
-  ? Omit<T, "_meta"> & {
-      _meta: Omit<ContentMeta, "locale"> &
-        ([ConfigLocale<TConfig>] extends [never]
-          ? { locale?: undefined }
-          : { locale: ConfigLocale<TConfig> });
-    }
+  ? MetaLocaleIsUnset<M> extends true
+    ? T
+    : Omit<T, "_meta"> & {
+        _meta: Omit<Extract<M, object>, "locale"> &
+          ([ConfigLocale<TConfig>] extends [never]
+            ? { locale?: undefined }
+            : { locale: ConfigLocale<TConfig> });
+      }
   : T;
 
 /**
@@ -1545,7 +1563,8 @@ export type DerivedName<TConfig extends AnhurConfig> =
  * Remaps `embed: true` references the same way as {@link GetTypeByName},
  * so view items stay assignable to collection light-list item types when
  * shapes match. Top-level `_meta.locale` matches {@link ConfigLocale} when
- * folder i18n is enabled.
+ * the source is localized; monolingual views (`localized: false`) keep
+ * `locale?: undefined`.
  */
 export type GetViewByName<
   TConfig extends AnhurConfig,

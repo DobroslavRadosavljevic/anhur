@@ -11,6 +11,7 @@ function fakeResult(
     outputDir,
     configPath: path.join(path.dirname(outputDir), "..", "anhur.config.ts"),
     config: { content: [] } as BuildResult["config"],
+    emittedAssetSources: [],
     built: sources.map((source) => ({
       source: {
         type: "collection",

@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
+import { resolvePublicAndLocalAssetBases } from "./asset-urls";
 import type { AnhurConfig } from "./config";
 import { createPersistCache, type PersistCache } from "./persist-cache";
 import { findProcessor, type ProcessorPlugin } from "./processors";
@@ -95,8 +96,18 @@ export type AssetsProcessorOptions = {
 export type ResolvedAssetsConfig = {
   /** Absolute directory for copied files. */
   dir: string;
-  /** Public URL prefix ending with `/`. */
+  /**
+   * Public URL prefix ending with `/` (generated `src`).
+   * Includes the host app public path (Vite `base`) when that was passed in.
+   */
   base: string;
+  /** `assets({ base })` as configured (trailing slash). Storage checks use this. */
+  configuredBase: string;
+  /**
+   * Origin-absolute path for Vite `outDir` copy and local middleware.
+   * `undefined` when configured `base` is a remote URL.
+   */
+  localBase: string | undefined;
 };
 
 export type EmittedAsset = {
@@ -104,6 +115,8 @@ export type EmittedAsset = {
   src: string;
   /** Absolute path of the copied file. */
   outputPath: string;
+  /** Absolute path of the source file passed to `emitAsset`. */
+  sourcePath: string;
 };
 
 /**
@@ -126,6 +139,8 @@ export type BuildContext = {
   emitAsset(absoluteSourcePath: string): Promise<EmittedAsset>;
   /** Assets copied during this build (for pruning orphans after success). */
   getEmittedAssets(): readonly EmittedAsset[];
+  /** Absolute source paths passed to `emitAsset` during this build. */
+  getEmittedAssetSources(): readonly string[];
 };
 
 const GLOBAL_KEY = "__anhur_build_context_als__" as const;
@@ -142,26 +157,37 @@ function getStorage(): AsyncLocalStorage<BuildContext> {
   return g[GLOBAL_KEY];
 }
 
-function normalizeBase(base: string): string {
-  if (!base.endsWith("/")) return `${base}/`;
-  return base;
-}
-
 export function resolveAssetsConfig(
   config: AnhurConfig,
   configDir: string,
+  publicPathPrefix?: string,
 ): ResolvedAssetsConfig | undefined {
   const plugin = findProcessor(config.processors, ASSETS_PROCESSOR_ID);
   if (!plugin) return undefined;
   const options = (plugin.options ?? {}) as AssetsProcessorOptions;
   const dir = path.resolve(configDir, options.dir ?? ".anhur/assets");
-  const base = normalizeBase(options.base ?? "/anhur-assets/");
-  return { dir, base };
+  const configuredBase = options.base ?? "/anhur-assets/";
+  const withoutApp = resolvePublicAndLocalAssetBases(configuredBase);
+  const { publicBase, localBase } = resolvePublicAndLocalAssetBases(
+    configuredBase,
+    publicPathPrefix,
+  );
+  return {
+    dir,
+    base: publicBase,
+    configuredBase: withoutApp.publicBase,
+    localBase,
+  };
 }
 
 export type CreateBuildContextOptions = {
   rootDir: string;
   configDir: string;
+  /**
+   * Host app public URL prefix (Vite `resolved.base`). Joined with
+   * `assets({ base })` for generated `src` values. Omit for CLI builds.
+   */
+  publicPathPrefix?: string;
 };
 
 export async function createBuildContext(
@@ -170,7 +196,11 @@ export async function createBuildContext(
 ): Promise<BuildContext> {
   const processors = config.processors ?? [];
   const cache = new Map<string, string>();
-  const assets = resolveAssetsConfig(config, options.configDir);
+  const assets = resolveAssetsConfig(
+    config,
+    options.configDir,
+    options.publicPathPrefix,
+  );
 
   const persistCache =
     config.cacheDir === false
@@ -202,6 +232,9 @@ export async function createBuildContext(
     getEmittedAssets() {
       return [...emitCache.values()];
     },
+    getEmittedAssetSources() {
+      return [...emitCache.keys()];
+    },
     async emitAsset(absoluteSourcePath) {
       if (!assets) {
         throw new Error(
@@ -225,6 +258,7 @@ export async function createBuildContext(
       const emitted: EmittedAsset = {
         src: `${assets.base}${fileName}`,
         outputPath,
+        sourcePath: resolved,
       };
       emitCache.set(resolved, emitted);
       return emitted;

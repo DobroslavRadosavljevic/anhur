@@ -18,15 +18,19 @@ export function canonicalizePath(filePath: string): string {
 }
 
 /**
- * Absolute paths Anhur should watch for rebuilds: the config file plus each
- * collection/singleton content root.
+ * Absolute paths Anhur should watch for rebuilds: the config file, the
+ * conventional `cms/` module tree next to it, each collection/singleton
+ * content root, and parent directories of `emitAsset` sources outside those roots.
  */
 export function collectWatchPaths(
   config: AnhurConfig,
   rootDir: string,
   absoluteConfigPath: string,
+  extraPaths: readonly string[] = [],
 ): string[] {
   const watchPaths = new Set<string>([canonicalizePath(absoluteConfigPath)]);
+  const configDir = path.dirname(absoluteConfigPath);
+  watchPaths.add(canonicalizePath(path.join(configDir, "cms")));
 
   for (const source of config.content) {
     if (isCollection(source)) {
@@ -44,7 +48,25 @@ export function collectWatchPaths(
     }
   }
 
+  addEmittedAssetWatchPaths(watchPaths, extraPaths);
   return [...watchPaths];
+}
+
+function addEmittedAssetWatchPaths(
+  watchPaths: Set<string>,
+  extraPaths: readonly string[],
+): void {
+  const existing = [...watchPaths];
+  for (const extra of extraPaths) {
+    const file = canonicalizePath(extra);
+    if (existing.some((root) => isUnderWatchPath(file, root))) continue;
+    const parent = path.dirname(file);
+    if (parent === path.parse(parent).root) {
+      watchPaths.add(file);
+      continue;
+    }
+    watchPaths.add(canonicalizePath(parent));
+  }
 }
 
 /** True when `filePath` is the watch root or a file inside it. */

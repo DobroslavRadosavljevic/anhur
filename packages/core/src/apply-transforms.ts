@@ -48,6 +48,9 @@ export function applyDocumentTransforms(
                 };
               }
               const { _meta: nextMeta, ...nextData } = result;
+              if (nextData.draft === true) {
+                return { skipped: true as const, reason: "draft" };
+              }
               return {
                 skipped: false as const,
                 doc: {

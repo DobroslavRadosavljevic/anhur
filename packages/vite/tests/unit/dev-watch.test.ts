@@ -42,6 +42,13 @@ describe("dev-watch helpers", () => {
     expect(isAnhurGeneratedId("/proj/.anhur/generated/index.js")).toBe(true);
     expect(isAnhurGeneratedId("/proj/src/app.tsx")).toBe(false);
     expect(isAnhurGeneratedId(null)).toBe(false);
+    expect(isAnhurGeneratedId("/proj/generated/index.js")).toBe(false);
+    expect(
+      isAnhurGeneratedId("/proj/generated/index.js", "/proj/generated"),
+    ).toBe(true);
+    expect(
+      isAnhurGeneratedId("/proj/generated-backup/x.js", "/proj/generated"),
+    ).toBe(false);
   });
 
   it("syncViteWatchRoots adds and removes watcher paths", () => {

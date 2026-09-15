@@ -7,10 +7,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { nitro } from "nitro/vite";
 import anhur from "@anhur/vite";
 
-const repoRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../..",
-);
+const appRoot = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(appRoot, "../..");
 
 const workspacePackages = [
   "@anhur/assets",
@@ -30,7 +28,10 @@ export default defineConfig({
     },
   },
   resolve: {
-    tsconfigPaths: true,
+    alias: {
+      "~": path.resolve(appRoot, "src"),
+      "anhur/generated": path.resolve(appRoot, ".anhur/generated"),
+    },
     dedupe: ["react", "react-dom"],
   },
   // Compile workspace TypeScript in-graph so edits hot-reload without tsdown

@@ -37,6 +37,13 @@ describe("GetViewByName resolved types", () => {
     >();
     expectTypeOf<FeaturedProduct["sku"]>().toEqualTypeOf<string>();
     expectTypeOf<FeaturedProduct["_meta"]["id"]>().toEqualTypeOf<string>();
+    expectTypeOf<
+      FeaturedProduct["_meta"]["locale"]
+    >().toEqualTypeOf<undefined>();
+  });
+
+  it("keeps locale on localized view items", () => {
+    expectTypeOf<FeaturedPost["_meta"]["locale"]>().toEqualTypeOf<"en">();
   });
 
   it("uses select() return type for merged views", () => {

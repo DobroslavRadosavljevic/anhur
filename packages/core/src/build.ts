@@ -7,6 +7,7 @@ import {
   type BuildOptions,
   type BuildResult,
 } from "./services/builder";
+import { ConfigLoader, type LoadConfigResult } from "./services/config-loader";
 
 export type { BuildError, BuildOptions, BuildResult };
 export type { BuiltSource } from "./services/generator";
@@ -38,3 +39,18 @@ export const buildEffect = (
 /** Promise edge for Vite plugins and other JS hosts. */
 export const build = (options: BuildOptions = {}): Promise<BuildResult> =>
   Effect.runPromise(buildEffect(options).pipe(Effect.provide(nodeLiveLayer)));
+
+/** Load `anhur.config.ts` without collecting content (Vite alias, diagnostics). */
+export const loadConfig = (
+  options: BuildOptions = {},
+): Promise<LoadConfigResult> =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const loader = yield* ConfigLoader;
+      const rootDir = options.rootDir ?? process.cwd();
+      return yield* loader.load(
+        rootDir,
+        options.configPath ?? "anhur.config.ts",
+      );
+    }).pipe(Effect.provide(nodeLiveLayer)),
+  );

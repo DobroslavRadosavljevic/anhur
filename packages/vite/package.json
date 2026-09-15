@@ -1,6 +1,6 @@
 {
   "name": "@anhur/vite",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "Vite plugin for @anhur/core",
   "keywords": [
     "anhur",
@@ -43,14 +43,14 @@
     "@anhur/orama": "workspace:*",
     "@anhur/oxfmt": "workspace:*",
     "@anhur/oxlint": "workspace:*",
-    "@types/node": "^22.17.0",
-    "oxfmt": "^0.62.0",
-    "oxlint": "^1.77.0",
+    "@types/node": "^22.20.2",
+    "oxfmt": "^0.68.0",
+    "oxlint": "^1.83.0",
     "tsdown": "0.22.14",
     "typescript": "^7.0.2",
-    "vite": "^7.0.6",
-    "vitest": "^4.1.10",
-    "zod": "^4.4.3"
+    "vite": "^7.3.6",
+    "vitest": "^5.0.1",
+    "zod": "^4.6.5"
   },
   "peerDependencies": {
     "vite": "^6.0.0 || ^7.0.0 || ^8.0.0"

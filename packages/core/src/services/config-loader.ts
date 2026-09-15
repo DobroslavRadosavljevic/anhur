@@ -105,10 +105,19 @@ export class ConfigLoader extends Context.Service<
             canonicalPath(resolvedConfigPath),
           );
 
-          // Re-read config after edits (watch / Vite rebuild). Use realpath so
-          // macOS `/var` vs `/private/var` cache keys match.
-          delete jiti.cache[absoluteConfigPath];
-          delete jiti.cache[resolvedConfigPath];
+          // Drop every previously evaluated user module so `cms/collections/*`
+          // and other config imports are re-read on watch/Vite rebuilds.
+          const cache = jiti.cache as
+            | Map<string, unknown>
+            | Record<string, unknown>
+            | undefined;
+          if (cache instanceof Map) {
+            cache.clear();
+          } else if (cache) {
+            for (const key of Object.keys(cache)) {
+              delete cache[key];
+            }
+          }
 
           const mod = yield* Effect.tryPromise({
             try: () =>

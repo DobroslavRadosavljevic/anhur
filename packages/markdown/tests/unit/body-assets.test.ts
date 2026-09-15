@@ -218,4 +218,189 @@ describe("schema.markdown body assets", () => {
       );
     }
   });
+
+  it("rewrites relative images in raw HTML", async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "anhur-md-html-"));
+    await writePng(path.join(dir, "hero.png"));
+    const docPath = path.join(dir, "hello.md");
+
+    const zodSchema = s.object({
+      title: s.string(),
+      body: md.markdown(),
+    });
+    const config = defineConfig({
+      processors: [markdown({ gfm: true }), assets()],
+      content: [
+        {
+          type: "collection",
+          name: "pages",
+          typeName: "Pages",
+          directory: "content",
+          include: "**/*.md",
+          schema: zodSchema,
+        },
+      ],
+    });
+    const buildContext = await createBuildContext(config, {
+      rootDir: dir,
+      configDir: dir,
+    });
+
+    const result = await withBuildContext(buildContext, () =>
+      withDocumentMeta(
+        {
+          path: docPath,
+          content: 'See <img src="./hero.png" alt="hero">',
+          sourceName: "pages",
+          config,
+        },
+        () => zodSchema.safeParseAsync({ title: "Hi" }),
+      ),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.body).toMatch(
+        /src="\/anhur-assets\/hero-[a-f0-9]+\.png"/,
+      );
+    }
+  });
+
+  it("rejects relative HTML images without assets()", async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "anhur-md-html-no-assets-"));
+    const docPath = path.join(dir, "hello.md");
+
+    const zodSchema = s.object({
+      title: s.string(),
+      body: md.markdown(),
+    });
+    const config = defineConfig({
+      processors: [markdown({ gfm: true })],
+      content: [
+        {
+          type: "collection",
+          name: "pages",
+          typeName: "Pages",
+          directory: "content",
+          include: "**/*.md",
+          schema: zodSchema,
+        },
+      ],
+    });
+    const buildContext = await createBuildContext(config, {
+      rootDir: dir,
+      configDir: dir,
+    });
+
+    await expect(
+      withBuildContext(buildContext, () =>
+        withDocumentMeta(
+          {
+            path: docPath,
+            content: 'See <img src="./hero.png" alt="hero">',
+            sourceName: "pages",
+            config,
+          },
+          () => zodSchema.parseAsync({ title: "Hi" }),
+        ),
+      ),
+    ).rejects.toThrow(/require an assets\(\) processor/);
+  });
+
+  it("rewrites relative srcset candidates in raw HTML", async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "anhur-md-srcset-"));
+    await writePng(path.join(dir, "hero.png"));
+    await writePng(path.join(dir, "hero2.png"));
+    const docPath = path.join(dir, "hello.md");
+
+    const zodSchema = s.object({
+      title: s.string(),
+      body: md.markdown(),
+    });
+    const config = defineConfig({
+      processors: [markdown({ gfm: true }), assets()],
+      content: [
+        {
+          type: "collection",
+          name: "pages",
+          typeName: "Pages",
+          directory: "content",
+          include: "**/*.md",
+          schema: zodSchema,
+        },
+      ],
+    });
+    const buildContext = await createBuildContext(config, {
+      rootDir: dir,
+      configDir: dir,
+    });
+
+    const result = await withBuildContext(buildContext, () =>
+      withDocumentMeta(
+        {
+          path: docPath,
+          content:
+            'See <img src="./hero.png" srcset="./hero.png 1x, ./hero2.png 2x" alt="hero">',
+          sourceName: "pages",
+          config,
+        },
+        () => zodSchema.safeParseAsync({ title: "Hi" }),
+      ),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.body).toMatch(
+        /src="\/anhur-assets\/hero-[a-f0-9]+\.png"/,
+      );
+      expect(result.data.body).toMatch(
+        /\/anhur-assets\/hero-[a-f0-9]+\.png 1x/,
+      );
+      expect(result.data.body).toMatch(
+        /\/anhur-assets\/hero2-[a-f0-9]+\.png 2x/,
+      );
+    }
+  });
+
+  it("rejects relative srcset URLs without assets()", async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "anhur-md-srcset-no-assets-"));
+    const docPath = path.join(dir, "hello.md");
+
+    const zodSchema = s.object({
+      title: s.string(),
+      body: md.markdown(),
+    });
+    const config = defineConfig({
+      processors: [markdown({ gfm: true })],
+      content: [
+        {
+          type: "collection",
+          name: "pages",
+          typeName: "Pages",
+          directory: "content",
+          include: "**/*.md",
+          schema: zodSchema,
+        },
+      ],
+    });
+    const buildContext = await createBuildContext(config, {
+      rootDir: dir,
+      configDir: dir,
+    });
+
+    await expect(
+      withBuildContext(buildContext, () =>
+        withDocumentMeta(
+          {
+            path: docPath,
+            content:
+              'See <img srcset="./hero.png 1x, ./hero2.png 2x" alt="hero">',
+            sourceName: "pages",
+            config,
+          },
+          () => zodSchema.parseAsync({ title: "Hi" }),
+        ),
+      ),
+    ).rejects.toThrow(/require an assets\(\) processor/);
+  });
 });

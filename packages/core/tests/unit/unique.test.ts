@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
 import { createBuildContext } from "../../src/build-context";
 import { defineConfig } from "../../src/config";
+import { formatAnhurError } from "../../src/errors";
 import { schema as s } from "../../src/schema";
 import { validateWithSchema } from "../../src/validate";
 
-describe("s.slug()", () => {
+describe("s.unique() drafts", () => {
   const schema = s.object({
-    slug: s.slug(),
+    slug: s.unique(),
+    draft: s.boolean().optional(),
   });
   const config = defineConfig({
     content: [
@@ -22,80 +24,71 @@ describe("s.slug()", () => {
     ],
   });
 
-  it("derives slug from document id when omitted", async () => {
+  it("does not treat draft documents as unique conflicts", async () => {
     const buildContext = await createBuildContext(config, {
       rootDir: "/tmp",
       configDir: "/tmp",
     });
-    const data = await Effect.runPromise(
+
+    const draft = await Effect.runPromise(
       validateWithSchema({
         schema,
-        input: {},
-        filePath: "/tmp/content/hello-world.md",
-        id: "hello-world",
+        input: { slug: "hello", draft: true },
+        filePath: "/tmp/content/draft.md",
+        id: "draft",
         config,
         buildContext,
         sourceName: "posts",
       }),
     );
-    expect(data.slug).toBe("hello-world");
-  });
-
-  it("keeps an explicit slug", async () => {
-    const buildContext = await createBuildContext(config, {
-      rootDir: "/tmp",
-      configDir: "/tmp",
-    });
-    const data = await Effect.runPromise(
+    const published = await Effect.runPromise(
       validateWithSchema({
         schema,
-        input: { slug: "custom" },
-        filePath: "/tmp/content/hello-world.md",
-        id: "hello-world",
+        input: { slug: "hello" },
+        filePath: "/tmp/content/hello.md",
+        id: "hello",
         config,
         buildContext,
         sourceName: "posts",
       }),
     );
-    expect(data.slug).toBe("custom");
+
+    expect(draft.slug).toBe("hello");
+    expect(published.slug).toBe("hello");
   });
 
-  it("derives a URL-safe slug from nested document ids", async () => {
+  it("still fails when two published documents share a unique value", async () => {
     const buildContext = await createBuildContext(config, {
       rootDir: "/tmp",
       configDir: "/tmp",
     });
-    const data = await Effect.runPromise(
+
+    await Effect.runPromise(
       validateWithSchema({
         schema,
-        input: {},
-        filePath: "/tmp/content/guides/intro.md",
-        id: "guides/intro",
+        input: { slug: "hello" },
+        filePath: "/tmp/content/a.md",
+        id: "a",
         config,
         buildContext,
         sourceName: "posts",
       }),
     );
-    expect(data.slug).toBe("guides-intro");
-  });
 
-  it("rejects invalid slug format", async () => {
-    const buildContext = await createBuildContext(config, {
-      rootDir: "/tmp",
-      configDir: "/tmp",
-    });
     await expect(
       Effect.runPromise(
         validateWithSchema({
           schema,
-          input: { slug: "Bad Slug!" },
-          filePath: "/tmp/content/hello.md",
-          id: "hello",
+          input: { slug: "hello" },
+          filePath: "/tmp/content/b.md",
+          id: "b",
           config,
           buildContext,
           sourceName: "posts",
         }),
       ),
-    ).rejects.toThrow();
+    ).rejects.toSatisfy((error) =>
+      formatAnhurError(error).includes("duplicate"),
+    );
   });
 });

@@ -15,7 +15,7 @@ description: >-
   MD/MDX/YAML/JSON content pipelines.
 license: MIT
 metadata:
-  version: "0.0.13"
+  version: "0.0.14"
   packages: "@anhur/core,@anhur/vite,@anhur/mdx,@anhur/markdown,@anhur/assets,@anhur/orama"
 ---
 

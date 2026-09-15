@@ -13,6 +13,7 @@ import {
   resolveListOmit,
   resolveSingletonGenerate,
   sortByListSort,
+  toDocumentExport,
   toListExport,
 } from "../../src/codegen";
 import { defineCollection, defineSingleton } from "../../src/config";
@@ -31,7 +32,33 @@ describe("codegen helpers", () => {
   it("builds locale+id module basenames", () => {
     expect(documentModuleBasename("en", "hello")).toBe("en__hello");
     expect(documentModuleBasename(undefined, "x")).toBe("default__x");
-    expect(documentModuleBasename("en", "a/b")).toBe("en__a_b");
+    expect(documentModuleBasename("en", "a/b")).toBe("en__a%2Fb");
+  });
+
+  it("keeps nested ids and underscored ids as distinct basenames", () => {
+    expect(documentModuleBasename("en", "a/b")).not.toBe(
+      documentModuleBasename("en", "a_b"),
+    );
+  });
+
+  it("preserves Date values when rewriting _meta.filePath", () => {
+    const publishedAt = new Date("2026-08-01T00:00:00.000Z");
+    const exported = toDocumentExport(
+      { title: "T", publishedAt },
+      {
+        id: "t",
+        filePath: "/proj/content/t.md",
+        relativePath: "t.md",
+        extension: ".md",
+        locale: "en",
+      },
+      "/proj",
+    );
+    expect(exported.publishedAt).toBe(publishedAt);
+    expect(JSON.parse(JSON.stringify(exported)).publishedAt).toBe(
+      "2026-08-01T00:00:00.000Z",
+    );
+    expect(exported._meta).toMatchObject({ filePath: "content/t.md" });
   });
 
   it("defaults listOmit to body", () => {

@@ -16,6 +16,7 @@ export { syncEmittedAssetsStorage } from "@anhur/core";
 export {
   isPassThroughUrl,
   isRelativeAssetUrl,
+  splitAssetUrl,
   resolveAndEmit,
   resolveLocalPath,
   requireAssetsProcessor,

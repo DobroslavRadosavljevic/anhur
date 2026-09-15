@@ -138,6 +138,7 @@ export function readRoot() {
       assets: undefined,
       getProcessor: () => undefined,
       getEmittedAssets: () => [],
+      getEmittedAssetSources: () => [],
       emitAsset: async () => {
         throw new Error("unused");
       },

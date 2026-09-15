@@ -3,12 +3,11 @@ import { cp } from "node:fs/promises";
 import path from "node:path";
 import type { Connect, Logger, Plugin, UserConfig } from "vite";
 import {
+  assetsOutDirSegment,
   build,
-  findProcessor,
-  ASSETS_PROCESSOR_ID,
+  loadConfig,
+  relativeAssetRequestPath,
   resolveConfigPath,
-  type AnhurConfig,
-  type AssetsProcessorOptions,
   type BuildResult,
 } from "@anhur/core";
 import { formatAnhurBuildLog, type BuildLogKind } from "./build-log";
@@ -18,7 +17,6 @@ import {
   attachAnhurDevWatcher,
   invalidateGeneratedModules,
   sendFullReload,
-  syncAssetsFromConfig,
   syncViteWatchRoots,
   watchRootsFromBuild,
   type DevWatchState,
@@ -30,33 +28,53 @@ export type AnhurViteOptions = {
 };
 
 /**
+ * Resolve a request path under `assetsDir`, or `null` when it is unsafe /
+ * not decodable.
+ */
+export function resolveServedAssetPath(
+  assetsDir: string,
+  relativeUrl: string,
+): string | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(relativeUrl);
+  } catch {
+    return null;
+  }
+  const filePath = path.resolve(assetsDir, decoded.replace(/^\/+/, ""));
+  const dir = path.resolve(assetsDir);
+  if (filePath !== dir && !filePath.startsWith(dir + path.sep)) {
+    return null;
+  }
+  return filePath;
+}
+
+/**
  * Serve copied assets. Reads dir/base via getters so registration can happen
  * before the first build finishes (`configureServer` runs before `buildStart`).
  */
 function serveAssetsMiddleware(
   getAssetsDir: () => string,
-  getAssetsBase: () => string,
+  getAssetPrefixes: () => readonly (string | undefined)[],
 ): Connect.NextHandleFunction {
   return (req, res, next) => {
     const assetsDir = getAssetsDir();
-    const base = getAssetsBase();
-    if (!assetsDir || !base) {
+    if (!assetsDir) {
       next();
       return;
     }
 
-    const prefix = base.endsWith("/") ? base.slice(0, -1) : base;
-    const url = req.url ?? "";
-    if (!url.startsWith(prefix)) {
+    const relative = relativeAssetRequestPath(
+      req.url ?? "",
+      getAssetPrefixes(),
+    );
+    if (relative === null) {
       next();
       return;
     }
-    const relative = decodeURIComponent(
-      url.slice(prefix.length).split("?")[0] ?? "",
-    );
-    const filePath = path.join(assetsDir, relative.replace(/^\/+/, ""));
+    const filePath = resolveServedAssetPath(assetsDir, relative);
     if (
-      !filePath.startsWith(assetsDir) ||
+      filePath === null ||
       !existsSync(filePath) ||
       !statSync(filePath).isFile()
     ) {
@@ -64,7 +82,12 @@ function serveAssetsMiddleware(
       return;
     }
     res.setHeader("Content-Type", contentTypeFor(filePath));
-    createReadStream(filePath).pipe(res);
+    const stream = createReadStream(filePath);
+    stream.on("error", () => {
+      if (!res.headersSent) next();
+      else res.end();
+    });
+    stream.pipe(res);
   };
 }
 
@@ -74,8 +97,9 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
   let outputDir = "";
   let configDir = "";
   let assetsDir = "";
-  let assetsBase = "/anhur-assets/";
-  let assetsStorageEnabled = false;
+  let assetsPublicBase = "/anhur-assets/";
+  let assetsLocalBase = "";
+  let publicPathPrefix = "/";
   let initialBuild: Promise<BuildResult> | undefined;
   let disposeWatcher: (() => void) | undefined;
   let logger: Logger | undefined;
@@ -92,26 +116,26 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
     }
   }
 
-  function applyBuildResult(config: AnhurConfig, nextOutputDir: string) {
-    outputDir = nextOutputDir;
-    const assets = syncAssetsFromConfig(config, configDir);
-    const storage = (
-      findProcessor(config.processors, ASSETS_PROCESSOR_ID)?.options as
-        | AssetsProcessorOptions
-        | undefined
-    )?.storage;
-    assetsStorageEnabled = storage?.enabled === true;
+  function applyBuildResult(result: BuildResult) {
+    outputDir = result.outputDir;
+    const assets = result.assets;
     if (!assets) {
       assetsDir = "";
+      assetsLocalBase = "";
       return;
     }
     assetsDir = assets.dir;
-    assetsBase = assets.base;
+    assetsPublicBase = assets.base;
+    assetsLocalBase = assets.localBase ?? "";
   }
 
   async function runBuild(kind: BuildLogKind = "built"): Promise<BuildResult> {
-    const result = await build({ rootDir, configPath: configFileName });
-    applyBuildResult(result.config, result.outputDir);
+    const result = await build({
+      rootDir,
+      configPath: configFileName,
+      publicPathPrefix,
+    });
+    applyBuildResult(result);
     logBuild(result, kind);
     return result;
   }
@@ -119,11 +143,23 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
   return {
     name: "anhur",
 
-    config(userConfig) {
+    async config(userConfig) {
       rootDir = userConfig.root ? path.resolve(userConfig.root) : process.cwd();
       const absoluteConfig = resolveConfigPath(rootDir, configFileName);
       configDir = path.dirname(absoluteConfig);
       outputDir = path.resolve(configDir, ".anhur/generated");
+      try {
+        const loaded = await loadConfig({
+          rootDir,
+          configPath: configFileName,
+        });
+        outputDir = path.resolve(
+          configDir,
+          loaded.config.outputDir ?? ".anhur/generated",
+        );
+      } catch {
+        // Invalid/missing config: keep the default alias until buildStart.
+      }
 
       const patch: Partial<UserConfig> = {
         resolve: {
@@ -148,6 +184,7 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
 
     configResolved(resolved) {
       logger = resolved.logger;
+      publicPathPrefix = resolved.base;
     },
 
     async buildStart() {
@@ -157,11 +194,12 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
 
     async configureServer(server) {
       logger = server.config.logger;
+      publicPathPrefix = server.config.base;
 
       server.middlewares.use(
         serveAssetsMiddleware(
           () => assetsDir,
-          () => assetsBase,
+          () => [assetsPublicBase, assetsLocalBase],
         ),
       );
 
@@ -180,11 +218,12 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
         server,
         rootDir,
         configFileName,
+        publicPathPrefix,
         getWatchState: () => watchState,
         onBuildResult: async (next) => {
-          applyBuildResult(next.config, next.outputDir);
+          applyBuildResult(next);
           logBuild(next, "rebuilt");
-          invalidateGeneratedModules(server);
+          invalidateGeneratedModules(server, IMPORT_ID, outputDir);
           sendFullReload(server);
         },
       });
@@ -199,12 +238,13 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
 
     async writeBundle(outputOptions) {
       if (!assetsDir || !existsSync(assetsDir)) return;
-      // CDN delivery: skip local outDir copy only when remote sync is enabled.
-      if (assetsStorageEnabled && /^https?:\/\//i.test(assetsBase)) return;
+      // Remote configured `assets.base`: files live on the CDN, not in outDir.
+      if (!assetsLocalBase) return;
       const outDir = outputOptions.dir;
       if (!outDir) return;
-      const basePath = assetsBase.replace(/^\//, "").replace(/\/$/, "");
-      const target = path.join(outDir, basePath);
+      const segment = assetsOutDirSegment(assetsLocalBase);
+      if (!segment) return;
+      const target = path.join(outDir, segment);
       await cp(assetsDir, target, { recursive: true });
     },
 

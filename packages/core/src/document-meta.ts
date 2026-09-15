@@ -14,6 +14,11 @@ export type DocumentMeta = {
   id?: string;
   /** Body without frontmatter (matter loader). Absent for yaml/json. */
   content?: string;
+  /**
+   * Raw loader object passed into the schema (frontmatter / YAML / JSON).
+   * Used so helpers like `s.unique()` can ignore `draft: true` documents.
+   */
+  input?: unknown;
   /** Collection or singleton name. */
   sourceName: string;
   /** Locale when the source is localized. */

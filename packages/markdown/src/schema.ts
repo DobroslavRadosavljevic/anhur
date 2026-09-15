@@ -1,5 +1,6 @@
 import {
   defineProcessor,
+  fingerprintCacheValue,
   getBuildContext,
   getDocumentMeta,
   type ProcessorPlugin,
@@ -77,12 +78,12 @@ function markdownField(fieldOptions: MarkdownFieldOptions = {}) {
 
       return persist.getOrCompute(
         `markdown:${meta.path}`,
-        {
+        fingerprintCacheValue({
           source,
           gfm,
-          remarkPluginCount: remarkPlugins.length,
-          rehypePluginCount: rehypePlugins.length,
-        },
+          remarkPlugins,
+          rehypePlugins,
+        }),
         compile,
       );
     });

@@ -22,7 +22,7 @@
 
 **Symptom:** Relative `![…](./x.png)` or `<img src="./x.png">` fails the build.
 
-**Fix:** Register `assets({ … })`. Absolute `https://` URLs are fine without it.
+**Fix:** Register `assets({ … })`. Absolute `https://` URLs are fine without it. Relative `srcset` / `srcSet` / `imagesrcset` candidates are copied the same way as `src`.
 
 ## Import path wrong
 
@@ -84,9 +84,23 @@
 
 **Fix:** Install `files-sdk` plus the adapter’s optional peers (see [files-sdk adapters](https://files-sdk.dev/) and [assets-storage.md](assets-storage.md)). Prefer a `files: () => new Files(…)` factory so local `enabled: false` builds never load the provider SDK.
 
-## Cache stale after asset URL rewrite
+## Cache stale after plugin or compile option change
 
-Asset-rewriting builds skip the disk cache for affected compiles. If something looks stale with `cacheDir` enabled and no assets processor, delete `.anhur/cache` or set `cacheDir: false`.
+**Symptom:** MDX/Markdown output ignores a new remark/rehype plugin or plugin option while `cacheDir` is enabled and `assets()` is not registered.
+
+**Fix:** Cache keys fingerprint plugin functions and `[plugin, options]` tuples (not just plugin counts). Prefer the tuple form so option changes invalidate. Delete `.anhur/cache` if you still see a stale compile after a factory-style `plugin(options)` call.
+
+## Vite `base` vs asset URLs
+
+**Symptom:** With `base: '/blog/'`, generated image `src` is `/anhur-assets/…` (404) or files were copied to `dist/blog/anhur-assets/`.
+
+**Fix:** `@anhur/vite` joins Vite `base` onto generated asset URLs (`/blog/anhur-assets/…`) and still copies files to `dist/anhur-assets/` (Vite does not put `base` on disk). Set `assets({ base: "https://…" })` when the CDN origin is Anhur’s public URL; that skips the local outDir copy.
+
+## Shared assets outside content folders
+
+**Symptom:** Editing `shared/logo.png` referenced from Markdown does not rebuild.
+
+**Fix:** After a successful build, Anhur watches parent directories of `emitAsset` sources that sit outside collection/singleton roots. The first content save that references the file is enough for Vite to subscribe; CLI watch adds the same extra roots.
 
 ## Draft still appears
 

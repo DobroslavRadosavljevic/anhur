@@ -18,18 +18,18 @@ Exports (typical):
 
 Config highlights:
 
-| Field          | Role                                                                              |
-| -------------- | --------------------------------------------------------------------------------- |
-| `content`      | Collections + singletons                                                          |
-| `views`        | `defineView` / `defineIndex` / `defineGroup` (after prepare, before codegen)      |
-| `localization` | `{ strategy: "folder", locales, defaultLocale }`                                  |
-| `outputDir`    | Default `.anhur/generated` (relative to config file)                              |
-| `cacheDir`     | Default `.anhur/cache`; `false` disables. Skipped when `assets()` rewrites bodies |
-| `loaders`      | Extra loaders before matter/yaml/json                                             |
-| `processors`   | `mdx()`, `markdown()`, `assets()`, …                                              |
-| `integrations` | `orama({…})`, `defineIntegration({…})`, … — after codegen, before `complete`      |
-| `prepare`      | After transforms/filters, before views + codegen                                  |
-| `complete`     | After codegen + per-source `onSuccess` + integrations                             |
+| Field          | Role                                                                                                                                                |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `content`      | Collections + singletons                                                                                                                            |
+| `views`        | `defineView` / `defineIndex` / `defineGroup` (after prepare, before codegen)                                                                        |
+| `localization` | `{ strategy: "folder", locales, defaultLocale }`                                                                                                    |
+| `outputDir`    | Default `.anhur/generated` (relative to config file)                                                                                                |
+| `cacheDir`     | Default `.anhur/cache`; `false` disables. Skipped when `assets()` rewrites bodies. Keys fingerprint plugins and compile options, not plugin counts. |
+| `loaders`      | Extra loaders before matter/yaml/json                                                                                                               |
+| `processors`   | `mdx()`, `markdown()`, `assets()`, …                                                                                                                |
+| `integrations` | `orama({…})`, `defineIntegration({…})`, … — after codegen, before `complete`                                                                        |
+| `prepare`      | After transforms/filters, before views + codegen                                                                                                    |
+| `complete`     | After codegen + per-source `onSuccess` + integrations                                                                                               |
 
 Views detail: [views.md](views.md)
 
@@ -46,9 +46,10 @@ Does:
 3. `optimizeDeps.exclude` that id
 4. Build on `buildStart` / `configureServer`; in dev, use Vite’s file watcher on config + content roots, then invalidate `anhur/generated` and full-reload
 5. Log document counts (and per-source ids) on startup and each rebuild
-6. Middleware for `assets().base` (default `/anhur-assets/`) from `.anhur/assets`
+6. Middleware for copied assets (default `/anhur-assets/`, joined with Vite `base` in generated URLs) from `.anhur/assets`
+7. Watch extra `emitAsset` sources that live outside collection folders
 
-Production: plugin copies assets into the Vite build output so static hosts serve them. When `assets({ storage: { enabled: true } })` uses an absolute `http(s)` CDN `base`, that local outDir copy is skipped (CDN is the source of truth).
+Production: plugin copies assets into `outDir/anhur-assets` (the configured local path, not Vite `base`). Generated `src` values include Vite `base` (`/blog/anhur-assets/…` when `base: '/blog/'`). When `assets({ base })` is already a remote `http(s)` URL, that local outDir copy is skipped.
 
 Build logs include an `assets storage: N uploaded, …` line when remote sync ran, plus truncated key lists for uploaded / skipped / deleted.
 
@@ -82,7 +83,7 @@ import { assets, schema as a } from "@anhur/assets";
   - Defaults: `dir: ".anhur/assets"`, `base: "/anhur-assets/"`
 - Schema: `cover: a.image()`, `brochure: a.file()` (optional variants)
 - SVG works with both helpers; the original `.svg` is copied as-is. `a.image()` fills size/blur when sharp can rasterize; otherwise size may come from SVG markup and blur stays empty
-- Rewrites relative URLs in MDX/Markdown **bodies** when those processors run
+- Rewrites relative URLs in MDX/Markdown **bodies** when those processors run, including `srcset` / `srcSet` / `imagesrcset` candidates
 - Peer/native: `sharp` — trust lifecycle scripts under Bun if install blocks them (`bun pm untrusted`)
 - **Optional CDN sync:** `storage: { enabled, files, prefix, prune?, … }` via [files-sdk](https://files-sdk.dev/) (optional peer). See [assets-storage.md](assets-storage.md).
 

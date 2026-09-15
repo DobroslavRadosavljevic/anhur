@@ -35,6 +35,7 @@ export const validateWithSchema = <TSchema extends ContentSchema>(options: {
         path: options.filePath,
         id: options.id,
         content: options.content,
+        input: options.input,
         sourceName: options.sourceName,
         locale: options.locale,
         config: options.config,
