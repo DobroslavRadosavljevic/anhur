@@ -1,6 +1,7 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { toc as extractToc } from "mdast-util-toc";
-import type { Link, List, Paragraph } from "mdast";
+import type { List, Paragraph, PhrasingContent } from "mdast";
+import { Predicate } from "effect";
 import { z } from "zod";
 import { getDocumentMeta } from "../document-meta";
 
@@ -17,27 +18,39 @@ export type TocOptions = {
   tight?: boolean;
 };
 
+function isTextValue(node: PhrasingContent): node is PhrasingContent & {
+  value: string;
+} {
+  return "value" in node && Predicate.isString(node.value);
+}
+
 function parseParagraph(node: Paragraph): Omit<TocEntry, "items"> {
   const extraction = { title: "", url: "" };
   for (const child of node.children) {
     if (child.type === "link") {
-      extraction.url = (child as Link).url;
+      extraction.url = child.url;
       for (const inner of child.children) {
-        if ("value" in inner && typeof inner.value === "string") {
+        if (isTextValue(inner)) {
           extraction.title += inner.value;
         }
       }
-    } else if ("value" in child && typeof child.value === "string") {
+    } else if (isTextValue(child)) {
       extraction.title += child.value;
     } else if (child.type === "emphasis" || child.type === "strong") {
       for (const inner of child.children) {
-        if ("value" in inner && typeof inner.value === "string") {
+        if (isTextValue(inner)) {
           extraction.title += inner.value;
         }
       }
     }
   }
   return extraction;
+}
+
+function asTocList(
+  node: List["children"][number]["children"][number] | undefined,
+): List | undefined {
+  return node?.type === "list" ? node : undefined;
 }
 
 function parseList(tree?: List): TocEntry[] {
@@ -48,7 +61,7 @@ function parseList(tree?: List): TocEntry[] {
     return [
       {
         ...parseParagraph(node),
-        items: parseList(layer[index + 1] as List | undefined),
+        items: parseList(asTocList(layer[index + 1])),
       },
     ];
   });
@@ -57,7 +70,7 @@ function parseList(tree?: List): TocEntry[] {
 /**
  * Table of contents from Markdown/MDX body (`meta.content` or field value).
  */
-export function toc(options: TocOptions = {}): z.ZodType<TocEntry[]> {
+export function toc(options: TocOptions = {}) {
   return z
     .string()
     .optional()
@@ -86,5 +99,5 @@ export function toc(options: TocOptions = {}): z.ZodType<TocEntry[]> {
         });
         return z.NEVER;
       }
-    }) as unknown as z.ZodType<TocEntry[]>;
+    });
 }

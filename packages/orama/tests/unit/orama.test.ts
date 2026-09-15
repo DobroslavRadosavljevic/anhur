@@ -8,13 +8,12 @@ import {
 } from "@anhur/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildOramaIndex } from "../../src/build";
-import { createSearcher } from "../../src/client";
+import { createSearcher, isAnhurOramaIndex } from "../../src/client";
 import {
   createOramaIntegration,
   ensureOramaRegistered,
-  orama,
 } from "../../src/integration";
-import type { AnhurOramaIndex, OramaIntegrationOptions } from "../../src/types";
+import type { OramaIntegrationOptions } from "../../src/types";
 
 const posts = defineCollection({
   name: "posts",
@@ -96,9 +95,7 @@ describe("orama integration", () => {
       },
     } satisfies OramaIntegrationOptions<typeof content>;
 
-    const entry = orama<typeof content>(options)() as unknown as {
-      id: "orama";
-    } & OramaIntegrationOptions<typeof content>;
+    const entry = createOramaIntegration(options);
     expect(entry.id).toBe("orama");
 
     await buildOramaIndex(entry, {
@@ -147,7 +144,11 @@ describe("orama integration", () => {
       path.join(outputDir, "search", "orama.json"),
       "utf8",
     );
-    const snapshot = JSON.parse(raw) as AnhurOramaIndex;
+    const parsed = JSON.parse(raw);
+    if (!isAnhurOramaIndex(parsed)) {
+      throw new Error("expected AnhurOramaIndex");
+    }
+    const snapshot = parsed;
     expect(snapshot.version).toBe(2);
     expect(snapshot.collections).toEqual(["posts", "products"]);
     expect(snapshot.documents.length).toBe(2);
@@ -188,9 +189,13 @@ describe("orama integration", () => {
       sources: [{ name: "posts", type: "collection", documents: [] }],
     });
 
-    const snapshot = JSON.parse(
+    const parsed = JSON.parse(
       await readFile(path.join(outputDir, "search", "orama.json"), "utf8"),
-    ) as AnhurOramaIndex;
+    );
+    if (!isAnhurOramaIndex(parsed)) {
+      throw new Error("expected AnhurOramaIndex");
+    }
+    const snapshot = parsed;
     const searcher = await createSearcher(snapshot);
     expect((await searcher.search({ term: "anything" })).count).toBe(0);
 

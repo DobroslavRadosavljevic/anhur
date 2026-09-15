@@ -1,7 +1,6 @@
-/// <reference types="vite/client" />
+import { type ReactNode } from "react";
 import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
-import * as React from "react";
 import { settings } from "anhur/generated";
 import { DefaultCatchBoundary } from "~/components/default-catch-boundary";
 import { NotFound } from "~/components/not-found";
@@ -29,7 +28,11 @@ export const Route = createRootRoute({
   shellComponent: RootDocument,
 });
 
-function RootDocument({ children }: { children: React.ReactNode }) {
+type RootDocumentProps = {
+  children: ReactNode;
+};
+
+function RootDocument({ children }: RootDocumentProps) {
   return (
     <html lang="en">
       <head>

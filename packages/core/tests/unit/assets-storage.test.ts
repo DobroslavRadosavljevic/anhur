@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { Predicate } from "effect";
 import {
   createBuildContext,
   defineCollection,
@@ -30,12 +31,11 @@ function createMemoryFiles(
   return {
     store,
     async upload(key, body) {
-      const bytes =
-        typeof body === "string"
-          ? new TextEncoder().encode(body)
-          : body instanceof Uint8Array
-            ? body
-            : new Uint8Array(body);
+      const bytes = Predicate.isString(body)
+        ? new TextEncoder().encode(body)
+        : body instanceof Uint8Array
+          ? body
+          : new Uint8Array(body);
       store.set(key, bytes);
     },
     async exists(key) {

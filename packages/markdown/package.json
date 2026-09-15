@@ -53,6 +53,8 @@
     "@anhur/oxlint": "workspace:*",
     "@types/mdast": "^4.0.4",
     "@types/node": "^22.20.2",
+    "@types/unist": "^3.0.3",
+    "bellona": "0.4.7",
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",
     "sharp": "0.35.4",

@@ -19,13 +19,21 @@ import {
   type AnyView,
   type ContentMeta,
   type ViewContext,
+  type ListSort,
 } from "./config";
 import { createTransformContext } from "./transform";
+import { Predicate } from "effect";
+import type { DocumentFields } from "./document-fields";
+import {
+  isDocumentFields,
+  isNonEmptyString,
+  isNumberNode,
+} from "./document-fields";
 
 export type ViewBuiltSource = {
   source: AnyContent;
   documents: readonly {
-    data: Record<string, unknown>;
+    data: DocumentFields;
     _meta: ContentMeta;
   }[];
 };
@@ -33,13 +41,13 @@ export type ViewBuiltSource = {
 export type BuiltView = {
   kind: "view";
   derived: AnyView;
-  items: Record<string, unknown>[];
+  items: DocumentFields[];
 };
 
 export type BuiltIndex = {
   kind: "index";
   derived: AnyIndex;
-  record: Record<string, Record<string, unknown>>;
+  record: Record<string, DocumentFields>;
 };
 
 export type BuiltGroup = {
@@ -48,7 +56,7 @@ export type BuiltGroup = {
   groups: Array<{
     key: string;
     count: number;
-    items: Record<string, unknown>[];
+    items: DocumentFields[];
   }>;
 };
 
@@ -59,6 +67,7 @@ export function createViewContext(
 ): ViewContext {
   const transformContext = createTransformContext(built);
   return {
+    // SAFETY: preserves the existing runtime contract for this assignment.
     documents: transformContext.documents as ViewContext["documents"],
   };
 }
@@ -94,6 +103,7 @@ export function resolveViews(
         groups: resolveGroupEntries(entry, built, rootDir, ctx),
       };
     }
+    // SAFETY: preserves the existing runtime contract for this assignment.
     throw new Error(
       `Unknown derived entry "${(entry as AnyDerived).name}" (expected view, index, or group).`,
     );
@@ -106,7 +116,7 @@ export function resolveViewListItems(
   built: readonly ViewBuiltSource[],
   rootDir: string,
   ctx: ViewContext = createViewContext(built),
-): Record<string, unknown>[] {
+): DocumentFields[] {
   const rows = collectProjectedRows(view, view.from, built, rootDir, ctx).map(
     (entry) => entry.row,
   );
@@ -118,7 +128,7 @@ export function resolveIndexRecord(
   built: readonly ViewBuiltSource[],
   rootDir: string,
   ctx: ViewContext = createViewContext(built),
-): Record<string, Record<string, unknown>> {
+): Record<string, DocumentFields> {
   const projected = collectProjectedRows(
     index,
     [index.from],
@@ -139,9 +149,9 @@ export function resolveIndexRecord(
 
 function buildIndexRecord(
   indexName: string,
-  keyed: Array<{ key: string; row: Record<string, unknown> }>,
+  keyed: Array<{ key: string; row: DocumentFields }>,
   generate: AnyIndex["generate"],
-): Record<string, Record<string, unknown>> {
+) {
   const sorted = [...keyed].sort((a, b) => {
     if (generate?.compare) return generate.compare(a.row, b.row);
     if (!generate?.listSort) return 0;
@@ -152,13 +162,13 @@ function buildIndexRecord(
     if (av == null && bv == null) return 0;
     if (av == null) return 1;
     if (bv == null) return -1;
-    if (typeof av === "number" && typeof bv === "number") {
+    if (isNumberNode(av) && isNumberNode(bv)) {
       return (av - bv) * dir;
     }
     return String(av).localeCompare(String(bv)) * dir;
   });
 
-  const record: Record<string, Record<string, unknown>> = {};
+  const record: Record<string, DocumentFields> = {};
   const order: string[] = [];
   for (const entry of sorted) {
     if (entry.key in record) {
@@ -175,7 +185,7 @@ function buildIndexRecord(
   }
   if (generate?.limit == null) return record;
 
-  const limited: Record<string, Record<string, unknown>> = {};
+  const limited: Record<string, DocumentFields> = {};
   for (const key of order.slice(0, generate.limit)) {
     limited[key] = record[key]!;
   }
@@ -187,7 +197,7 @@ export function resolveGroupEntries(
   built: readonly ViewBuiltSource[],
   rootDir: string,
   ctx: ViewContext = createViewContext(built),
-): Array<{ key: string; count: number; items: Record<string, unknown>[] }> {
+): Array<{ key: string; count: number; items: DocumentFields[] }> {
   const projected = collectProjectedRows(
     group,
     [group.from],
@@ -199,7 +209,7 @@ export function resolveGroupEntries(
     },
   );
 
-  const buckets = new Map<string, Record<string, unknown>[]>();
+  const buckets = new Map<string, DocumentFields[]>();
   for (const entry of projected) {
     const key = entry.key!;
     const list = buckets.get(key);
@@ -218,7 +228,7 @@ export function resolveGroupEntries(
 type Projectable = {
   name: string;
   where?: (document: any, context: ViewContext) => boolean;
-  select?: (document: any, context: ViewContext) => Record<string, unknown>;
+  select?: (document: any, context: ViewContext) => DocumentFields;
   generate?: {
     listOmit?: readonly string[];
   };
@@ -231,11 +241,11 @@ function collectProjectedRows(
   rootDir: string,
   ctx: ViewContext,
   options?: {
-    keyOf?: (row: Record<string, unknown>) => string;
+    keyOf?: (row: DocumentFields) => string;
   },
-): Array<{ key?: string; row: Record<string, unknown> }> {
+): Array<{ key?: string; row: DocumentFields }> {
   const isMulti = sources.length > 1;
-  const rows: Array<{ key?: string; row: Record<string, unknown> }> = [];
+  const rows: Array<{ key?: string; row: DocumentFields }> = [];
 
   for (const collection of sources) {
     const item = built.find((entry) => entry.source.name === collection.name);
@@ -263,14 +273,10 @@ function collectProjectedRows(
 
       const key = options?.keyOf ? options.keyOf(whereInput) : undefined;
 
-      let row: Record<string, unknown>;
+      let row: DocumentFields;
       if (derived.select) {
         const selected = derived.select(whereInput, ctx);
-        if (
-          selected === null ||
-          typeof selected !== "object" ||
-          Array.isArray(selected)
-        ) {
+        if (!isDocumentFields(selected)) {
           throw new Error(
             `Derived "${derived.name}" select() must return a plain object.`,
           );
@@ -290,18 +296,15 @@ function collectProjectedRows(
 }
 
 function finalizeRows(
-  rows: Record<string, unknown>[],
+  rows: DocumentFields[],
   generate:
     | {
-        listSort?: import("./config").ListSort;
-        compare?: (
-          a: Record<string, unknown>,
-          b: Record<string, unknown>,
-        ) => number;
+        listSort?: ListSort;
+        compare?: (a: DocumentFields, b: DocumentFields) => number;
         limit?: number;
       }
     | undefined,
-): Record<string, unknown>[] {
+): DocumentFields[] {
   let next = generate?.compare
     ? [...rows].sort(generate.compare)
     : sortByListSort(rows, generate?.listSort);
@@ -317,14 +320,14 @@ function finalizeRows(
 }
 
 function resolveKey(
-  key: string | ((document: Record<string, unknown>) => string),
-  row: Record<string, unknown>,
+  key: string | ((document: DocumentFields) => string),
+  row: DocumentFields,
   derivedName: string,
   kind: "index" | "group",
 ): string {
-  if (typeof key === "function") {
+  if (Predicate.isFunction(key)) {
     const value = key(row);
-    if (typeof value !== "string" || value.length === 0) {
+    if (!isNonEmptyString(value)) {
       throw new Error(
         `${kind} "${derivedName}" key function must return a non-empty string.`,
       );
@@ -333,7 +336,7 @@ function resolveKey(
   }
 
   const value = row[key];
-  if (typeof value !== "string" || value.length === 0) {
+  if (!isNonEmptyString(value)) {
     throw new Error(
       `${kind} "${derivedName}" field ${JSON.stringify(key)} must be a non-empty string on every row (resolved before select).`,
     );

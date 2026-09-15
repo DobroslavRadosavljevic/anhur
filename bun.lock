@@ -5,6 +5,7 @@
     "": {
       "name": "anhur",
       "devDependencies": {
+        "bellona": "0.4.7",
         "oxfmt": "^0.68.0",
         "oxlint": "^1.83.0",
         "turbo": "^2.10.13",
@@ -47,6 +48,7 @@
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
         "@vitejs/plugin-react": "^5.1.2",
+        "bellona": "0.4.7",
         "nitro": "3.0.260311-beta",
         "oxfmt": "^0.68.0",
         "oxlint": "^1.83.0",
@@ -75,6 +77,8 @@
         "@testcontainers/minio": "^12.1.0",
         "@types/mdast": "^4.0.4",
         "@types/node": "^22.20.2",
+        "@types/unist": "^3.0.3",
+        "bellona": "0.4.7",
         "files-sdk": "^2.4.1",
         "mdast": "^3.0.0",
         "oxfmt": "^0.68.0",
@@ -116,6 +120,7 @@
         "@types/mdast": "^4.0.4",
         "@types/node": "^22.20.2",
         "@types/pluralize": "^0.0.33",
+        "bellona": "0.4.7",
         "oxfmt": "^0.68.0",
         "oxlint": "^1.83.0",
         "tsdown": "0.22.14",
@@ -143,6 +148,8 @@
         "@anhur/oxlint": "workspace:*",
         "@types/mdast": "^4.0.4",
         "@types/node": "^22.20.2",
+        "@types/unist": "^3.0.3",
+        "bellona": "0.4.7",
         "oxfmt": "^0.68.0",
         "oxlint": "^1.83.0",
         "sharp": "0.35.4",
@@ -177,6 +184,8 @@
         "@types/node": "^22.20.2",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
+        "@types/unist": "^3.0.3",
+        "bellona": "0.4.7",
         "happy-dom": "^20.14.5",
         "oxfmt": "^0.68.0",
         "oxlint": "^1.83.0",
@@ -209,6 +218,7 @@
         "@anhur/oxfmt": "workspace:*",
         "@anhur/oxlint": "workspace:*",
         "@types/node": "^22.20.2",
+        "bellona": "0.4.7",
         "jiti": "^2.7.0",
         "oxfmt": "^0.68.0",
         "oxlint": "^1.83.0",
@@ -229,6 +239,7 @@
         "@anhur/oxfmt": "workspace:*",
         "@anhur/oxlint": "workspace:*",
         "@types/node": "^22.20.2",
+        "bellona": "0.4.7",
         "oxfmt": "^0.68.0",
         "oxlint": "^1.83.0",
         "tsdown": "0.22.14",
@@ -254,6 +265,9 @@
     "tooling/oxlint": {
       "name": "@anhur/oxlint",
       "version": "0.0.0",
+      "dependencies": {
+        "bellona": "0.4.7",
+      },
       "devDependencies": {
         "oxlint": "^1.83.0",
       },
@@ -640,6 +654,8 @@
     "@oxlint/binding-win32-ia32-msvc": ["@oxlint/binding-win32-ia32-msvc@1.83.0", "", { "os": "win32", "cpu": "ia32" }, "sha512-u7XcvPW6Bk58tY5iWs2ESb0vJjoE/kuSpHxopbwp/p3ZtWVQXZ6wor5w3ssVTHOqd/v8b+QdhSFWQ4grEUNWpA=="],
 
     "@oxlint/binding-win32-x64-msvc": ["@oxlint/binding-win32-x64-msvc@1.83.0", "", { "os": "win32", "cpu": "x64" }, "sha512-LZRubd7ph13QmAg4fFecTYVZkiYbROR2Htaxh/ufWRkDhPOm2wrwaEYR89e0YpPFD3dqBrPoxS7myBw5hmYA7Q=="],
+
+    "@oxlint/plugins": ["@oxlint/plugins@1.83.0", "", {}, "sha512-qD64wr6SS1DL7YbJQ8WWjyUfFfrJsvAy9Vo0sG/PYUQy30w0uemN2h6j4xuvj4noyETDpzcGC20sv+FH7GrN5A=="],
 
     "@pkgjs/parseargs": ["@pkgjs/parseargs@0.11.0", "", {}, "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg=="],
 
@@ -1074,6 +1090,8 @@
     "baseline-browser-mapping": ["baseline-browser-mapping@2.11.23", "", { "bin": { "baseline-browser-mapping": "dist/cli.cjs" } }, "sha512-le521dGVfxM7yRX0EikCoSz+rOK+hHzdDt/E7mG1jOJB/6WAAUuwVroLwaB7ApaUsz5Q0kFlDXLSA9MheUIfRQ=="],
 
     "bcrypt-pbkdf": ["bcrypt-pbkdf@1.0.2", "", { "dependencies": { "tweetnacl": "^0.14.3" } }, "sha512-qeFIXtP4MSoi6NLqO12WfqARWWuCKi2Rn/9hJLEmtB5yTNr9DqFWkJRCf2qShWzPeAMRnOgCrq0sg/KLv5ES9w=="],
+
+    "bellona": ["bellona@0.4.7", "", { "dependencies": { "@oxlint/plugins": "^1.78.0" }, "peerDependencies": { "oxlint": "^1.78.0" } }, "sha512-Ch26YUqSyZAVbmZwa66ZBw4kRMk0/VB6Sg5rxwq5YV/ZzMish8Q7CfU+TxSSwVk0ZQJohnIC9Hww+DONFTxlOQ=="],
 
     "binary-extensions": ["binary-extensions@2.3.0", "", {}, "sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw=="],
 

@@ -34,6 +34,7 @@ describe("build", () => {
     const posts = result.built.find((b) => b.source.name === "posts");
     expect(posts?.documents).toHaveLength(2);
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
     const generatedPosts = (
       await import(
         `${pathToFileURL(path.join(result.outputDir, "allPosts.js")).href}?t=${Date.now()}`

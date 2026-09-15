@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ViteDevServer } from "vite";
 import { canonicalizePath } from "@anhur/core";
+
+function isViteDevServer<T extends object>(
+  value: T,
+): value is T & ViteDevServer {
+  return (
+    "watcher" in value ||
+    "ws" in value ||
+    "environments" in value ||
+    "moduleGraph" in value
+  );
+}
 import {
   IMPORT_ID,
   invalidateGeneratedModules,
@@ -63,7 +74,10 @@ describe("dev-watch helpers", () => {
           removed.push(p);
         },
       },
-    } as unknown as ViteDevServer;
+    };
+    if (!isViteDevServer(server)) {
+      throw new Error("expected ViteDevServer fixture");
+    }
 
     const state: DevWatchState = { watchRoots: [] };
     const a = canonicalizePath("/tmp/a");
@@ -93,7 +107,10 @@ describe("dev-watch helpers", () => {
         ]),
         invalidateModule,
       },
-    } as unknown as ViteDevServer;
+    };
+    if (!isViteDevServer(server)) {
+      throw new Error("expected ViteDevServer fixture");
+    }
 
     invalidateGeneratedModules(server);
     expect(invalidateModule).toHaveBeenCalled();
@@ -135,7 +152,10 @@ describe("dev-watch helpers", () => {
         urlToModuleMap: new Map(),
         invalidateModule: legacyInvalidate,
       },
-    } as unknown as ViteDevServer;
+    };
+    if (!isViteDevServer(server)) {
+      throw new Error("expected ViteDevServer fixture");
+    }
 
     invalidateGeneratedModules(server);
 
@@ -169,7 +189,10 @@ describe("dev-watch helpers", () => {
         urlToModuleMap: new Map(),
         invalidateModule: vi.fn(),
       },
-    } as unknown as ViteDevServer;
+    };
+    if (!isViteDevServer(server)) {
+      throw new Error("expected ViteDevServer fixture");
+    }
 
     invalidateGeneratedModules(server);
     expect(ssrGraph.invalidateModule).toHaveBeenCalledWith(
@@ -181,7 +204,11 @@ describe("dev-watch helpers", () => {
 
   it("sendFullReload falls back to server.ws when environments are absent", () => {
     const send = vi.fn();
-    const server = { ws: { send } } as unknown as ViteDevServer;
+    const fixture = { ws: { send } };
+    if (!isViteDevServer(fixture)) {
+      throw new Error("expected ViteDevServer fixture");
+    }
+    const server = fixture;
     sendFullReload(server);
     expect(send).toHaveBeenCalledWith({ type: "full-reload" });
   });
@@ -196,7 +223,10 @@ describe("dev-watch helpers", () => {
         ssr: { name: "ssr", hot: { send: ssrSend } },
       },
       ws: { send: wsSend },
-    } as unknown as ViteDevServer;
+    };
+    if (!isViteDevServer(server)) {
+      throw new Error("expected ViteDevServer fixture");
+    }
 
     sendFullReload(server);
 

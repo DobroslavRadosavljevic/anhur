@@ -19,6 +19,7 @@ import {
   singularizePascal,
   singletonConstName,
   type ConfigLocale,
+  type FolderLocalization,
   type GetTypeByName,
   type GetViewByName,
 } from "../../src/config";
@@ -118,6 +119,7 @@ describe("defineCollection / defineSingleton / defineConfig", () => {
       directory: "content/posts",
       include: "**/*.md",
       schema: zodSchema,
+      // SAFETY: preserves the existing runtime contract for this assignment.
       transform: transform as never,
     });
     expect(posts.transform).toBe(transform);
@@ -129,6 +131,7 @@ describe("defineCollection / defineSingleton / defineConfig", () => {
         name: "posts",
         directory: "content/posts",
         include: "**/*.md",
+        // SAFETY: intentionally not a Zod schema to exercise the runtime check.
         schema: { parse: () => ({}) } as never,
       }),
     ).toThrow(/Zod schema/);
@@ -188,8 +191,8 @@ describe("defineCollection / defineSingleton / defineConfig", () => {
   });
 
   it("exports schema.raw helper", () => {
-    expect(typeof s.raw()).toBe("object");
-    expect(typeof s.unique()).toBe("object");
+    expect(s.raw()).toBeTruthy();
+    expect(s.unique()).toBeTruthy();
   });
 
   it("defineConfig preserves source names for GetTypeByName", () => {
@@ -246,9 +249,7 @@ describe("defineCollection / defineSingleton / defineConfig", () => {
       locales: ["en", "cs"] as const,
       // @ts-expect-error defaultLocale must be a configured locale
       defaultLocale: "de",
-    } satisfies import("../../src/config").FolderLocalization<
-      readonly ["en", "cs"]
-    >;
+    } satisfies FolderLocalization<readonly ["en", "cs"]>;
     void _bad;
   });
 

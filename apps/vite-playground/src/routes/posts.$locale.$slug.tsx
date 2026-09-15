@@ -1,16 +1,24 @@
-import { Link, createFileRoute, notFound } from "@tanstack/react-router";
+import {
+  Link,
+  createFileRoute,
+  notFound,
+  useLoaderData,
+} from "@tanstack/react-router";
 import { MDXContent } from "@anhur/mdx/react";
-import { getPost, type Locale } from "anhur/generated";
+import { getPost } from "anhur/generated";
 import { FeatureBadges } from "~/components/feature-badges";
 import { Badge } from "~/components/ui/badge";
 import { buttonVariants } from "~/components/ui/button";
+import { Img } from "~/components/ui/img";
 import { Separator } from "~/components/ui/separator";
+import { isLocale } from "~/lib/locale";
 import { cn } from "~/lib/utils";
 
 export const Route = createFileRoute("/posts/$locale/$slug")({
   loader: async ({ params }) => {
+    if (!isLocale(params.locale)) throw notFound();
     const post = await getPost({
-      locale: params.locale as Locale,
+      locale: params.locale,
       slug: params.slug,
     });
     if (!post) throw notFound();
@@ -20,7 +28,7 @@ export const Route = createFileRoute("/posts/$locale/$slug")({
 });
 
 function PostDetailPage() {
-  const { post } = Route.useLoaderData();
+  const { post } = useLoaderData({ from: "/posts/$locale/$slug" });
 
   return (
     <article className="space-y-6">
@@ -98,7 +106,7 @@ function PostDetailPage() {
       ) : null}
 
       {post.cover ? (
-        <img
+        <Img
           src={post.cover.src}
           alt=""
           width={post.cover.width || undefined}
@@ -112,7 +120,7 @@ function PostDetailPage() {
           <p className="text-muted-foreground text-xs uppercase tracking-wide">
             Remote a.image() pass-through
           </p>
-          <img
+          <Img
             src={post.remoteCover.src}
             alt=""
             className="max-h-40 rounded-lg border"

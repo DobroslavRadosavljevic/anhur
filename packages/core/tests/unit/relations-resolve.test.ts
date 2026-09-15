@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { resolvePendingReferences } from "../../src/relations";
+import type { ReferenceMarker } from "../../src/schema/reference";
 import type { ContentMeta } from "../../src/config";
+import type { DocumentFields } from "../../src/document-fields";
 
 function meta(id: string, extras: Partial<ContentMeta> = {}): ContentMeta {
   return {
@@ -12,17 +14,7 @@ function meta(id: string, extras: Partial<ContentMeta> = {}): ContentMeta {
   };
 }
 
-function ref(
-  collection: string,
-  value: string,
-  embed = true,
-): {
-  __anhurRef: true;
-  collection: string;
-  by: "id";
-  embed: boolean;
-  value: string;
-} {
+function ref(collection: string, value: string, embed = true): ReferenceMarker {
   return { __anhurRef: true, collection, by: "id", embed, value };
 }
 
@@ -59,7 +51,8 @@ describe("resolvePendingReferences", () => {
 
     const failures = resolvePendingReferences([authors, posts]);
     expect(failures).toEqual([]);
-    const author = posts.documents[0]!.data.author as Record<string, unknown>;
+    // SAFETY: preserves the existing runtime contract for this assignment.
+    const author = posts.documents[0]!.data.author as DocumentFields;
     expect(author).toMatchObject({
       name: "Ada",
       featuredPost: {

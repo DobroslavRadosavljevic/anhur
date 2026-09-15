@@ -1,6 +1,7 @@
+import type { DocumentFields } from "../document-fields";
 export type LoadedFile = {
   /** Structured fields (frontmatter or whole YAML/JSON document). */
-  data: Record<string, unknown>;
+  data: DocumentFields;
   /** Markdown/MDX body without frontmatter. */
   content?: string;
 };

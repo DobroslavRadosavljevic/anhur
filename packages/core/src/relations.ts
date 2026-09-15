@@ -1,5 +1,7 @@
 import type { ContentMeta } from "./config";
 import { isReferenceMarker } from "./schema/reference";
+import type { DocumentFields, DocumentNode } from "./document-fields";
+import { isDocumentFields, isNonEmptyString } from "./document-fields";
 
 export type ReferenceBy = "id" | "slug";
 
@@ -10,7 +12,7 @@ export type ReferenceResolveFailure = {
 };
 
 type RelationDocument = {
-  data: Record<string, unknown>;
+  data: DocumentFields;
   _meta: ContentMeta;
 };
 
@@ -22,7 +24,7 @@ type RelationSource = {
 function lookupKey(doc: RelationDocument, by: ReferenceBy): string | undefined {
   if (by === "id") return doc._meta.id;
   const slug = doc.data.slug;
-  return typeof slug === "string" ? slug : undefined;
+  return isNonEmptyString(slug) ? slug : undefined;
 }
 
 function findReferencedDocument(
@@ -79,14 +81,14 @@ function documentKey(doc: RelationDocument): string {
 }
 
 function resolveValue(
-  value: unknown,
+  value: DocumentNode,
   built: readonly RelationSource[],
   filePath: string,
   locale: string | undefined,
   fieldPath: Array<string | number>,
   failures: ReferenceResolveFailure[],
   ancestors: Set<string>,
-): unknown {
+): DocumentNode {
   if (isReferenceMarker(value)) {
     const found = findReferencedDocument(
       built,
@@ -120,13 +122,9 @@ function resolveValue(
         ancestors,
       );
       ancestors.delete(key);
-      if (
-        resolvedData !== null &&
-        typeof resolvedData === "object" &&
-        !Array.isArray(resolvedData)
-      ) {
+      if (isDocumentFields(resolvedData)) {
         return {
-          ...(resolvedData as Record<string, unknown>),
+          ...resolvedData,
           _meta: found.doc._meta,
         };
       }
@@ -152,10 +150,9 @@ function resolveValue(
     );
   }
 
-  if (value !== null && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(obj)) {
+  if (isDocumentFields(value)) {
+    const out: DocumentFields = {};
+    for (const [key, child] of Object.entries(value)) {
       if (key === "_meta") {
         out[key] = child;
         continue;
@@ -195,8 +192,8 @@ export function resolvePendingReferences(
         failures,
         new Set([documentKey(doc)]),
       );
-      if (next !== null && typeof next === "object" && !Array.isArray(next)) {
-        doc.data = next as Record<string, unknown>;
+      if (isDocumentFields(next)) {
+        doc.data = next;
       }
     }
   }

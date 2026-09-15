@@ -1,75 +1,33 @@
-import { Data } from "effect";
 import { PlatformError } from "effect/PlatformError";
-
-export type ValidationIssue = {
-  readonly message: string;
-  readonly path?: readonly (string | number | symbol)[];
+import { Predicate } from "effect";
+import {
+  ConfigInvalidError,
+  ConfigNotFoundError,
+  LocalizationConfigError,
+  SingletonAmbiguousError,
+  SingletonMissingError,
+} from "./errors-config";
+import {
+  LoaderFailedError,
+  LoaderNotFoundError,
+  ReferenceFailedError,
+  TransformFailedError,
+  ValidationFailedError,
+} from "./errors-content";
+export {
+  ConfigInvalidError,
+  ConfigNotFoundError,
+  LocalizationConfigError,
+  SingletonAmbiguousError,
+  SingletonMissingError,
 };
-
-export class ConfigNotFoundError extends Data.TaggedError(
-  "ConfigNotFoundError",
-)<{
-  readonly path: string;
-}> {}
-
-export class ConfigInvalidError extends Data.TaggedError("ConfigInvalidError")<{
-  readonly path: string;
-  readonly detail: string;
-}> {}
-
-export class LocalizationConfigError extends Data.TaggedError(
-  "LocalizationConfigError",
-)<{
-  readonly detail: string;
-}> {}
-
-export class SingletonMissingError extends Data.TaggedError(
-  "SingletonMissingError",
-)<{
-  readonly name: string;
-  readonly path: string;
-}> {}
-
-export class SingletonAmbiguousError extends Data.TaggedError(
-  "SingletonAmbiguousError",
-)<{
-  readonly name: string;
-  readonly locale: string;
-  readonly files: readonly string[];
-}> {}
-
-export class ValidationFailedError extends Data.TaggedError(
-  "ValidationFailedError",
-)<{
-  readonly filePath: string;
-  readonly issues: readonly ValidationIssue[];
-}> {}
-
-export class TransformFailedError extends Data.TaggedError(
-  "TransformFailedError",
-)<{
-  readonly filePath: string;
-  readonly detail: string;
-}> {}
-
-export class ReferenceFailedError extends Data.TaggedError(
-  "ReferenceFailedError",
-)<{
-  readonly filePath: string;
-  readonly fieldPath: readonly (string | number)[];
-  readonly detail: string;
-}> {}
-
-export class LoaderNotFoundError extends Data.TaggedError(
-  "LoaderNotFoundError",
-)<{
-  readonly filePath: string;
-}> {}
-
-export class LoaderFailedError extends Data.TaggedError("LoaderFailedError")<{
-  readonly filePath: string;
-  readonly detail: string;
-}> {}
+export {
+  LoaderFailedError,
+  LoaderNotFoundError,
+  ReferenceFailedError,
+  TransformFailedError,
+  ValidationFailedError,
+};
 
 export type AnhurError =
   | ConfigNotFoundError
@@ -84,72 +42,76 @@ export type AnhurError =
   | LoaderFailedError
   | PlatformError;
 
-export function formatAnhurError(error: unknown): string {
-  if (error instanceof ValidationFailedError) {
-    const detail = error.issues
+function isPathReason(
+  reason: PlatformError["reason"],
+): reason is PlatformError["reason"] & { path: string } {
+  return "path" in reason && Predicate.isString(reason.path);
+}
+
+function isDescriptionReason(
+  reason: PlatformError["reason"],
+): reason is PlatformError["reason"] & { description: string } {
+  return "description" in reason && Predicate.isString(reason.description);
+}
+
+export function formatAnhurError(cause: AnhurError | Error): string {
+  if (cause instanceof ValidationFailedError) {
+    const detail = cause.issues
       .map((issue) => {
         const path = issue.path?.map(String).join(".") ?? "";
         return path ? `${path}: ${issue.message}` : issue.message;
       })
       .join("\n");
-    return `Validation failed for ${error.filePath}:\n${detail}`;
+    return `Validation failed for ${cause.filePath}:\n${detail}`;
   }
 
-  if (error instanceof TransformFailedError) {
-    return `Transform failed for ${error.filePath}: ${error.detail}`;
+  if (cause instanceof TransformFailedError) {
+    return `Transform failed for ${cause.filePath}: ${cause.detail}`;
   }
 
-  if (error instanceof ReferenceFailedError) {
-    const path = error.fieldPath.map(String).join(".") || "(root)";
-    return `Reference failed for ${error.filePath} at ${path}: ${error.detail}`;
+  if (cause instanceof ReferenceFailedError) {
+    const path = cause.fieldPath.map(String).join(".") || "(root)";
+    return `Reference failed for ${cause.filePath} at ${path}: ${cause.detail}`;
   }
 
-  if (error instanceof LoaderNotFoundError) {
-    return `No loader matched file: ${error.filePath}`;
+  if (cause instanceof LoaderNotFoundError) {
+    return `No loader matched file: ${cause.filePath}`;
   }
 
-  if (error instanceof LoaderFailedError) {
-    return `Loader failed for ${error.filePath}: ${error.detail}`;
+  if (cause instanceof LoaderFailedError) {
+    return `Loader failed for ${cause.filePath}: ${cause.detail}`;
   }
 
-  if (error instanceof ConfigNotFoundError) {
-    return `Anhur config not found: ${error.path}`;
+  if (cause instanceof ConfigNotFoundError) {
+    return `Anhur config not found: ${cause.path}`;
   }
 
-  if (error instanceof ConfigInvalidError) {
-    return `Invalid config at ${error.path}: ${error.detail}`;
+  if (cause instanceof ConfigInvalidError) {
+    return `Invalid config at ${cause.path}: ${cause.detail}`;
   }
 
-  if (error instanceof LocalizationConfigError) {
-    return error.detail;
+  if (cause instanceof LocalizationConfigError) {
+    return cause.detail;
   }
 
-  if (error instanceof SingletonMissingError) {
-    return `Singleton "${error.name}" file not found: ${error.path}`;
+  if (cause instanceof SingletonMissingError) {
+    return `Singleton "${cause.name}" file not found: ${cause.path}`;
   }
 
-  if (error instanceof SingletonAmbiguousError) {
-    return `Singleton "${error.name}" locale "${error.locale}" matched multiple files: ${error.files.join(", ")}`;
+  if (cause instanceof SingletonAmbiguousError) {
+    return `Singleton "${cause.name}" locale "${cause.locale}" matched multiple files: ${cause.files.join(", ")}`;
   }
 
-  if (error instanceof PlatformError) {
-    const reason = error.reason;
-    const path =
-      "path" in reason && typeof reason.path === "string"
-        ? reason.path
-        : undefined;
-    const description =
-      "description" in reason && typeof reason.description === "string"
-        ? reason.description
-        : reason._tag;
+  if (cause instanceof PlatformError) {
+    const reason = cause.reason;
+    const path = isPathReason(reason) ? reason.path : undefined;
+    const description = isDescriptionReason(reason)
+      ? reason.description
+      : reason._tag;
     return path
       ? `Platform ${reason._tag} for ${path}: ${description}`
       : `Platform ${reason._tag}: ${description}`;
   }
 
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
+  return cause.message;
 }

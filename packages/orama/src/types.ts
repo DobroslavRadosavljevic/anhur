@@ -28,6 +28,32 @@ export type OramaFieldValue<T extends OramaFieldType> = T extends
             ? boolean[]
             : never;
 
+/** JSON object used as a search hit `store` payload. */
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
+export type JsonObject = { [key: string]: JsonValue };
+
+/** Scalar (or array) values stored on an Orama index row. */
+export type OramaFieldDatum =
+  | string
+  | number
+  | boolean
+  | string[]
+  | number[]
+  | boolean[];
+
+/** One row in the portable Orama snapshot. */
+export type OramaIndexDocument = {
+  id: string;
+  collection: string;
+  locale: string;
+  documentId: string;
+  store: string;
+  [field: string]: OramaFieldDatum;
+};
+
+export type OramaSchema = { [field: string]: OramaFieldType };
+
 /** Collection source names from a `content` array. */
 export type CollectionName<TContent extends readonly AnyContent[]> = Extract<
   TContent[number],
@@ -71,7 +97,7 @@ export type CollectionSearchConfig<
    * Payload returned on each search hit (not matched by default).
    * Defaults to `{}`.
    */
-  store?: (doc: TDoc) => Record<string, unknown>;
+  store?: (doc: TDoc) => JsonObject;
 };
 
 /** Map of optional per-collection search configs, keyed by collection name. */
@@ -118,13 +144,13 @@ export type OramaIntegrationOptions<
 export type AnhurOramaIndex = {
   version: 2;
   /** Full Orama schema used at rebuild time. */
-  schema: Record<string, OramaFieldType>;
+  schema: OramaSchema;
   /** Fields passed to Orama `search({ properties })`. */
   searchProperties: string[];
   /** Collection names included in this index. */
   collections: string[];
   /** Indexed rows (including Orama `id` and JSON `store`). */
-  documents: Record<string, unknown>[];
+  documents: OramaIndexDocument[];
 };
 
 export type SearchQuery = {
@@ -141,7 +167,7 @@ export type SearchQuery = {
   properties?: string[] | "*";
 };
 
-export type SearchHit<TStore = Record<string, unknown>> = {
+export type SearchHit<TStore = JsonObject> = {
   id: string;
   score: number;
   collection: string;
@@ -150,7 +176,7 @@ export type SearchHit<TStore = Record<string, unknown>> = {
   store: TStore;
 };
 
-export type SearchResult<TStore = Record<string, unknown>> = {
+export type SearchResult<TStore = JsonObject> = {
   count: number;
   elapsed: { raw: number; formatted: string };
   hits: SearchHit<TStore>[];

@@ -18,6 +18,7 @@ import {
 } from "../../src/codegen";
 import { defineCollection, defineSingleton } from "../../src/config";
 import { schema as s } from "../../src/schema";
+import type { DocumentFields } from "../../src/document-fields";
 
 describe("codegen helpers", () => {
   it("names getters from collection names", () => {
@@ -128,13 +129,15 @@ describe("codegen helpers", () => {
     expect(light).not.toHaveProperty("body");
     expect(light.provider).toMatchObject({ name: "Acme", slug: "acme" });
     expect(light.provider).not.toHaveProperty("body");
-    expect((light.categories as Record<string, unknown>[])[0]).toMatchObject({
+    // SAFETY: preserves the existing runtime contract for this assignment.
+    expect((light.categories as DocumentFields[])[0]).toMatchObject({
       name: "Cat",
       slug: "cat",
     });
-    expect(
-      (light.categories as Record<string, unknown>[])[0],
-    ).not.toHaveProperty("body");
+    // SAFETY: preserves the existing runtime contract for this assignment.
+    expect((light.categories as DocumentFields[])[0]).not.toHaveProperty(
+      "body",
+    );
   });
 
   it("rewrites absolute _meta.filePath when rootDir is provided", () => {

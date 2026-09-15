@@ -1,5 +1,7 @@
+import { Predicate } from "effect";
 import type { AnhurConfig, AnyContent } from "./config";
 import type { BuiltContentSnapshot } from "./transform-types";
+import type { DocumentFields } from "./document-fields";
 
 /**
  * Runtime context passed to integration `onComplete` hooks and registered
@@ -58,33 +60,40 @@ export type IntegrationConfigEntry<
  */
 export type IntegrationInput<TContent extends readonly AnyContent[]> =
   | IntegrationConfigEntry<TContent>
-  | IntegrationDefinition;
+  | IntegrationDefinition
+  | (DocumentFields & { readonly id: string });
 
 /**
  * Create the deferred config entry returned by a package factory.
  * This is for integration package authors; app configs call `orama()` or the
  * equivalent package factory directly.
  */
+export type IntegrationFactoryOptions = DocumentFields;
+
 export function createIntegrationConfigEntry<
   TContent extends readonly AnyContent[],
   TId extends string,
->(id: TId, options: object): IntegrationConfigEntry<TContent, TId> {
+>(
+  id: TId,
+  options: IntegrationFactoryOptions,
+): IntegrationConfigEntry<TContent, TId> {
   if (!id) {
     throw new Error(
       "@anhur/core: createIntegrationConfigEntry requires a non-empty id.",
     );
   }
 
+  // SAFETY: the extra phantom keys exist only in the type system; runtime value is `{ id, ...options }`.
   return (<_TResolve>() => ({
     id,
     ...options,
-  })) as unknown as IntegrationConfigEntry<TContent, TId>;
+  })) as IntegrationConfigEntry<TContent, TId>;
 }
 
 export type IntegrationHandler = {
   readonly id: string;
   readonly run: (
-    options: Record<string, unknown>,
+    options: DocumentFields,
     context: IntegrationRuntimeContext,
   ) => void | Promise<void>;
 };
@@ -97,6 +106,7 @@ type GlobalHandlers = typeof globalThis & {
 
 /** Shared across jiti + host duplicates of this module. */
 function getHandlers(): Map<string, IntegrationHandler> {
+  // SAFETY: preserves the existing runtime contract for this assignment.
   const g = globalThis as GlobalHandlers;
   if (!g[GLOBAL_HANDLERS_KEY]) {
     g[GLOBAL_HANDLERS_KEY] = new Map();
@@ -142,14 +152,9 @@ export function defineIntegration(
 }
 
 function isPlainIntegrationEntry(
-  value: unknown,
-): value is { id: string } & Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "id" in value &&
-    typeof (value as { id: unknown }).id === "string"
-  );
+  value: DocumentFields | IntegrationDefinition,
+): value is IntegrationDefinition & DocumentFields {
+  return "id" in value && Predicate.isString(value.id);
 }
 
 /**
@@ -157,16 +162,15 @@ function isPlainIntegrationEntry(
  * Prefers `onComplete` on the entry; otherwise uses a registered handler.
  */
 export async function runIntegrations(
-  integrations: readonly unknown[] | undefined,
+  integrations: readonly IntegrationInput<readonly AnyContent[]>[] | undefined,
   context: IntegrationRuntimeContext,
 ): Promise<void> {
   if (!integrations?.length) return;
 
   for (const configuredEntry of integrations) {
-    const entry =
-      typeof configuredEntry === "function"
-        ? configuredEntry()
-        : configuredEntry;
+    const entry = Predicate.isFunction(configuredEntry)
+      ? configuredEntry()
+      : configuredEntry;
 
     if (!isPlainIntegrationEntry(entry)) {
       throw new Error(
@@ -174,20 +178,19 @@ export async function runIntegrations(
       );
     }
 
-    const definition = entry as IntegrationDefinition & Record<string, unknown>;
-    if (typeof definition.onComplete === "function") {
-      await definition.onComplete(context);
+    if (Predicate.isFunction(entry.onComplete)) {
+      await entry.onComplete(context);
       continue;
     }
 
-    const handler = getIntegrationHandler(definition.id);
+    const handler = getIntegrationHandler(entry.id);
     if (!handler) {
       throw new Error(
-        `@anhur/core: unknown integration "${definition.id}". Import the package that registers it (e.g. \`import "@anhur/orama"\`), or use defineIntegration({ onComplete }).`,
+        `@anhur/core: unknown integration "${entry.id}". Import the package that registers it (e.g. \`import "@anhur/orama"\`), or use defineIntegration({ onComplete }).`,
       );
     }
 
-    const { id: _id, onComplete: _onComplete, ...options } = definition;
+    const { id: _id, onComplete: _onComplete, ...options } = entry;
     await handler.run(options, context);
   }
 }

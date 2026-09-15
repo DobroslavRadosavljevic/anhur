@@ -19,9 +19,11 @@ import {
 } from "../errors";
 import { findLoader, resolveLoaders } from "../loaders";
 import { validateWithSchema } from "../validate";
+import { isDocumentFields } from "../document-fields";
+import type { DocumentFields } from "../document-fields";
 
 export type CollectedDocument = {
-  data: Record<string, unknown>;
+  data: DocumentFields;
   _meta: ContentMeta;
 };
 
@@ -80,65 +82,70 @@ export class ContentCollector extends Context.Service<
     ) => Effect.Effect<CollectedDocument[], CollectError>;
   }
 >()("@anhur/core/ContentCollector") {
-  static readonly layer: Layer.Layer<
+  static get layer(): Layer.Layer<
     ContentCollector,
     never,
     FileSystem.FileSystem | Path.Path
-  > = Layer.effect(
+  > {
+    return createContentCollectorLayer();
+  }
+}
+
+function createContentCollectorLayer(): Layer.Layer<
+  ContentCollector,
+  never,
+  FileSystem.FileSystem | Path.Path
+> {
+  return Layer.effect(
     ContentCollector,
-    Effect.gen(function* () {
+    Effect.fn("makeContentCollector")(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
 
-      const globAbsolute = (
+      const globAbsolute = Effect.fn("globAbsolute")(function* (
         patterns: string[],
         options: { cwd: string; exclude?: string[] },
-      ): Effect.Effect<string[], PlatformError> =>
-        Effect.gen(function* () {
-          const matches = new Set<string>();
-          const exclude =
-            options.exclude && options.exclude.length > 0
-              ? options.exclude
-              : undefined;
+      ) {
+        const matches = new Set<string>();
+        const exclude =
+          options.exclude && options.exclude.length > 0
+            ? options.exclude
+            : undefined;
 
-          for (const pattern of patterns) {
-            const entries = yield* fs.glob(pattern, {
-              root: options.cwd,
-              exclude,
-            });
-            for (const entry of entries) {
-              matches.add(path.resolve(options.cwd, entry));
-            }
+        for (const pattern of patterns) {
+          const entries = yield* fs.glob(pattern, {
+            root: options.cwd,
+            exclude,
+          });
+          for (const entry of entries) {
+            matches.add(path.resolve(options.cwd, entry));
           }
+        }
 
-          return [...matches].sort();
-        });
+        return [...matches].sort();
+      });
 
-      const loadFile = (
+      const loadFile = Effect.fn("loadFile")(function* (
         filePath: string,
         config: AnhurConfig,
-      ): Effect.Effect<
-        { data: Record<string, unknown>; content?: string },
-        LoaderNotFoundError | LoaderFailedError | PlatformError
-      > =>
-        Effect.gen(function* () {
-          const loaders = resolveLoaders(config.loaders);
-          const loader = findLoader(filePath, loaders);
-          if (!loader) {
-            return yield* Effect.fail(new LoaderNotFoundError({ filePath }));
-          }
-          const raw = yield* fs.readFileString(filePath);
-          return yield* Effect.tryPromise({
-            try: async () => loader.load({ path: filePath, raw }),
-            catch: (cause) =>
-              new LoaderFailedError({
-                filePath,
-                detail: cause instanceof Error ? cause.message : String(cause),
-              }),
-          });
+      ) {
+        const loaders = resolveLoaders(config.loaders);
+        const loader = findLoader(filePath, loaders);
+        if (!loader) {
+          return yield* Effect.fail(new LoaderNotFoundError({ filePath }));
+        }
+        const raw = yield* fs.readFileString(filePath);
+        return yield* Effect.tryPromise({
+          try: async () => loader.load({ path: filePath, raw }),
+          catch: (cause) =>
+            new LoaderFailedError({
+              filePath,
+              detail: cause instanceof Error ? cause.message : String(cause),
+            }),
         });
+      });
 
-      const readAndValidate = (
+      const readAndValidate = Effect.fn("readAndValidate")(function* (
         filePath: string,
         id: string,
         schema: AnyCollection["schema"] | AnySingleton["schema"],
@@ -146,246 +153,236 @@ export class ContentCollector extends Context.Service<
         buildContext: BuildContext,
         sourceName: string,
         locale?: string,
-      ): Effect.Effect<
-        Record<string, unknown>,
-        | ValidationFailedError
-        | LoaderNotFoundError
-        | LoaderFailedError
-        | PlatformError
-      > =>
-        Effect.gen(function* () {
-          const loaded = yield* loadFile(filePath, config);
-          const input = {
-            ...loaded.data,
-            ...(loaded.content !== undefined
-              ? { content: loaded.content }
-              : {}),
-          };
-          const data = yield* validateWithSchema({
-            schema,
-            input,
-            filePath,
-            id,
-            config,
-            buildContext,
-            content: loaded.content,
-            sourceName,
-            locale,
-          });
-          return data as Record<string, unknown>;
+      ) {
+        const loaded = yield* loadFile(filePath, config);
+        const input: DocumentFields = { ...loaded.data };
+        if (loaded.content !== undefined) {
+          input.content = loaded.content;
+        }
+        const data = yield* validateWithSchema({
+          schema,
+          input,
+          filePath,
+          id,
+          config,
+          buildContext,
+          content: loaded.content,
+          sourceName,
+          locale,
         });
+        if (!isDocumentFields(data)) {
+          return yield* Effect.fail(
+            new ValidationFailedError({
+              filePath,
+              issues: [{ message: "schema output must be an object" }],
+            }),
+          );
+        }
+        return data;
+      });
 
-      const collectCollection = (
+      const collectCollection = Effect.fn("collectCollection")(function* (
         collection: AnyCollection,
         rootDir: string,
         config: AnhurConfig,
         buildContext: BuildContext,
-      ): Effect.Effect<CollectedDocument[], CollectError> =>
-        Effect.gen(function* () {
-          const localization = resolveLocalization(config, collection);
-          const baseDir = path.resolve(rootDir, collection.directory);
-          const include = toArray(collection.include);
-          const exclude = toArray(collection.exclude);
+      ) {
+        const localization = resolveLocalization(config, collection);
+        const baseDir = path.resolve(rootDir, collection.directory);
+        const include = toArray(collection.include);
+        const exclude = toArray(collection.exclude);
 
-          if (!localization) {
-            const files = yield* globAbsolute(include, {
-              cwd: baseDir,
-              exclude,
-            });
-            return yield* Effect.forEach(
-              files,
-              (filePath) =>
-                Effect.gen(function* () {
-                  const relativePath = toPosix(
-                    path.relative(baseDir, filePath),
-                    path,
-                  );
-                  const id = stripExtension(relativePath, path);
-                  const data = yield* readAndValidate(
-                    filePath,
-                    id,
-                    collection.schema,
-                    config,
-                    buildContext,
-                    collection.name,
-                  );
-                  const meta = {
-                    id,
-                    filePath,
-                    relativePath,
-                    extension: path.extname(filePath),
-                  } satisfies ContentMeta;
-                  return { data, _meta: meta } satisfies CollectedDocument;
-                }),
-              { concurrency: 1 },
-            );
-          }
-
-          yield* assertLocales(localization);
-
-          const perLocale = yield* Effect.forEach(
-            localization.locales,
-            (locale) =>
-              Effect.gen(function* () {
-                const localeDir = path.join(baseDir, locale);
-                const files = yield* globAbsolute(include, {
-                  cwd: localeDir,
-                  exclude,
-                });
-
-                return yield* Effect.forEach(
-                  files,
-                  (filePath) =>
-                    Effect.gen(function* () {
-                      const relativeInLocale = toPosix(
-                        path.relative(localeDir, filePath),
-                        path,
-                      );
-                      const relativePath = toPosix(
-                        path.relative(baseDir, filePath),
-                        path,
-                      );
-                      const id = stripExtension(relativeInLocale, path);
-                      const data = yield* readAndValidate(
-                        filePath,
-                        id,
-                        collection.schema,
-                        config,
-                        buildContext,
-                        collection.name,
-                        locale,
-                      );
-                      const meta = {
-                        id,
-                        filePath,
-                        relativePath,
-                        extension: path.extname(filePath),
-                        locale,
-                      } satisfies ContentMeta;
-                      return { data, _meta: meta } satisfies CollectedDocument;
-                    }),
-                  { concurrency: 1 },
-                );
-              }),
+        if (!localization) {
+          const files = yield* globAbsolute(include, {
+            cwd: baseDir,
+            exclude,
+          });
+          return yield* Effect.forEach(
+            files,
+            Effect.fn("collectCollectionFile")(function* (filePath: string) {
+              const relativePath = toPosix(
+                path.relative(baseDir, filePath),
+                path,
+              );
+              const id = stripExtension(relativePath, path);
+              const data = yield* readAndValidate(
+                filePath,
+                id,
+                collection.schema,
+                config,
+                buildContext,
+                collection.name,
+              );
+              const meta = {
+                id,
+                filePath,
+                relativePath,
+                extension: path.extname(filePath),
+              } satisfies ContentMeta;
+              return { data, _meta: meta } satisfies CollectedDocument;
+            }),
             { concurrency: 1 },
           );
+        }
 
-          return perLocale.flat();
-        });
+        yield* assertLocales(localization);
 
-      const collectSingleton = (
+        const perLocale = yield* Effect.forEach(
+          localization.locales,
+          Effect.fn("collectCollectionLocale")(function* (locale: string) {
+            const localeDir = path.join(baseDir, locale);
+            const files = yield* globAbsolute(include, {
+              cwd: localeDir,
+              exclude,
+            });
+
+            return yield* Effect.forEach(
+              files,
+              Effect.fn("collectCollectionLocaleFile")(function* (
+                filePath: string,
+              ) {
+                const relativeInLocale = toPosix(
+                  path.relative(localeDir, filePath),
+                  path,
+                );
+                const relativePath = toPosix(
+                  path.relative(baseDir, filePath),
+                  path,
+                );
+                const id = stripExtension(relativeInLocale, path);
+                const data = yield* readAndValidate(
+                  filePath,
+                  id,
+                  collection.schema,
+                  config,
+                  buildContext,
+                  collection.name,
+                  locale,
+                );
+                const meta = {
+                  id,
+                  filePath,
+                  relativePath,
+                  extension: path.extname(filePath),
+                  locale,
+                } satisfies ContentMeta;
+                return { data, _meta: meta } satisfies CollectedDocument;
+              }),
+              { concurrency: 1 },
+            );
+          }),
+          { concurrency: 1 },
+        );
+
+        return perLocale.flat();
+      });
+
+      const collectSingleton = Effect.fn("collectSingleton")(function* (
         singleton: AnySingleton,
         rootDir: string,
         config: AnhurConfig,
         buildContext: BuildContext,
-      ): Effect.Effect<CollectedDocument[], CollectError> =>
-        Effect.gen(function* () {
-          const localization = resolveLocalization(config, singleton);
+      ) {
+        const localization = resolveLocalization(config, singleton);
 
-          if (!localization) {
-            const filePath = path.resolve(rootDir, singleton.filePath!);
-            const exists = yield* fs.exists(filePath);
+        if (!localization) {
+          const filePath = path.resolve(rootDir, singleton.filePath!);
+          const exists = yield* fs.exists(filePath);
 
-            if (!exists) {
-              if (singleton.optional) return [];
-              return yield* Effect.fail(
-                new SingletonMissingError({
-                  name: singleton.name,
-                  path: filePath,
-                }),
-              );
-            }
-
-            const id = singleton.name;
-            const data = yield* readAndValidate(
-              filePath,
-              id,
-              singleton.schema,
-              config,
-              buildContext,
-              singleton.name,
-            );
-            const meta = {
-              id,
-              filePath,
-              relativePath: toPosix(path.basename(filePath), path),
-              extension: path.extname(filePath),
-            } satisfies ContentMeta;
-            return [{ data, _meta: meta } satisfies CollectedDocument];
-          }
-
-          yield* assertLocales(localization);
-
-          if (!singleton.directory) {
+          if (!exists) {
+            if (singleton.optional) return [];
             return yield* Effect.fail(
-              new LocalizationConfigError({
-                detail: `Singleton "${singleton.name}" requires directory.`,
+              new SingletonMissingError({
+                name: singleton.name,
+                path: filePath,
               }),
             );
           }
 
-          const baseDir = path.resolve(rootDir, singleton.directory);
-          const include = toArray(singleton.include ?? "index.{md,mdx}");
-          const docs: CollectedDocument[] = [];
+          const id = singleton.name;
+          const data = yield* readAndValidate(
+            filePath,
+            id,
+            singleton.schema,
+            config,
+            buildContext,
+            singleton.name,
+          );
+          const meta = {
+            id,
+            filePath,
+            relativePath: toPosix(path.basename(filePath), path),
+            extension: path.extname(filePath),
+          } satisfies ContentMeta;
+          return [{ data, _meta: meta } satisfies CollectedDocument];
+        }
 
-          for (const locale of localization.locales) {
-            const localeDir = path.join(baseDir, locale);
-            const files = yield* globAbsolute(include, { cwd: localeDir });
+        yield* assertLocales(localization);
 
-            if (files.length === 0) {
-              if (
-                locale === localization.defaultLocale &&
-                !singleton.optional
-              ) {
-                return yield* Effect.fail(
-                  new SingletonMissingError({
-                    name: singleton.name,
-                    path: `${localeDir} (include: ${include.join(", ")})`,
-                  }),
-                );
-              }
-              continue;
-            }
+        if (!singleton.directory) {
+          return yield* Effect.fail(
+            new LocalizationConfigError({
+              detail: `Singleton "${singleton.name}" requires directory.`,
+            }),
+          );
+        }
 
-            if (files.length > 1) {
+        const baseDir = path.resolve(rootDir, singleton.directory);
+        const include = toArray(singleton.include ?? "index.{md,mdx}");
+        const docs: CollectedDocument[] = [];
+
+        for (const locale of localization.locales) {
+          const localeDir = path.join(baseDir, locale);
+          const files = yield* globAbsolute(include, { cwd: localeDir });
+
+          if (files.length === 0) {
+            if (locale === localization.defaultLocale && !singleton.optional) {
               return yield* Effect.fail(
-                new SingletonAmbiguousError({
+                new SingletonMissingError({
                   name: singleton.name,
-                  locale,
-                  files,
+                  path: `${localeDir} (include: ${include.join(", ")})`,
                 }),
               );
             }
-
-            const filePath = files[0]!;
-            const relativePath = toPosix(
-              path.relative(baseDir, filePath),
-              path,
-            );
-            const id = singleton.name;
-            const data = yield* readAndValidate(
-              filePath,
-              id,
-              singleton.schema,
-              config,
-              buildContext,
-              singleton.name,
-              locale,
-            );
-            const meta = {
-              id,
-              filePath,
-              relativePath,
-              extension: path.extname(filePath),
-              locale,
-            } satisfies ContentMeta;
-            docs.push({ data, _meta: meta });
+            continue;
           }
 
-          return docs;
-        });
+          if (files.length > 1) {
+            return yield* Effect.fail(
+              new SingletonAmbiguousError({
+                name: singleton.name,
+                locale,
+                files,
+              }),
+            );
+          }
+
+          const filePath = files[0]!;
+          const relativePath = toPosix(path.relative(baseDir, filePath), path);
+          const id = singleton.name;
+          const data = yield* readAndValidate(
+            filePath,
+            id,
+            singleton.schema,
+            config,
+            buildContext,
+            singleton.name,
+            locale,
+          );
+          const meta = {
+            id,
+            filePath,
+            relativePath,
+            extension: path.extname(filePath),
+            locale,
+          } satisfies ContentMeta;
+          docs.push({ data, _meta: meta });
+        }
+
+        return docs;
+      });
 
       return ContentCollector.of({ collectCollection, collectSingleton });
-    }),
+    })(),
   );
 }

@@ -8,21 +8,19 @@ import {
 import { TransformFailedError } from "./errors";
 import { isSkippedSignal } from "./skip";
 import { Effect } from "effect";
+import { isDocumentFields } from "./document-fields";
 
 type TransformSource = TransformableSource & {
   source: AnyContent;
 };
 
-export function applyDocumentTransforms(
-  built: TransformSource[],
-): Effect.Effect<void, TransformFailedError> {
-  const context = createTransformContext(built);
+export const applyDocumentTransforms = Effect.fn("applyDocumentTransforms")(
+  function* (built: TransformSource[]) {
+    const context = createTransformContext(built);
 
-  return Effect.gen(function* () {
     for (const item of built) {
-      const transform = item.source.transform as DocumentTransform | undefined;
+      const transform: DocumentTransform | undefined = item.source.transform;
       if (!transform) {
-        // Still honor draft: true without a custom transform
         item.documents = item.documents.filter(
           (doc) => doc.data.draft !== true,
         );
@@ -51,10 +49,13 @@ export function applyDocumentTransforms(
               if (nextData.draft === true) {
                 return { skipped: true as const, reason: "draft" };
               }
+              if (!isDocumentFields(nextData)) {
+                throw new Error("transform must return a document object");
+              }
               return {
                 skipped: false as const,
                 doc: {
-                  data: nextData as Record<string, unknown>,
+                  data: nextData,
                   _meta: nextMeta,
                 },
               };
@@ -68,14 +69,9 @@ export function applyDocumentTransforms(
         { concurrency: 1 },
       );
 
-      item.documents = nextDocs
-        .filter((row) => !row.skipped)
-        .map((row) => {
-          if (row.skipped) {
-            throw new Error("unreachable");
-          }
-          return row.doc;
-        });
+      item.documents = nextDocs.flatMap((row) =>
+        row.skipped ? [] : [row.doc],
+      );
     }
-  });
-}
+  },
+);

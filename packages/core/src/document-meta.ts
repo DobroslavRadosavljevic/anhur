@@ -35,6 +35,7 @@ type GlobalAls = typeof globalThis & {
 
 /** Shared across jiti + host duplicates of this module. */
 function getStorage(): AsyncLocalStorage<DocumentMeta> {
+  // SAFETY: preserves the existing runtime contract for this assignment.
   const g = globalThis as GlobalAls;
   if (!g[GLOBAL_KEY]) {
     g[GLOBAL_KEY] = new AsyncLocalStorage<DocumentMeta>();

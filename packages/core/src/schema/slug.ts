@@ -20,6 +20,10 @@ export type SlugOptions = {
 
 const DEFAULT_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+function isPresentSlug(value: string | undefined): value is string {
+  return value !== undefined && value.length > 0;
+}
+
 function deriveSlug(options: SlugOptions): string {
   const meta = getDocumentMeta();
   let base =
@@ -66,10 +70,7 @@ export function slug(options: SlugOptions = {}) {
     .string()
     .optional()
     .transform((value, ctx) => {
-      const resolved =
-        typeof value === "string" && value.length > 0
-          ? value
-          : deriveSlug(options);
+      const resolved = isPresentSlug(value) ? value : deriveSlug(options);
 
       if (!resolved) {
         ctx.addIssue({

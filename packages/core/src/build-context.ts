@@ -10,13 +10,23 @@ import { findProcessor, type ProcessorPlugin } from "./processors";
 /** Well-known id for `@anhur/assets` `assets()` processor. */
 export const ASSETS_PROCESSOR_ID = "assets";
 
+/** files-sdk upload may resolve void or an object with ETag / size. */
+export type AssetUploadResult = void | {
+  key?: string;
+  size?: number;
+  contentType?: string;
+  etag?: string;
+  lastModified?: number;
+  skipped?: boolean;
+};
+
 /** Minimal files-sdk-compatible client used for upload / exists / list / delete. */
 export type AssetStorageClient = {
   upload(
     key: string,
     body: Uint8Array | string,
     opts?: { cacheControl?: string; contentType?: string },
-  ): Promise<unknown>;
+  ): Promise<AssetUploadResult>;
   exists(key: string): Promise<boolean>;
   /**
    * Delete one key or many. files-sdk bulk delete returns
@@ -25,7 +35,7 @@ export type AssetStorageClient = {
    */
   delete(key: string | string[]): Promise<void | {
     deleted?: string[];
-    errors?: Array<{ key: string; error: unknown }>;
+    errors?: Array<{ key: string; error: Error }>;
   }>;
   listAll(opts?: { prefix?: string }): AsyncIterable<{ key: string }>;
 };
@@ -150,6 +160,7 @@ type GlobalAls = typeof globalThis & {
 };
 
 function getStorage(): AsyncLocalStorage<BuildContext> {
+  // SAFETY: preserves the existing runtime contract for this assignment.
   const g = globalThis as GlobalAls;
   if (!g[GLOBAL_KEY]) {
     g[GLOBAL_KEY] = new AsyncLocalStorage<BuildContext>();
@@ -164,6 +175,7 @@ export function resolveAssetsConfig(
 ): ResolvedAssetsConfig | undefined {
   const plugin = findProcessor(config.processors, ASSETS_PROCESSOR_ID);
   if (!plugin) return undefined;
+  // SAFETY: assets() processor options are validated when the plugin is registered.
   const options = (plugin.options ?? {}) as AssetsProcessorOptions;
   const dir = path.resolve(configDir, options.dir ?? ".anhur/assets");
   const configuredBase = options.base ?? "/anhur-assets/";

@@ -8,6 +8,9 @@
     ".": "./src/index.ts"
   },
   "files": ["src"],
+  "dependencies": {
+    "bellona": "0.4.7"
+  },
   "peerDependencies": {
     "oxlint": "^1.83.0"
   },

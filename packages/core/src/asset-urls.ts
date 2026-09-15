@@ -64,13 +64,18 @@ export function joinPublicAssetBase(
   return joinPathBases(app, assets);
 }
 
+export type PublicAndLocalAssetBases = {
+  readonly publicBase: string;
+  readonly localBase?: string;
+};
+
 export function resolvePublicAndLocalAssetBases(
   configuredAssetsBase: string,
   appBase?: string,
-): { publicBase: string; localBase: string | undefined } {
+): PublicAndLocalAssetBases {
   const configured = normalizeLocalAssetBase(configuredAssetsBase);
   if (isRemoteAssetBase(configured)) {
-    return { publicBase: configured, localBase: undefined };
+    return { publicBase: configured };
   }
 
   const publicBase = joinPublicAssetBase(appBase, configured);

@@ -3,4 +3,5 @@ import base from "@anhur/oxlint";
 
 export default defineConfig({
   extends: [base],
+  ignorePatterns: ["**/components/ui/**"],
 });

@@ -8,7 +8,9 @@ import {
 import { Button, buttonVariants } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
-export function DefaultCatchBoundary({ error }: ErrorComponentProps) {
+type DefaultCatchBoundaryProps = ErrorComponentProps;
+
+export function DefaultCatchBoundary({ error }: DefaultCatchBoundaryProps) {
   const router = useRouter();
   const isRoot = useLocation({
     select: (location) => location.pathname === "/",

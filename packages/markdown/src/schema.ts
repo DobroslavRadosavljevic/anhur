@@ -28,6 +28,17 @@ export function markdown(
 
 export type MarkdownFieldOptions = MarkdownProcessorOptions;
 
+function isMarkdownProcessorOptions<T>(
+  options: T,
+): options is T & MarkdownProcessorOptions {
+  return typeof options === "object" && options !== null;
+}
+
+function readMarkdownProcessorOptions<T>(options: T): MarkdownProcessorOptions {
+  if (!isMarkdownProcessorOptions(options)) return {};
+  return options;
+}
+
 /**
  * Field helper: compile body (or string field) to HTML.
  * Requires `markdown(...)` in `defineConfig({ processors })`.
@@ -47,7 +58,7 @@ function markdownField(fieldOptions: MarkdownFieldOptions = {}) {
         );
       }
 
-      const registered = plugin.options as MarkdownProcessorOptions;
+      const registered = readMarkdownProcessorOptions(plugin.options);
       const source = value ?? meta.content ?? "";
       if (source.length === 0) {
         throw new Error(`Markdown content is empty (${meta.path})`);

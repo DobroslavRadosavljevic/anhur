@@ -20,6 +20,7 @@ const posts = defineCollection({
     return { ...doc, tagged: true };
   },
   onSuccess: async (docs) => {
+    // SAFETY: preserves the existing runtime contract for this assignment.
     (globalThis as { __anhurOnSuccess?: number }).__anhurOnSuccess =
       docs.length;
   },
@@ -36,6 +37,7 @@ export default defineConfig({
     }
   },
   complete: async (sources) => {
+    // SAFETY: test complete hook records document count on globalThis.
     (globalThis as { __anhurComplete?: number }).__anhurComplete =
       sources.reduce((n, s) => n + s.documents.length, 0);
   },

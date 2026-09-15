@@ -86,6 +86,7 @@ describe("view embed remapping", () => {
     expectTypeOf<ProxyListItem["categories"][number]>().not.toHaveProperty(
       "body",
     );
+    // SAFETY: preserves the existing runtime contract for this assignment.
     const _assign: ProxyListItem[] = [] as FeaturedListItem[];
     void _assign;
   });

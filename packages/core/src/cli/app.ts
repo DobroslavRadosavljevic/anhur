@@ -8,6 +8,7 @@ import { formatAnhurError } from "../errors";
 import { layer as nodeLiveLayer } from "../layers/node-live";
 import { packageVersion } from "../package-version";
 import { watchEffect } from "../watch";
+import { runEffectPromise } from "./run-effect";
 
 const projectFlags = {
   root: Flag.Directory("root", { mustExist: true }).pipe(
@@ -26,23 +27,26 @@ function countDocuments(result: BuildResult): number {
   return result.built.reduce((n, item) => n + item.documents.length, 0);
 }
 
-function logBuildSummary(kind: "built" | "rebuilt", result: BuildResult) {
-  return Effect.gen(function* () {
-    yield* Console.log(
-      `anhur: ${kind} ${countDocuments(result)} document(s) → ${result.outputDir}`,
-    );
-    if (result.assetsStorage) {
-      for (const line of formatAssetsStorageLogLines(result.assetsStorage, {
-        prefix: "anhur:   ",
-      })) {
-        yield* Console.log(line);
-      }
+const logBuildSummary = Effect.fn("logBuildSummary")(function* (
+  kind: "built" | "rebuilt",
+  result: BuildResult,
+) {
+  yield* Console.log(
+    `anhur: ${kind} ${countDocuments(result)} document(s) → ${result.outputDir}`,
+  );
+  if (result.assetsStorage) {
+    for (const line of formatAssetsStorageLogLines(result.assetsStorage, {
+      prefix: "anhur:   ",
+    })) {
+      yield* Console.log(line);
     }
-  });
-}
+  }
+});
 
-const build = Command.make("build", projectFlags, (config) =>
-  Effect.gen(function* () {
+const build = Command.make(
+  "build",
+  projectFlags,
+  Effect.fn("buildCommand")(function* (config) {
     const rootDir = path.resolve(config.root);
     const result = yield* buildEffect({
       rootDir,
@@ -52,39 +56,36 @@ const build = Command.make("build", projectFlags, (config) =>
   }),
 ).pipe(Command.withDescription("Collect content and write .anhur/generated"));
 
-const watch = Command.make("watch", projectFlags, (config) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const rootDir = path.resolve(config.root);
-      yield* Console.log(`anhur: watching ${rootDir} (${config.config})`);
+const watch = Command.make(
+  "watch",
+  projectFlags,
+  Effect.fn("watchCommand")(function* (config) {
+    const rootDir = path.resolve(config.root);
+    yield* Console.log(`anhur: watching ${rootDir} (${config.config})`);
 
-      yield* Effect.acquireRelease(
-        watchEffect(
-          { rootDir, configPath: config.config },
-          {
-            onBuild(result) {
-              return Effect.runPromise(logBuildSummary("rebuilt", result));
-            },
-            onError(error) {
-              return Effect.runPromise(
-                Console.error(
-                  `anhur: ${
-                    error instanceof Error
-                      ? error.message
-                      : formatAnhurError(error)
-                  }`,
-                ),
-              );
-            },
+    yield* Effect.acquireRelease(
+      watchEffect(
+        { rootDir, configPath: config.config },
+        {
+          onBuild(result) {
+            return runEffectPromise(logBuildSummary("rebuilt", result));
           },
-        ),
-        (controller) => Effect.promise(() => controller.close()),
-      );
+          onError(error) {
+            return runEffectPromise(
+              Console.error(`anhur: ${formatAnhurError(error)}`),
+            );
+          },
+        },
+      ),
+      (controller) =>
+        Effect.tryPromise({
+          try: () => controller.close(),
+          catch: () => new Error("Failed to close the Anhur watch controller"),
+        }).pipe(Effect.orDie),
+    );
 
-      // Keep the process alive until SIGINT / SIGTERM (NodeRuntime).
-      yield* Effect.never;
-    }),
-  ),
+    yield* Effect.never;
+  }, Effect.scoped),
 ).pipe(Command.withDescription("Rebuild on content or config changes"));
 
 /**

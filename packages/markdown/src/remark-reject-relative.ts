@@ -1,4 +1,5 @@
 import type { Root } from "mdast";
+import type { Node } from "unist";
 import type { Plugin } from "unified";
 import { visit } from "unist-util-visit";
 import {
@@ -24,14 +25,31 @@ function isRelativeAssetUrl(value: string): boolean {
   );
 }
 
-type UrlHolder = { url?: string };
 type JsxAttribute = {
   type: string;
   name?: string;
   value?: string | null;
 };
+
 type JsxElement = { attributes?: JsxAttribute[] };
-type HtmlNode = { value?: string };
+
+function hasStringUrl(node: Node): node is Node & { url: string } {
+  if (!("url" in node)) return false;
+  return typeof node.url === "string";
+}
+
+function hasStringValue(node: Node): node is Node & { value: string } {
+  if (!("value" in node)) return false;
+  return typeof node.value === "string";
+}
+
+function isJsxElement(node: Node): node is Node & JsxElement {
+  return "attributes" in node;
+}
+
+function isStringAttrValue(value: JsxAttribute["value"]): value is string {
+  return typeof value === "string";
+}
 
 /**
  * Fail when relative body asset URLs appear without an assets() processor.
@@ -41,21 +59,19 @@ export const remarkRejectRelativeLinkedFiles: Plugin<[], Root> = () => {
     const documentPath = file.path ?? "(unknown file)";
     const found: string[] = [];
 
-    visit(tree, (node) => {
-      const type = node.type as string;
+    visit(tree, (node: Node) => {
+      const type = node.type;
 
       if (type === "link" || type === "image" || type === "definition") {
-        const n = node as UrlHolder;
-        if (typeof n.url === "string" && isRelativeAssetUrl(n.url)) {
-          found.push(n.url);
+        if (hasStringUrl(node) && isRelativeAssetUrl(node.url)) {
+          found.push(node.url);
         }
         return;
       }
 
       if (type === "html") {
-        const n = node as HtmlNode;
-        if (typeof n.value === "string") {
-          for (const url of collectHtmlAssetUrls(n.value)) {
+        if (hasStringValue(node)) {
+          for (const url of collectHtmlAssetUrls(node.value)) {
             if (isRelativeAssetUrl(url)) found.push(url);
           }
         }
@@ -63,11 +79,11 @@ export const remarkRejectRelativeLinkedFiles: Plugin<[], Root> = () => {
       }
 
       if (type === "mdxJsxFlowElement" || type === "mdxJsxTextElement") {
-        const el = node as unknown as JsxElement;
-        for (const attr of el.attributes ?? []) {
+        if (!isJsxElement(node)) return;
+        for (const attr of node.attributes ?? []) {
           if (attr.type !== "mdxJsxAttribute") continue;
           if (!attr.name || !isLinkedAssetAttrName(attr.name)) continue;
-          if (typeof attr.value !== "string") continue;
+          if (!isStringAttrValue(attr.value)) continue;
           if (isSrcsetAttrName(attr.name)) {
             for (const url of collectSrcsetUrls(attr.value)) {
               if (isRelativeAssetUrl(url)) found.push(url);

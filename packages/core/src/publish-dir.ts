@@ -1,5 +1,19 @@
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { Predicate } from "effect";
+
+type NodeErrno = {
+  readonly code: string;
+};
+
+function isNodeErrno(cause: unknown): cause is NodeErrno {
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    Predicate.isString(cause.code)
+  );
+}
 
 /**
  * Atomically replace `liveDir` with the contents of `stagingDir`.
@@ -30,11 +44,7 @@ export async function publishStagingDirectory(
     await stat(live);
     await rename(live, prev);
   } catch (error) {
-    const code =
-      error && typeof error === "object" && "code" in error
-        ? (error as { code?: string }).code
-        : undefined;
-    if (code !== "ENOENT") throw error;
+    if (!isNodeErrno(error) || error.code !== "ENOENT") throw error;
   }
 
   try {

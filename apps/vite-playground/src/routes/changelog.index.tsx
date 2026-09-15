@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useLoaderData } from "@tanstack/react-router";
 import { allChangelogs, getChangelog } from "anhur/generated";
 import { FeatureBadges } from "~/components/feature-badges";
 import { Badge } from "~/components/ui/badge";
@@ -23,7 +23,7 @@ export const Route = createFileRoute("/changelog/")({
 });
 
 function ChangelogPage() {
-  const { entries } = Route.useLoaderData();
+  const { entries } = useLoaderData({ from: "/changelog/" });
 
   return (
     <div className="space-y-6">

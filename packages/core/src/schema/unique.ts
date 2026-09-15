@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { DocumentFields } from "../document-fields";
 import { getBuildContext } from "../build-context";
 import { getDocumentMeta } from "../document-meta";
 
@@ -13,12 +14,15 @@ export type UniqueOptions = {
   group?: string;
 };
 
-function isDraftInput(input: unknown): boolean {
+function isDraftInput(input: unknown): input is DocumentFields & {
+  draft: true;
+} {
   return (
     input !== null &&
     typeof input === "object" &&
     !Array.isArray(input) &&
-    (input as { draft?: unknown }).draft === true
+    "draft" in input &&
+    input.draft === true
   );
 }
 

@@ -4,21 +4,45 @@ import type { Plugin } from "vite";
 import { relativeAssetRequestPath } from "@anhur/core";
 import { anhur, resolveServedAssetPath } from "../../src/index";
 
+type AnhurViteConfigPatch = {
+  resolve?: { alias?: Record<string, string> };
+  optimizeDeps?: { exclude?: string[] };
+};
+
+function hasConfigHook<T>(plugin: T): plugin is T &
+  Plugin & {
+    config: (
+      config: { root?: string },
+      env: { command: "serve" | "build"; mode: string },
+    ) => Promise<AnhurViteConfigPatch> | AnhurViteConfigPatch;
+  } {
+  return (
+    typeof plugin === "object" &&
+    plugin !== null &&
+    "config" in plugin &&
+    typeof plugin.config === "function"
+  );
+}
+
 const fixturesRoot = path.join(import.meta.dirname, "../fixtures");
 
 describe("anhur vite plugin", () => {
   it("exposes plugin name", () => {
-    const plugin = anhur() as Plugin;
+    const plugin = anhur();
     expect(plugin.name).toBe("anhur");
   });
 
   it("aliases anhur/generated to .anhur/generated under root", async () => {
     const root = path.join(fixturesRoot, "basic");
-    const plugin = anhur() as Plugin & {
-      config: (config: { root?: string }) => Promise<Record<string, unknown>>;
-    };
+    const plugin = anhur();
+    if (!hasConfigHook(plugin)) {
+      throw new Error("expected config hook");
+    }
 
-    const patch = await plugin.config({ root });
+    const patch = await plugin.config(
+      { root },
+      { command: "serve", mode: "development" },
+    );
 
     expect(patch.resolve).toMatchObject({
       alias: {

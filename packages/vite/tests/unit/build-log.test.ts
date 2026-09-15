@@ -3,20 +3,24 @@ import { describe, expect, it } from "vitest";
 import type { BuildResult } from "@anhur/core";
 import { formatAnhurBuildLog } from "../../src/build-log";
 
+function isBuildResult<T>(value: T): value is T & BuildResult {
+  return typeof value === "object" && value !== null && "built" in value;
+}
+
 function fakeResult(
   sources: Array<{ name: string; ids: string[]; locales?: string[] }>,
   outputDir: string,
 ): BuildResult {
-  return {
+  const fixture = {
     outputDir,
     configPath: path.join(path.dirname(outputDir), "..", "anhur.config.ts"),
-    config: { content: [] } as BuildResult["config"],
+    config: { content: [] },
     emittedAssetSources: [],
     built: sources.map((source) => ({
       source: {
-        type: "collection",
+        type: "collection" as const,
         name: source.name,
-      } as BuildResult["built"][number]["source"],
+      },
       documents: source.ids.map((id, index) => ({
         data: {},
         _meta: {
@@ -29,6 +33,10 @@ function fakeResult(
       })),
     })),
   };
+  if (!isBuildResult(fixture)) {
+    throw new Error("expected BuildResult fixture");
+  }
+  return fixture;
 }
 
 describe("formatAnhurBuildLog", () => {

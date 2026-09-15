@@ -49,6 +49,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.1.2",
+    "bellona": "0.4.7",
     "nitro": "3.0.260311-beta",
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",

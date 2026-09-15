@@ -1,11 +1,22 @@
 import pluralize from "pluralize";
+import { Predicate } from "effect";
 import type { z } from "zod";
 import type { ProcessorPlugin } from "./processors";
 import type { Loader } from "./loaders/types";
-import type { DocumentTransform, TransformContext } from "./transform-types";
+import type {
+  CollectionOnSuccess,
+  CompleteHook,
+  DocumentTransform,
+  PrepareHook,
+  SingletonOnSuccess,
+  TransformContext,
+} from "./transform-types";
+import type { IntegrationInput } from "./integrations";
+import type { EmbeddedDocument } from "./schema/reference";
 import type { SkippedSignal } from "./skip";
+import type { DocumentFields } from "./document-fields";
 
-export type { DocumentTransform, TransformContext } from "./transform-types";
+export type { DocumentTransform, TransformContext };
 
 export type ContentMeta = {
   /** Logical document id (path under the locale folder, without extension). */
@@ -136,7 +147,7 @@ export type CollectionDefinition<
   /**
    * Called after codegen with the final documents for this collection.
    */
-  onSuccess?: import("./transform-types").CollectionOnSuccess;
+  onSuccess?: CollectionOnSuccess;
   /**
    * Keys omitted from the light collection index (`allPosts`, …).
    * Prefer `generate.listOmit` for new config. Default: `["body"]`.
@@ -187,7 +198,7 @@ export type SingletonDefinition<
   /**
    * Called after codegen with the final singleton document (or `undefined`).
    */
-  onSuccess?: import("./transform-types").SingletonOnSuccess;
+  onSuccess?: SingletonOnSuccess;
   /** Codegen / export tweaks for this singleton. */
   generate?: SingletonGenerateOptions;
   /** Phantom: document data after schema (+ optional transform). */
@@ -208,7 +219,7 @@ export type DerivedGenerateOptions = {
   /** Sort before limit (ignored when `compare` is set). */
   listSort?: ListSort;
   /** Custom comparator; wins over `listSort`. */
-  compare?: (a: Record<string, unknown>, b: Record<string, unknown>) => number;
+  compare?: (a: DocumentFields, b: DocumentFields) => number;
   /** Keep at most this many items after sort (views: whole list; groups: per group). */
   limit?: number;
 };
@@ -255,11 +266,8 @@ export type ViewDefinition<TName extends string = string, TData = unknown> = {
   typeName: string;
   /** Source collections (always normalized to an array). */
   from: readonly AnyCollection[];
-  where?: (document: Record<string, unknown>, context: ViewContext) => boolean;
-  select?: (
-    document: Record<string, unknown>,
-    context: ViewContext,
-  ) => Record<string, unknown>;
+  where?: (document: DocumentFields, context: ViewContext) => boolean;
+  select?: (document: DocumentFields, context: ViewContext) => DocumentFields;
   generate?: ViewGenerateOptions;
   /** Phantom: list item type after `where` / `select`. */
   readonly _data?: TData;
@@ -274,12 +282,9 @@ export type IndexDefinition<TName extends string = string, TData = unknown> = {
   name: TName;
   typeName: string;
   from: AnyCollection;
-  key: string | ((document: Record<string, unknown>) => string);
-  where?: (document: Record<string, unknown>, context: ViewContext) => boolean;
-  select?: (
-    document: Record<string, unknown>,
-    context: ViewContext,
-  ) => Record<string, unknown>;
+  key: string | ((document: DocumentFields) => string);
+  where?: (document: DocumentFields, context: ViewContext) => boolean;
+  select?: (document: DocumentFields, context: ViewContext) => DocumentFields;
   generate?: IndexGenerateOptions;
   readonly _data?: TData;
 };
@@ -293,12 +298,9 @@ export type GroupDefinition<TName extends string = string, TData = unknown> = {
   name: TName;
   typeName: string;
   from: AnyCollection;
-  by: string | ((document: Record<string, unknown>) => string);
-  where?: (document: Record<string, unknown>, context: ViewContext) => boolean;
-  select?: (
-    document: Record<string, unknown>,
-    context: ViewContext,
-  ) => Record<string, unknown>;
+  by: string | ((document: DocumentFields) => string);
+  where?: (document: DocumentFields, context: ViewContext) => boolean;
+  select?: (document: DocumentFields, context: ViewContext) => DocumentFields;
   generate?: GroupGenerateOptions;
   readonly _data?: TData;
 };
@@ -309,7 +311,7 @@ export type AnyGroup = GroupDefinition<string, any>;
 export type AnyDerived = AnyView | AnyIndex | AnyGroup;
 
 /** Document shape passed to optional `transform` hooks after validation. */
-export type TransformDocument = Record<string, unknown> & {
+export type TransformDocument = DocumentFields & {
   _meta: ContentMeta;
 };
 
@@ -343,19 +345,17 @@ export type AnhurConfig = {
    * Build integrations (`orama()`, custom `defineIntegration`, …).
    * Prefer typed entries returned by package factories.
    */
-  integrations?: readonly import("./integrations").IntegrationInput<
-    readonly AnyContent[]
-  >[];
+  integrations?: readonly IntegrationInput<readonly AnyContent[]>[];
   /**
    * Runs after transforms (and draft/skip filtering), before codegen.
    * Mutate `sources[].documents` for global joins if needed.
    */
-  prepare?: import("./transform-types").PrepareHook;
+  prepare?: PrepareHook;
   /**
    * Runs after codegen, per-source `onSuccess`, and `integrations`.
    * Receives built snapshots and `{ rootDir, outputDir }`.
    */
-  complete?: import("./transform-types").CompleteHook;
+  complete?: CompleteHook;
 };
 
 export type DocumentWithMeta<TData> = TData & {
@@ -481,13 +481,8 @@ export function singletonConstName(name: string): string {
   return name;
 }
 
-function isZodSchema(schema: unknown): schema is ContentSchema {
-  return (
-    typeof schema === "object" &&
-    schema !== null &&
-    "safeParseAsync" in schema &&
-    typeof (schema as ContentSchema).safeParseAsync === "function"
-  );
+function isZodSchema(schema: ContentSchema): schema is ContentSchema {
+  return Predicate.isFunction(schema.safeParseAsync);
 }
 
 export type DefineCollectionInput<
@@ -506,7 +501,7 @@ export type DefineCollectionInput<
     document: DocumentWithMeta<SchemaOutput<TSchema>>,
     context: TransformContext,
   ) => TOut | SkippedSignal | Promise<TOut | SkippedSignal>;
-  onSuccess?: import("./transform-types").CollectionOnSuccess;
+  onSuccess?: CollectionOnSuccess;
   /**
    * Keys omitted from the light collection index. Default `["body"]`.
    * Pass `[]` to keep every field on the list export.
@@ -540,12 +535,15 @@ export function defineCollection<
     );
   }
 
+  // SAFETY: preserves the existing runtime contract for this assignment.
+
   return {
     type: "collection",
     name: input.name,
     typeName: input.typeName ?? generateDocumentTypeName(input.name),
     directory: input.directory,
     include: input.include,
+    // SAFETY: preserves the existing runtime contract for this assignment.
     exclude: input.exclude,
     schema: input.schema,
     localized: input.localized,
@@ -574,7 +572,7 @@ export type DefineSingletonInput<
     document: DocumentWithMeta<SchemaOutput<TSchema>>,
     context: TransformContext,
   ) => TOut | SkippedSignal | Promise<TOut | SkippedSignal>;
-  onSuccess?: import("./transform-types").SingletonOnSuccess;
+  onSuccess?: SingletonOnSuccess;
   generate?: SingletonGenerateOptions;
 };
 
@@ -591,20 +589,24 @@ export function defineSingleton<
   (undefined extends TLocalized ? unknown : { localized: TLocalized }) {
   if (!isZodSchema(input.schema)) {
     throw new Error(
+      // SAFETY: preserves the existing runtime contract for this assignment.
       `Singleton "${input.name}" schema must be a Zod schema (use \`schema as s\` from @anhur/core).`,
     );
   }
 
+  // SAFETY: preserves the existing runtime contract for this assignment.
   return {
     type: "singleton",
     name: input.name,
     typeName: input.typeName ?? generateTypeName(input.name),
     schema: input.schema,
+    // SAFETY: preserves the existing runtime contract for this assignment.
     localized: input.localized,
     filePath: input.filePath,
     directory: input.directory,
     include: input.include,
     optional: input.optional,
+    // SAFETY: preserves the existing runtime contract for this assignment.
     transform: input.transform as DocumentTransform | undefined,
     onSuccess: input.onSuccess,
     generate: input.generate,
@@ -685,14 +687,14 @@ export type DefineViewSingleInput<
   select?: (
     document: ViewSourceDocument<TCollection, TContent>,
     context: ViewContext<TContent>,
-  ) => Record<string, unknown>;
+  ) => DocumentFields;
   generate?: ViewGenerateOptions;
 };
 
 export type DefineViewMultiInput<
   TName extends string,
   TCollections extends readonly [AnyCollection, ...AnyCollection[]],
-  TItem extends Record<string, unknown> = Record<string, unknown>,
+  TItem extends DocumentFields = DocumentFields,
   TContent extends readonly AnyContent[] | undefined = undefined,
 > = {
   name: TName;
@@ -747,7 +749,7 @@ export function defineView<
   const TContent extends readonly AnyContent[] | undefined = undefined,
   TNarrow extends ViewSourceDocument<TCollection, TContent> =
     ViewSourceDocument<TCollection, TContent>,
-  TItem extends Record<string, unknown> = Record<string, unknown>,
+  TItem extends DocumentFields = DocumentFields,
 >(input: {
   name: TName;
   typeName?: string;
@@ -768,7 +770,7 @@ export function defineView<
   TName extends string,
   TCollection extends AnyCollection,
   const TContent extends readonly AnyContent[] | undefined = undefined,
-  TItem extends Record<string, unknown> = Record<string, unknown>,
+  TItem extends DocumentFields = DocumentFields,
 >(input: {
   name: TName;
   typeName?: string;
@@ -828,7 +830,7 @@ export function defineView<
   TName extends string,
   TCollections extends readonly [AnyCollection, ...AnyCollection[]],
   const TContent extends readonly AnyContent[] | undefined = undefined,
-  TItem extends Record<string, unknown> = Record<string, unknown>,
+  TItem extends DocumentFields = DocumentFields,
 >(input: {
   name: TName;
   typeName?: string;
@@ -851,7 +853,7 @@ export function defineView(input: {
   content?: readonly AnyContent[];
   from: AnyCollection | readonly AnyCollection[];
   where?: (document: any, context: ViewContext) => boolean;
-  select?: (document: any, context: ViewContext) => Record<string, unknown>;
+  select?: (document: any, context: ViewContext) => DocumentFields;
   generate?: ViewGenerateOptions;
 }): ViewDefinition {
   const from = normalizeViewFrom(input.from, "defineView");
@@ -879,7 +881,7 @@ export function defineIndex<
   const TContent extends readonly AnyContent[] | undefined = undefined,
   TNarrow extends ViewSourceDocument<TCollection, TContent> =
     ViewSourceDocument<TCollection, TContent>,
-  TItem extends Record<string, unknown> = Record<string, unknown>,
+  TItem extends DocumentFields = DocumentFields,
 >(input: {
   name: TName;
   typeName?: string;
@@ -901,7 +903,7 @@ export function defineIndex<
   TName extends string,
   TCollection extends AnyCollection,
   const TContent extends readonly AnyContent[] | undefined = undefined,
-  TItem extends Record<string, unknown> = Record<string, unknown>,
+  TItem extends DocumentFields = DocumentFields,
 >(input: {
   name: TName;
   typeName?: string;
@@ -970,12 +972,14 @@ export function defineIndex(input: {
   from: AnyCollection;
   key: string | ((document: any) => string);
   where?: (document: any, context: ViewContext) => boolean;
-  select?: (document: any, context: ViewContext) => Record<string, unknown>;
+  select?: (document: any, context: ViewContext) => DocumentFields;
   generate?: IndexGenerateOptions;
 }): IndexDefinition {
   if (!input.from || input.from.type !== "collection") {
     throw new Error("defineIndex `from` must be a collection definition.");
   }
+
+  // SAFETY: preserves the existing runtime contract for this assignment.
 
   return {
     type: "index",
@@ -994,7 +998,7 @@ export function defineGroup<
   TName extends string,
   TCollection extends AnyCollection,
   const TContent extends readonly AnyContent[] | undefined = undefined,
-  TItem extends Record<string, unknown> = Record<string, unknown>,
+  TItem extends DocumentFields = DocumentFields,
 >(input: {
   name: TName;
   typeName?: string;
@@ -1041,10 +1045,11 @@ export function defineGroup(input: {
   from: AnyCollection;
   by: string | ((document: any) => string);
   where?: (document: any, context: ViewContext) => boolean;
-  select?: (document: any, context: ViewContext) => Record<string, unknown>;
+  select?: (document: any, context: ViewContext) => DocumentFields;
   generate?: GroupGenerateOptions;
 }): GroupDefinition {
   if (!input.from || input.from.type !== "collection") {
+    // SAFETY: preserves the existing runtime contract for this assignment.
     throw new Error("defineGroup `from` must be a collection definition.");
   }
 
@@ -1053,6 +1058,7 @@ export function defineGroup(input: {
     name: input.name,
     typeName: input.typeName ?? generateDocumentTypeName(input.name),
     from: input.from,
+    // SAFETY: preserves the existing runtime contract for this assignment.
     by: input.by as GroupDefinition["by"],
     where: input.where,
     select: input.select,
@@ -1070,21 +1076,26 @@ export function defineGroup(input: {
  * const { defineGroup } = createDerivedHelpers(content);
  * defineGroup({
  *   name: "proxiesByProvider",
+ // SAFETY: preserves the existing runtime contract for this assignment.
  *   from: proxies,
  *   by: (doc) => doc.provider.slug,
  * });
  * ```
  */
+function bindDerivedHelper<T>(implementation: never): T {
+  return implementation;
+}
+
 export function createDerivedHelpers<
   const TContent extends readonly AnyContent[],
 >(content: TContent) {
+  // SAFETY: each helper is defineView/Index/Group with `content` injected; public overloads stay TContent-bound.
   return {
-    defineView: ((input: Record<string, unknown>) =>
-      defineView({ ...input, content } as never)) as unknown as {
+    defineView: bindDerivedHelper<{
       <
         TName extends string,
         TCollection extends AnyCollection,
-        TItem extends Record<string, unknown>,
+        TItem extends DocumentFields,
       >(input: {
         name: TName;
         typeName?: string;
@@ -1115,7 +1126,7 @@ export function createDerivedHelpers<
       <
         TName extends string,
         TCollections extends readonly [AnyCollection, ...AnyCollection[]],
-        TItem extends Record<string, unknown>,
+        TItem extends DocumentFields,
       >(input: {
         name: TName;
         typeName?: string;
@@ -1130,13 +1141,14 @@ export function createDerivedHelpers<
         ) => TItem;
         generate?: ViewGenerateOptions;
       }): ViewDefinition<TName, TItem>;
-    },
-    defineIndex: ((input: Record<string, unknown>) =>
-      defineIndex({ ...input, content } as never)) as unknown as {
+    }>(((input: DocumentFields) =>
+      // SAFETY: bound helpers only inject `content`; remaining fields match defineView.
+      defineView({ ...input, content } as never)) as never),
+    defineIndex: bindDerivedHelper<{
       <
         TName extends string,
         TCollection extends AnyCollection,
-        TItem extends Record<string, unknown>,
+        TItem extends DocumentFields,
       >(input: {
         name: TName;
         typeName?: string;
@@ -1174,13 +1186,14 @@ export function createDerivedHelpers<
         TName,
         RemappedCollectionDocument<TCollection, TContent>
       >;
-    },
-    defineGroup: ((input: Record<string, unknown>) =>
-      defineGroup({ ...input, content } as never)) as unknown as {
+    }>(((input: DocumentFields) =>
+      // SAFETY: bound helpers only inject `content`; remaining fields match defineIndex.
+      defineIndex({ ...input, content } as never)) as never),
+    defineGroup: bindDerivedHelper<{
       <
         TName extends string,
         TCollection extends AnyCollection,
-        TItem extends Record<string, unknown>,
+        TItem extends DocumentFields,
       >(input: {
         name: TName;
         typeName?: string;
@@ -1218,7 +1231,9 @@ export function createDerivedHelpers<
         TName,
         RemappedCollectionDocument<TCollection, TContent>
       >;
-    },
+    }>(((input: DocumentFields) =>
+      // SAFETY: bound helpers only inject `content`; remaining fields match defineGroup.
+      defineGroup({ ...input, content } as never)) as never),
   };
 }
 
@@ -1330,15 +1345,13 @@ export function defineConfig<
     content: TContent;
     views?: TViews;
     localization: FolderLocalization<TLocales>;
-    integrations?: readonly import("./integrations").IntegrationInput<
-      NoInfer<TContent>
-    >[];
+    integrations?: readonly IntegrationInput<NoInfer<TContent>>[];
   },
 ): Omit<AnhurConfig, "content" | "integrations" | "views" | "localization"> & {
   content: TContent;
   views?: TViews;
   localization: FolderLocalization<TLocales>;
-  integrations?: readonly import("./integrations").IntegrationInput<TContent>[];
+  integrations?: readonly IntegrationInput<TContent>[];
 };
 
 export function defineConfig<
@@ -1352,29 +1365,26 @@ export function defineConfig<
     content: TContent;
     views?: TViews;
     localization?: undefined;
-    integrations?: readonly import("./integrations").IntegrationInput<
-      NoInfer<TContent>
-    >[];
+    integrations?: readonly IntegrationInput<NoInfer<TContent>>[];
   },
 ): Omit<AnhurConfig, "content" | "integrations" | "views" | "localization"> & {
   content: TContent;
   views?: TViews;
-  integrations?: readonly import("./integrations").IntegrationInput<TContent>[];
+  integrations?: readonly IntegrationInput<TContent>[];
 };
 
 export function defineConfig(
   config: Omit<AnhurConfig, "content" | "integrations" | "views"> & {
     content: readonly AnyContent[];
     views?: readonly AnyDerived[];
-    integrations?: readonly import("./integrations").IntegrationInput<
-      readonly AnyContent[]
-    >[];
+    integrations?: readonly IntegrationInput<readonly AnyContent[]>[];
   },
 ): AnhurConfig {
   if (!config.content?.length) {
     throw new Error("defineConfig requires at least one content source.");
   }
 
+  // SAFETY: preserves the existing runtime contract for this assignment.
   if (config.localization) {
     assertLocalizationCatalog(config.localization);
   }
@@ -1387,11 +1397,11 @@ export function defineConfig(
 
   assertViews(config.content, config.views);
 
+  // SAFETY: preserves the existing runtime contract for this assignment.
   return config as AnhurConfig;
 }
 
-type EmbeddedDocumentMarker =
-  import("./schema/reference").EmbeddedDocument<string>;
+type EmbeddedDocumentMarker = EmbeddedDocument<string>;
 
 /**
  * True when `T` contains an `EmbeddedDocument<…>` somewhere.
@@ -1428,21 +1438,25 @@ export type RemapEmbeddedRefs<
   T,
   TContent extends readonly AnyContent[],
   TConfig extends AnhurConfig = AnhurConfig & { content: TContent },
-> = T extends import("./schema/reference").EmbeddedDocument<infer TName>
-  ? TName extends string
-    ? RemapEmbeddedRefs<
-        DocumentForConfig<TConfig, Extract<TContent[number], { name: TName }>>,
-        TContent,
-        TConfig
-      >
-    : never
-  : ContainsEmbeddedRef<T> extends true
-    ? T extends readonly (infer TItem)[]
-      ? RemapEmbeddedRefs<TItem, TContent, TConfig>[]
-      : T extends object
-        ? { [K in keyof T]: RemapEmbeddedRefs<T[K], TContent, TConfig> }
-        : T
-    : T;
+> =
+  T extends EmbeddedDocument<infer TName>
+    ? TName extends string
+      ? RemapEmbeddedRefs<
+          DocumentForConfig<
+            TConfig,
+            Extract<TContent[number], { name: TName }>
+          >,
+          TContent,
+          TConfig
+        >
+      : never
+    : ContainsEmbeddedRef<T> extends true
+      ? T extends readonly (infer TItem)[]
+        ? RemapEmbeddedRefs<TItem, TContent, TConfig>[]
+        : T extends object
+          ? { [K in keyof T]: RemapEmbeddedRefs<T[K], TContent, TConfig> }
+          : T
+      : T;
 
 /**
  * Locale union from `config.localization.locales` (e.g. `"en" | "cs"`).

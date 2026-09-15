@@ -1,15 +1,22 @@
-import { Link, createFileRoute, notFound } from "@tanstack/react-router";
-import { getPage, type Locale } from "anhur/generated";
+import {
+  Link,
+  createFileRoute,
+  notFound,
+  useLoaderData,
+} from "@tanstack/react-router";
+import { getPage } from "anhur/generated";
 import { FeatureBadges } from "~/components/feature-badges";
 import { Badge } from "~/components/ui/badge";
 import { buttonVariants } from "~/components/ui/button";
 import { Separator } from "~/components/ui/separator";
+import { isLocale } from "~/lib/locale";
 import { cn } from "~/lib/utils";
 
 export const Route = createFileRoute("/pages/$locale/$slug")({
   loader: async ({ params }) => {
+    if (!isLocale(params.locale)) throw notFound();
     const page = await getPage({
-      locale: params.locale as Locale,
+      locale: params.locale,
       slug: params.slug,
     });
     if (!page) throw notFound();
@@ -19,7 +26,7 @@ export const Route = createFileRoute("/pages/$locale/$slug")({
 });
 
 function PageDetail() {
-  const { page } = Route.useLoaderData();
+  const { page } = useLoaderData({ from: "/pages/$locale/$slug" });
 
   return (
     <article className="space-y-6">

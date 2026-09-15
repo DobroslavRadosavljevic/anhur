@@ -3,17 +3,6 @@ import { settings } from "anhur/generated";
 import { buttonVariants } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
-const nav = [
-  { to: "/", label: "Overview", exact: true },
-  { to: "/search", label: "Search" },
-  { to: "/posts", label: "Posts" },
-  { to: "/pages", label: "Pages" },
-  { to: "/authors", label: "Authors" },
-  { to: "/products", label: "Products" },
-  { to: "/changelog", label: "Changelog" },
-  { to: "/about", label: "About" },
-] as const;
-
 export function SiteHeader() {
   return (
     <header className="border-b">
@@ -28,23 +17,95 @@ export function SiteHeader() {
           <p className="text-muted-foreground text-sm">{settings.tagline}</p>
         </div>
         <nav className="flex flex-wrap gap-1">
-          {nav.map((item) => (
-            <Link
-              key={item.to}
-              to={item.to}
-              activeOptions={
-                "exact" in item ? { exact: item.exact } : undefined
-              }
-              className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
-              activeProps={{
-                className: cn(
-                  buttonVariants({ variant: "secondary", size: "sm" }),
-                ),
-              }}
-            >
-              {item.label}
-            </Link>
-          ))}
+          <Link
+            to="/"
+            activeOptions={{ exact: true }}
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+            activeProps={{
+              className: cn(
+                buttonVariants({ variant: "secondary", size: "sm" }),
+              ),
+            }}
+          >
+            Overview
+          </Link>
+          <Link
+            to="/search"
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+            activeProps={{
+              className: cn(
+                buttonVariants({ variant: "secondary", size: "sm" }),
+              ),
+            }}
+          >
+            Search
+          </Link>
+          <Link
+            to="/posts"
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+            activeProps={{
+              className: cn(
+                buttonVariants({ variant: "secondary", size: "sm" }),
+              ),
+            }}
+          >
+            Posts
+          </Link>
+          <Link
+            to="/pages"
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+            activeProps={{
+              className: cn(
+                buttonVariants({ variant: "secondary", size: "sm" }),
+              ),
+            }}
+          >
+            Pages
+          </Link>
+          <Link
+            to="/authors"
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+            activeProps={{
+              className: cn(
+                buttonVariants({ variant: "secondary", size: "sm" }),
+              ),
+            }}
+          >
+            Authors
+          </Link>
+          <Link
+            to="/products"
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+            activeProps={{
+              className: cn(
+                buttonVariants({ variant: "secondary", size: "sm" }),
+              ),
+            }}
+          >
+            Products
+          </Link>
+          <Link
+            to="/changelog"
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+            activeProps={{
+              className: cn(
+                buttonVariants({ variant: "secondary", size: "sm" }),
+              ),
+            }}
+          >
+            Changelog
+          </Link>
+          <Link
+            to="/about"
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+            activeProps={{
+              className: cn(
+                buttonVariants({ variant: "secondary", size: "sm" }),
+              ),
+            }}
+          >
+            About
+          </Link>
         </nav>
       </div>
     </header>

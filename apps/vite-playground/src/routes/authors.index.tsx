@@ -9,6 +9,7 @@ import {
   CardTitle,
 } from "~/components/ui/card";
 import { buttonVariants } from "~/components/ui/button";
+import { Img } from "~/components/ui/img";
 import { cn } from "~/lib/utils";
 
 export const Route = createFileRoute("/authors/")({
@@ -36,7 +37,7 @@ function AuthorsPage() {
           <Card key={author._meta.id}>
             <CardHeader className="flex flex-row gap-4 space-y-0">
               {author.avatar ? (
-                <img
+                <Img
                   src={author.avatar.src}
                   alt=""
                   width={author.avatar.width || 64}

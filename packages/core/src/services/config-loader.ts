@@ -53,13 +53,23 @@ export class ConfigLoader extends Context.Service<
     ) => Effect.Effect<LoadConfigResult, LoadConfigError>;
   }
 >()("@anhur/core/ConfigLoader") {
-  static readonly layer: Layer.Layer<
+  static get layer(): Layer.Layer<
     ConfigLoader,
     never,
     FileSystem.FileSystem | Path.Path
-  > = Layer.effect(
+  > {
+    return createConfigLoaderLayer();
+  }
+}
+
+function createConfigLoaderLayer(): Layer.Layer<
+  ConfigLoader,
+  never,
+  FileSystem.FileSystem | Path.Path
+> {
+  return Layer.effect(
     ConfigLoader,
-    Effect.gen(function* () {
+    Effect.fn("makeConfigLoader")(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const jiti = createJiti(import.meta.url, {
@@ -83,73 +93,71 @@ export class ConfigLoader extends Context.Service<
       const resolvePath = (rootDir: string, configPath = "anhur.config.ts") =>
         Effect.succeed(resolveConfigPath(rootDir, configPath, path));
 
-      const load = (
+      const load = Effect.fn("load")(function* (
         rootDir: string,
         configPath = "anhur.config.ts",
-      ): Effect.Effect<LoadConfigResult, LoadConfigError> =>
-        Effect.gen(function* () {
-          const resolvedConfigPath = resolveConfigPath(
-            rootDir,
-            configPath,
-            path,
+      ) {
+        const resolvedConfigPath = resolveConfigPath(rootDir, configPath, path);
+        const exists = yield* fs.exists(resolvedConfigPath);
+
+        if (!exists) {
+          return yield* Effect.fail(
+            new ConfigNotFoundError({ path: resolvedConfigPath }),
           );
-          const exists = yield* fs.exists(resolvedConfigPath);
+        }
 
-          if (!exists) {
-            return yield* Effect.fail(
-              new ConfigNotFoundError({ path: resolvedConfigPath }),
-            );
-          }
-
-          const absoluteConfigPath = yield* Effect.promise(() =>
-            canonicalPath(resolvedConfigPath),
-          );
-
-          // Drop every previously evaluated user module so `cms/collections/*`
-          // and other config imports are re-read on watch/Vite rebuilds.
-          const cache = jiti.cache as
-            | Map<string, unknown>
-            | Record<string, unknown>
-            | undefined;
-          if (cache instanceof Map) {
-            cache.clear();
-          } else if (cache) {
-            for (const key of Object.keys(cache)) {
-              delete cache[key];
-            }
-          }
-
-          const mod = yield* Effect.tryPromise({
-            try: () =>
-              jiti.import(absoluteConfigPath) as Promise<{
-                default?: AnhurConfig;
-              }>,
-            catch: (cause) =>
-              new ConfigInvalidError({
-                path: absoluteConfigPath,
-                detail: `Failed to import config: ${String(cause)}`,
-              }),
-          });
-
-          const config = mod.default;
-          if (!config?.content) {
-            return yield* Effect.fail(
-              new ConfigInvalidError({
-                path: absoluteConfigPath,
-                detail:
-                  "Config must default-export defineConfig({ content: [...] }).",
-              }),
-            );
-          }
-
-          return {
-            config,
-            configPath: absoluteConfigPath,
-            rootDir,
-          };
+        const absoluteConfigPath = yield* Effect.tryPromise({
+          try: () => canonicalPath(resolvedConfigPath),
+          catch: (cause) =>
+            new ConfigInvalidError({
+              path: resolvedConfigPath,
+              detail: String(cause),
+            }),
         });
 
+        // Drop every previously evaluated user module so `cms/collections/*`
+        // and other config imports are re-read on watch/Vite rebuilds.
+        const cache = jiti.cache;
+        if (cache instanceof Map) {
+          cache.clear();
+        } else if (cache) {
+          for (const key of Object.keys(cache)) {
+            delete cache[key];
+          }
+        }
+
+        const mod = yield* Effect.tryPromise({
+          try: () =>
+            // SAFETY: jiti.import evaluates the user config module; we only read `default`.
+            jiti.import(absoluteConfigPath) as Promise<{
+              default?: AnhurConfig;
+            }>,
+          catch: (cause) =>
+            new ConfigInvalidError({
+              path: absoluteConfigPath,
+              detail: `Failed to import config: ${String(cause)}`,
+            }),
+        });
+
+        const config = mod.default;
+        if (!config?.content) {
+          return yield* Effect.fail(
+            new ConfigInvalidError({
+              path: absoluteConfigPath,
+              detail:
+                "Config must default-export defineConfig({ content: [...] }).",
+            }),
+          );
+        }
+
+        return {
+          config,
+          configPath: absoluteConfigPath,
+          rootDir,
+        };
+      });
+
       return ConfigLoader.of({ resolvePath, load });
-    }),
+    })(),
   );
 }

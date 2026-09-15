@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { ViteDevServer } from "vite";
+import type { DevEnvironment, ViteDevServer } from "vite";
 import {
   build,
   collectWatchPaths,
@@ -14,10 +14,10 @@ export const IMPORT_ID = "anhur/generated";
 export const REBUILD_DEBOUNCE_MS = 50;
 
 /** Match virtual id, resolved url, or generated output file path. */
-export function isAnhurGeneratedId(
-  value: unknown,
+export function isAnhurGeneratedId<T>(
+  value: T,
   outputDir?: string,
-): value is string {
+): value is T & string {
   if (typeof value !== "string") return false;
   if (value.includes("anhur/generated") || value.includes(".anhur/generated")) {
     return true;
@@ -30,41 +30,38 @@ export function isAnhurGeneratedId(
 
 type GraphModule = {
   id?: string | null;
-  url?: string;
+  url: string;
   file?: string | null;
 };
 
-type ModuleGraphLike = {
-  getModuleById?: (id: string) => GraphModule | undefined;
-  idToModuleMap?: Map<string, GraphModule>;
-  urlToModuleMap: Map<string, GraphModule>;
-  // Vite graphs use concrete ModuleNode types; accept any module shape here.
-  invalidateModule: (mod: GraphModule, seen?: Set<GraphModule>) => void;
-};
-
-type EnvironmentLike = {
-  name: string;
-  moduleGraph: ModuleGraphLike;
-  hot?: { send?: (payload: { type: string }) => void };
-  runner?: { clearCache?: () => void };
-};
-
-function asModuleGraphLike(graph: unknown): ModuleGraphLike {
-  return graph as ModuleGraphLike;
+function hasClearableRunner<T>(
+  environment: T,
+): environment is T & { runner: { clearCache: () => void } } {
+  if (typeof environment !== "object" || environment === null) return false;
+  if (!("runner" in environment)) return false;
+  const runner = environment.runner;
+  if (typeof runner !== "object" || runner === null) return false;
+  if (!("clearCache" in runner)) return false;
+  return typeof runner.clearCache === "function";
 }
 
-function listEnvironments(server: ViteDevServer): EnvironmentLike[] {
+function listEnvironments(server: ViteDevServer): DevEnvironment[] {
   if (!server.environments) return [];
-  return Object.values(server.environments) as unknown as EnvironmentLike[];
+  return Object.values(server.environments);
 }
 
-function invalidateGraphModules(
-  graph: ModuleGraphLike,
+function invalidateGraphModules<M extends GraphModule>(
+  graph: {
+    getModuleById?: (id: string) => M | undefined;
+    idToModuleMap?: Map<string, M>;
+    urlToModuleMap: Map<string, M>;
+    invalidateModule: (mod: M, seen?: Set<M>) => void;
+  },
   importId: string,
   outputDir?: string,
 ): void {
-  const seen = new Set<GraphModule>();
-  const modules = new Set<GraphModule>();
+  const seen = new Set<M>();
+  const modules = new Set<M>();
 
   const byId = graph.getModuleById?.(importId);
   if (byId) modules.add(byId);
@@ -102,21 +99,13 @@ export function invalidateGeneratedModules(
   for (const environment of listEnvironments(server)) {
     invalidateGraphModules(environment.moduleGraph, importId, outputDir);
 
-    if (
-      environment.name !== "client" &&
-      "runner" in environment &&
-      typeof environment.runner?.clearCache === "function"
-    ) {
+    if (environment.name !== "client" && hasClearableRunner(environment)) {
       environment.runner.clearCache();
     }
   }
 
   // Legacy / compat mixed module graph (also present alongside environments).
-  invalidateGraphModules(
-    asModuleGraphLike(server.moduleGraph),
-    importId,
-    outputDir,
-  );
+  invalidateGraphModules(server.moduleGraph, importId, outputDir);
 }
 
 /**
@@ -226,7 +215,8 @@ export function attachAnhurDevWatcher(
         syncViteWatchRoots(server, getWatchState(), roots);
         await onBuildResult(result);
       } catch (error) {
-        server.config.logger.error(`[anhur] ${formatAnhurError(error)}`);
+        const cause = error instanceof Error ? error : new Error(String(error));
+        server.config.logger.error(`[anhur] ${formatAnhurError(cause)}`);
       } finally {
         building = false;
       }

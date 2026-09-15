@@ -1,3 +1,4 @@
+import { Predicate } from "effect";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -74,6 +75,10 @@ type DeleteManyResultLike = {
   errors?: Array<{ key: string; error: unknown }>;
 };
 
+function isDeleteManyResultLike(value: unknown): value is DeleteManyResultLike {
+  return Predicate.isObject(value) && !Array.isArray(value);
+}
+
 function normalizePrefix(prefix: string): string {
   const trimmed = prefix.trim().replace(/^\/+/, "").replace(/\/+$/, "");
   if (!trimmed) {
@@ -93,6 +98,7 @@ function resolveStorageOptions(
 ): AssetsStorageOptions | undefined {
   const plugin = findProcessor(ctx.processors, ASSETS_PROCESSOR_ID);
   if (!plugin) return undefined;
+  // SAFETY: preserves the existing runtime contract for this assignment.
   const options = (plugin.options ?? {}) as AssetsProcessorOptions;
   return options.storage;
 }
@@ -100,14 +106,15 @@ function resolveStorageOptions(
 async function resolveFilesClient(
   storage: Extract<AssetsStorageOptions, { enabled: true }>,
 ): Promise<AssetStorageClient> {
-  const value =
-    typeof storage.files === "function" ? await storage.files() : storage.files;
+  const value = Predicate.isFunction(storage.files)
+    ? await storage.files()
+    : storage.files;
   if (
     !value ||
-    typeof value.upload !== "function" ||
-    typeof value.exists !== "function" ||
-    typeof value.delete !== "function" ||
-    typeof value.listAll !== "function"
+    !Predicate.isFunction(value.upload) ||
+    !Predicate.isFunction(value.exists) ||
+    !Predicate.isFunction(value.delete) ||
+    !Predicate.isFunction(value.listAll)
   ) {
     throw new Error(
       "assets({ storage.files }) must be a files-sdk Files instance (or factory) with upload, exists, delete, and listAll.",
@@ -150,12 +157,13 @@ async function deleteOrphans(
   files: AssetStorageClient,
   orphans: string[],
 ): Promise<string[]> {
+  // SAFETY: files-sdk bulk delete returns void or { deleted, errors }.
   const result = (await files.delete(orphans)) as
     | void
     | DeleteManyResultLike
     | undefined;
 
-  if (result && typeof result === "object") {
+  if (isDeleteManyResultLike(result)) {
     if (result.errors && result.errors.length > 0) {
       const detail = result.errors
         .slice(0, 5)

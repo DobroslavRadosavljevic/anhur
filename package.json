@@ -26,6 +26,7 @@
     "release:publish": "bun scripts/release.ts publish"
   },
   "devDependencies": {
+    "bellona": "0.4.7",
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",
     "turbo": "^2.10.13",

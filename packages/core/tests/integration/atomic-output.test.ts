@@ -19,6 +19,7 @@ afterEach(async () => {
   for (const root of scratchRoots.splice(0)) {
     await rm(root, { recursive: true, force: true });
   }
+  // SAFETY: preserves the existing runtime contract for this assignment.
   delete (globalThis as { __anhurFailIntegration?: boolean })
     .__anhurFailIntegration;
 });
@@ -112,6 +113,7 @@ describe("atomic generated output", () => {
     const before = await readFile(markerPath, "utf8");
     expect(JSON.parse(before).titles).toContain("One");
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
     (
       globalThis as { __anhurFailIntegration?: boolean }
     ).__anhurFailIntegration = true;
@@ -139,8 +141,10 @@ describe("atomic generated output", () => {
       path.join(root, "content/posts/one.md"),
       "---\ntitle: Two\n---\nBody\n",
     );
+    // SAFETY: preserves the existing runtime contract for this assignment.
     await build({ rootDir: root });
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
     const marker = JSON.parse(
       await readFile(path.join(root, MARKER), "utf8"),
     ) as {

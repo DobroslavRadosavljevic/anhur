@@ -31,6 +31,17 @@ export function mdx(
 
 export type MdxFieldOptions = MdxProcessorOptions;
 
+function isMdxProcessorOptions<T>(
+  options: T,
+): options is T & MdxProcessorOptions {
+  return typeof options === "object" && options !== null;
+}
+
+function readMdxProcessorOptions<T>(options: T): MdxProcessorOptions {
+  if (!isMdxProcessorOptions(options)) return {};
+  return options;
+}
+
 /**
  * Field helper: compile body (or string field) to an MDX function-body.
  * Requires `mdx(...)` in `defineConfig({ processors })`.
@@ -50,7 +61,7 @@ function mdxField(fieldOptions: MdxFieldOptions = {}) {
         );
       }
 
-      const registered = plugin.options as MdxProcessorOptions;
+      const registered = readMdxProcessorOptions(plugin.options);
       const source = value ?? meta.content ?? "";
       if (source.length === 0) {
         throw new Error(`MDX content is empty (${meta.path})`);
@@ -58,20 +69,12 @@ function mdxField(fieldOptions: MdxFieldOptions = {}) {
 
       const gfm = fieldOptions.gfm ?? registered.gfm ?? true;
       const remarkPlugins = await withBodyAssetRemarkPlugins([
-        ...((fieldOptions.remarkPlugins as NonNullable<
-          CompileMdxOptions["remarkPlugins"]
-        >) ?? []),
-        ...((registered.remarkPlugins as NonNullable<
-          CompileMdxOptions["remarkPlugins"]
-        >) ?? []),
+        ...(fieldOptions.remarkPlugins ?? []),
+        ...(registered.remarkPlugins ?? []),
       ]);
       const rehypePlugins = [
-        ...((fieldOptions.rehypePlugins as NonNullable<
-          CompileMdxOptions["rehypePlugins"]
-        >) ?? []),
-        ...((registered.rehypePlugins as NonNullable<
-          CompileMdxOptions["rehypePlugins"]
-        >) ?? []),
+        ...(fieldOptions.rehypePlugins ?? []),
+        ...(registered.rehypePlugins ?? []),
       ];
 
       const {

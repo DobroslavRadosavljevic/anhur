@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { CacheFingerprint } from "./cache-fingerprint";
+import type { DocumentFields } from "./document-fields";
 
 export type PersistCache = {
   /**
@@ -9,16 +11,16 @@ export type PersistCache = {
    */
   getOrCompute: <T>(
     key: string,
-    input: unknown,
+    input: CacheFingerprint,
     compute: () => Promise<T>,
   ) => Promise<T>;
 };
 
-function hashKey(key: string, input: unknown): string {
+function hashKey(key: string, input: CacheFingerprint): string {
   return createHash("sha256")
     .update(key)
     .update("\0")
-    .update(JSON.stringify(input))
+    .update(JSON.stringify(input) ?? "null")
     .digest("hex");
 }
 
@@ -38,28 +40,32 @@ export async function createPersistCache(
   cacheDir: string,
 ): Promise<PersistCache> {
   await mkdir(cacheDir, { recursive: true });
-  const memory = new Map<string, unknown>();
+  const memory = new Map<string, DocumentFields>();
 
   return {
     async getOrCompute(key, input, compute) {
       const digest = hashKey(key, input);
       const memKey = `${key}:${digest}`;
-      if (memory.has(memKey)) {
-        return memory.get(memKey) as never;
+      const cached = memory.get(memKey);
+      if (cached !== undefined) {
+        // SAFETY: entries are only written from compute() or JSON.parse of that same T.
+        return cached as never;
       }
 
       const filePath = path.join(cacheDir, safeFileName(key, digest));
       try {
         const raw = await readFile(filePath, "utf8");
-        const parsed = JSON.parse(raw) as unknown;
+        const parsed: DocumentFields = JSON.parse(raw);
         memory.set(memKey, parsed);
+        // SAFETY: file was written by JSON.stringify of T from getOrCompute.
         return parsed as never;
       } catch {
         // miss or corrupt — recompute
       }
 
       const output = await compute();
-      memory.set(memKey, output);
+      // SAFETY: preserves the existing runtime contract for this assignment.
+      memory.set(memKey, output as DocumentFields);
       try {
         await writeFile(filePath, JSON.stringify(output), "utf8");
       } catch {

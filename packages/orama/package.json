@@ -46,6 +46,7 @@
     "@anhur/oxfmt": "workspace:*",
     "@anhur/oxlint": "workspace:*",
     "@types/node": "^22.20.2",
+    "bellona": "0.4.7",
     "jiti": "^2.7.0",
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",

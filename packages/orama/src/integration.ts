@@ -5,15 +5,23 @@ import type { OramaIntegrationOptions } from "./types";
 
 const ORAMA_INTEGRATION_ID = "orama" as const;
 
+function isOramaIntegrationOptions<T>(
+  options: T,
+): options is T & OramaIntegrationOptions {
+  return (
+    typeof options === "object" && options !== null && "collections" in options
+  );
+}
+
 /** Ensure the Orama runner is registered (safe to call more than once). */
 export function ensureOramaRegistered(): void {
   registerIntegration({
     id: ORAMA_INTEGRATION_ID,
     run: async (options, context) => {
-      await buildOramaIndex(
-        options as unknown as OramaIntegrationOptions,
-        context,
-      );
+      if (!isOramaIntegrationOptions(options)) {
+        throw new Error("@anhur/orama: invalid integration options.");
+      }
+      await buildOramaIndex(options, context);
     },
   });
 }

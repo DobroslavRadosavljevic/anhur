@@ -1,4 +1,5 @@
 import type { Root } from "mdast";
+import type { Node } from "unist";
 import type { Plugin } from "unified";
 import { visit } from "unist-util-visit";
 import {
@@ -15,8 +16,6 @@ import {
   resolveAndEmit,
 } from "./resolve";
 
-type UrlHolder = { url?: string };
-
 type JsxAttribute = {
   type: string;
   name?: string;
@@ -28,9 +27,25 @@ type JsxElement = {
   attributes?: JsxAttribute[];
 };
 
-type HtmlNode = { value?: string };
-
 type Rewrite = (next: string) => void;
+
+function hasStringUrl(node: Node): node is Node & { url: string } {
+  if (!("url" in node)) return false;
+  return typeof node.url === "string";
+}
+
+function hasStringValue(node: Node): node is Node & { value: string } {
+  if (!("value" in node)) return false;
+  return typeof node.value === "string";
+}
+
+function isJsxElement(node: Node): node is Node & JsxElement {
+  return "attributes" in node;
+}
+
+function isStringAttrValue(value: JsxAttribute["value"]): value is string {
+  return typeof value === "string";
+}
 
 function collectRelativeRewrites(tree: Root): Map<string, Rewrite[]> {
   const byUrl = new Map<string, Rewrite[]>();
@@ -42,12 +57,12 @@ function collectRelativeRewrites(tree: Root): Map<string, Rewrite[]> {
     byUrl.set(url, list);
   };
 
-  visit(tree, (node) => {
-    const type = node.type as string;
+  visit(tree, (node: Node) => {
+    const type = node.type;
 
     if (type === "link" || type === "image" || type === "definition") {
-      const n = node as UrlHolder;
-      if (typeof n.url === "string") {
+      if (hasStringUrl(node)) {
+        const n = node;
         register(n.url, (next) => {
           n.url = next;
         });
@@ -56,11 +71,11 @@ function collectRelativeRewrites(tree: Root): Map<string, Rewrite[]> {
     }
 
     if (type === "html") {
-      const n = node as HtmlNode;
-      if (typeof n.value !== "string") return;
+      if (!hasStringValue(node)) return;
+      const n = node;
       for (const url of collectHtmlAssetUrls(n.value)) {
         register(url, (next) => {
-          if (typeof n.value !== "string") return;
+          if (!hasStringValue(n)) return;
           n.value = rewriteHtmlAssetAttrValue(n.value, url, next);
         });
       }
@@ -68,22 +83,25 @@ function collectRelativeRewrites(tree: Root): Map<string, Rewrite[]> {
     }
 
     if (type === "mdxJsxFlowElement" || type === "mdxJsxTextElement") {
-      const el = node as unknown as JsxElement;
+      if (!isJsxElement(node)) return;
+      const el = node;
       for (const attr of el.attributes ?? []) {
         if (attr.type !== "mdxJsxAttribute") continue;
         if (!attr.name || !isLinkedAssetAttrName(attr.name)) continue;
-        if (typeof attr.value !== "string") continue;
-        if (isSrcsetAttrName(attr.name)) {
-          for (const url of collectSrcsetUrls(attr.value)) {
+        if (!isStringAttrValue(attr.value)) continue;
+        const attrName = attr.name;
+        const current = attr.value;
+        if (isSrcsetAttrName(attrName)) {
+          for (const url of collectSrcsetUrls(current)) {
             register(url, (next) => {
-              if (typeof attr.value !== "string") return;
+              if (!isStringAttrValue(attr.value)) return;
               attr.value = mapSrcsetUrls(attr.value, (candidate) =>
                 candidate === url ? next : candidate,
               );
             });
           }
         } else {
-          register(attr.value, (next) => {
+          register(current, (next) => {
             attr.value = next;
           });
         }

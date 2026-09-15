@@ -13,7 +13,7 @@ import {
   withBuildContext,
   type BuildContext,
 } from "../../src/build-context";
-import { isSkippedSignal } from "../../src/skip";
+import { isSkippedSignal, createSkippedSignal } from "../../src/skip";
 
 // Keep under this package so jiti can resolve workspace `@anhur/*`.
 const scratchRoot = path.join(import.meta.dirname, "../.temp");
@@ -93,6 +93,7 @@ export function readId() {
     );
 
     const jiti = createIsolatingJiti();
+    // SAFETY: preserves the existing runtime contract for this assignment.
     const mod = (await jiti.import(helperPath)) as {
       readId: () => string | undefined;
     };
@@ -124,6 +125,7 @@ export function readRoot() {
     );
 
     const jiti = createIsolatingJiti();
+    // SAFETY: jiti.import returns the helper module's named exports.
     const mod = (await jiti.import(helperPath)) as {
       readRoot: () => string;
     };
@@ -161,9 +163,12 @@ export function makeSkip() {
 `,
     );
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
+
     const jiti = createIsolatingJiti();
+    // SAFETY: preserves the existing runtime contract for this assignment.
     const mod = (await jiti.import(helperPath)) as {
-      makeSkip: () => unknown;
+      makeSkip: () => ReturnType<typeof createSkippedSignal>;
     };
     expect(isSkippedSignal(mod.makeSkip())).toBe(true);
   });

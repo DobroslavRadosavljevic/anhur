@@ -4,7 +4,7 @@ import type { BuildContext } from "./build-context";
 import { withBuildContext } from "./build-context";
 import type { ContentSchema, AnhurConfig } from "./config";
 import { withDocumentMeta, type DocumentMeta } from "./document-meta";
-import { ValidationFailedError, type ValidationIssue } from "./errors";
+import { ValidationFailedError, type ValidationIssue } from "./errors-content";
 
 export type ValidateDocumentInput = {
   schema: ContentSchema;
@@ -58,7 +58,7 @@ export const validateWithSchema = <TSchema extends ContentSchema>(options: {
         });
       }
 
-      return result.data as z.infer<TSchema>;
+      return result.data;
     },
     catch: (cause) => {
       if (cause instanceof ValidationFailedError) return cause;

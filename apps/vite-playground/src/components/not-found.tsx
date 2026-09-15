@@ -1,8 +1,13 @@
+import { type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { Button, buttonVariants } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
-export function NotFound({ children }: { children?: React.ReactNode }) {
+type NotFoundProps = {
+  children?: ReactNode;
+};
+
+export function NotFound({ children }: NotFoundProps) {
   return (
     <div className="space-y-4 py-8">
       <h1 className="font-heading text-2xl font-semibold">Not found</h1>

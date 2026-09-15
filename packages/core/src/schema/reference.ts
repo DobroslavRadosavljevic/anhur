@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { Predicate } from "effect";
+import type { DocumentNode } from "../document-fields";
 import type { ReferenceBy } from "../relations";
 
 export type ReferenceOptions = {
@@ -31,12 +33,16 @@ export type ReferenceMarker = {
   value: string;
 };
 
-export function isReferenceMarker(value: unknown): value is ReferenceMarker {
+export function isReferenceMarker(
+  value: DocumentNode | ReferenceMarker,
+): value is ReferenceMarker {
   return (
     typeof value === "object" &&
     value !== null &&
-    (value as ReferenceMarker).__anhurRef === true &&
-    typeof (value as ReferenceMarker).value === "string"
+    "__anhurRef" in value &&
+    value.__anhurRef === true &&
+    "value" in value &&
+    Predicate.isString(value.value)
   );
 }
 
@@ -79,7 +85,9 @@ export function reference(
   const schema = referenceMarkerSchema(collection, by, embed);
 
   if (embed) {
-    return schema as unknown as z.ZodType<EmbeddedDocument<string>>;
+    // SAFETY: collect stores ReferenceMarker; GetTypeByName remaps embed:true to the target document.
+    return schema as never;
   }
-  return schema as unknown as z.ZodType<string>;
+  // SAFETY: collect stores ReferenceMarker; resolvePendingReferences restores string ids when embed is false.
+  return schema as never;
 }

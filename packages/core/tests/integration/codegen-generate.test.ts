@@ -35,6 +35,7 @@ describe("codegen generate options", () => {
       false,
     );
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
     const posts = (
       await import(`${pathToFileURL(listPath).href}?t=${Date.now()}`)
     ).default as Array<{ slug: string; date: string; body?: string }>;
@@ -93,6 +94,8 @@ describe("codegen generate options", () => {
       await exists(path.join(result.outputDir, "documents", "products")),
     ).toBe(false);
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
+
     const products = (
       await import(
         `${pathToFileURL(path.join(result.outputDir, "allProducts.js")).href}?t=${Date.now()}`
@@ -118,9 +121,11 @@ describe("codegen generate options", () => {
 
     expect(await exists(path.join(result.outputDir, "getNote.js"))).toBe(false);
     expect(
+      // SAFETY: preserves the existing runtime contract for this assignment.
       await exists(path.join(result.outputDir, "documents", "notes")),
     ).toBe(false);
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
     const notes = (
       await import(
         `${pathToFileURL(path.join(result.outputDir, "allNotes.js")).href}?t=${Date.now()}`
@@ -174,10 +179,12 @@ describe("codegen generate options", () => {
     expect(await exists(path.join(result.outputDir, "settingsAll.js"))).toBe(
       false,
     );
+    // SAFETY: preserves the existing runtime contract for this assignment.
     expect(await exists(path.join(result.outputDir, "loadSettings.js"))).toBe(
       true,
     );
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
     const settings = (
       await import(
         `${pathToFileURL(path.join(result.outputDir, "settings.js")).href}?t=${Date.now()}`

@@ -19,6 +19,14 @@ import {
   schema as a,
 } from "../../src/index";
 
+const copyRemarkPlugins: CompileOptions["remarkPlugins"] = [
+  remarkGfm,
+  remarkCopyLinkedFiles,
+];
+const rejectRemarkPlugins: CompileOptions["remarkPlugins"] = [
+  remarkRejectRelativeLinkedFiles,
+];
+
 async function writePng(filePath: string, color = { r: 20, g: 40, b: 80 }) {
   await sharp({
     create: {
@@ -78,10 +86,7 @@ describe("remarkCopyLinkedFiles", () => {
       { value: source, path: docPath },
       {
         outputFormat: "function-body",
-        remarkPlugins: [
-          remarkGfm,
-          remarkCopyLinkedFiles,
-        ] as CompileOptions["remarkPlugins"],
+        remarkPlugins: copyRemarkPlugins,
       },
     );
     return String(file);
@@ -314,9 +319,7 @@ describe("remarkRejectRelativeLinkedFiles", () => {
         { value: "![x](./x.png)", path: "/tmp/a.mdx" },
         {
           outputFormat: "function-body",
-          remarkPlugins: [
-            remarkRejectRelativeLinkedFiles,
-          ] as CompileOptions["remarkPlugins"],
+          remarkPlugins: rejectRemarkPlugins,
         },
       ),
     ).rejects.toThrow(/Found: \.\/x\.png/);
@@ -332,9 +335,7 @@ describe("remarkRejectRelativeLinkedFiles", () => {
         },
         {
           outputFormat: "function-body",
-          remarkPlugins: [
-            remarkRejectRelativeLinkedFiles,
-          ] as CompileOptions["remarkPlugins"],
+          remarkPlugins: rejectRemarkPlugins,
         },
       ),
     ).rejects.toThrow(/Found:.*\.\/a\.png.*\.\/b\.png/);
@@ -345,9 +346,7 @@ describe("remarkRejectRelativeLinkedFiles", () => {
       { value: "![x](https://example.com/x.png)", path: "/tmp/a.mdx" },
       {
         outputFormat: "function-body",
-        remarkPlugins: [
-          remarkRejectRelativeLinkedFiles,
-        ] as CompileOptions["remarkPlugins"],
+        remarkPlugins: rejectRemarkPlugins,
       },
     );
     expect(String(file)).toContain("https://example.com/x.png");

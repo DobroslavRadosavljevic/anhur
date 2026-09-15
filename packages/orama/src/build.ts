@@ -4,8 +4,11 @@ import type { IntegrationRuntimeContext, TransformDocument } from "@anhur/core";
 import type {
   AnhurOramaIndex,
   CollectionSearchConfig,
+  OramaFieldDatum,
   OramaFieldType,
+  OramaIndexDocument,
   OramaIntegrationOptions,
+  OramaSchema,
 } from "./types";
 
 const BASE_SCHEMA = {
@@ -15,11 +18,15 @@ const BASE_SCHEMA = {
   documentId: "string",
   /** JSON string of the author-chosen hit payload. */
   store: "string",
-} as const satisfies Record<string, OramaFieldType>;
+} as const satisfies OramaSchema;
 
 const BASE_KEYS = new Set(Object.keys(BASE_SCHEMA));
 
-function emptyForType(type: OramaFieldType): unknown {
+type CollectionConfigMap = {
+  [name: string]: CollectionSearchConfig<TransformDocument>;
+};
+
+function emptyForType(type: OramaFieldType): OramaFieldDatum {
   switch (type) {
     case "string":
     case "enum":
@@ -36,10 +43,8 @@ function emptyForType(type: OramaFieldType): unknown {
   }
 }
 
-function mergeSchema(
-  collections: Record<string, CollectionSearchConfig<TransformDocument>>,
-): Record<string, OramaFieldType> {
-  const merged: Record<string, OramaFieldType> = { ...BASE_SCHEMA };
+function mergeSchema(collections: CollectionConfigMap): OramaSchema {
+  const merged: OramaSchema = { ...BASE_SCHEMA };
   for (const config of Object.values(collections)) {
     for (const [key, type] of Object.entries(config.schema)) {
       if (BASE_KEYS.has(key)) {
@@ -59,7 +64,7 @@ function mergeSchema(
   return merged;
 }
 
-function searchPropertiesFor(schema: Record<string, OramaFieldType>): string[] {
+function searchPropertiesFor(schema: OramaSchema): string[] {
   return Object.entries(schema)
     .filter(([key, type]) => {
       if (BASE_KEYS.has(key)) return false;
@@ -73,16 +78,36 @@ function searchPropertiesFor(schema: Record<string, OramaFieldType>): string[] {
     .map(([key]) => key);
 }
 
+function isCollectionConfigMap<T>(value: T): value is T & CollectionConfigMap {
+  return typeof value === "object" && value !== null;
+}
+
+type IndexedFields = {
+  [field: string]: OramaFieldDatum | undefined;
+};
+
+function isIndexedFields<T>(value: T): value is T & IndexedFields {
+  return typeof value === "object" && value !== null;
+}
+
+function readIndexedValue<T>(
+  indexed: T,
+  key: string,
+): OramaFieldDatum | undefined {
+  if (!isIndexedFields(indexed)) return undefined;
+  return indexed[key];
+}
+
 function toOramaDoc(
   collection: string,
   doc: TransformDocument,
   config: CollectionSearchConfig<TransformDocument>,
-  unionSchema: Record<string, OramaFieldType>,
-): Record<string, unknown> {
+  unionSchema: OramaSchema,
+): OramaIndexDocument {
   const indexed = config.index(doc);
   const store = config.store?.(doc) ?? {};
   const locale = doc._meta.locale ?? "default";
-  const row: Record<string, unknown> = {
+  const row: OramaIndexDocument = {
     // Orama requires unique `id` values across the whole database.
     id: `${collection}:${locale}:${doc._meta.id}`,
     collection,
@@ -93,7 +118,7 @@ function toOramaDoc(
 
   for (const [key, type] of Object.entries(unionSchema)) {
     if (BASE_KEYS.has(key)) continue;
-    const value = indexed[key];
+    const value = readIndexedValue(indexed, key);
     row[key] = value === undefined ? emptyForType(type) : value;
   }
 
@@ -107,10 +132,10 @@ export async function buildOramaIndex(
 ): Promise<string> {
   const directory = options.directory ?? "search";
   const filename = options.filename ?? "orama.json";
-  const collectionConfigs = options.collections as Record<
-    string,
-    CollectionSearchConfig<TransformDocument>
-  >;
+  if (!isCollectionConfigMap(options.collections)) {
+    throw new Error("@anhur/orama: collections must be an object.");
+  }
+  const collectionConfigs = options.collections;
 
   const contentNames = new Set(
     context.config.content
@@ -129,7 +154,7 @@ export async function buildOramaIndex(
   const unionSchema = mergeSchema(collectionConfigs);
   const searchProperties = searchPropertiesFor(unionSchema);
 
-  const documents: Record<string, unknown>[] = [];
+  const documents: OramaIndexDocument[] = [];
   const includedCollections: string[] = [];
 
   for (const [name, config] of Object.entries(collectionConfigs)) {

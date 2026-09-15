@@ -17,6 +17,9 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
+import { Input } from "~/components/ui/input";
+import { Label } from "~/components/ui/label";
+import { Select } from "~/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 
 // Written by integrations: [orama({…})] during Anhur build.
@@ -35,13 +38,27 @@ type HitStore = {
 
 const COLLECTIONS = ["all", "posts", "pages", "products", "changelog"] as const;
 
-export const Route = createFileRoute("/search/")({
-  component: SearchPage,
-});
+function isCollection(value: string): value is (typeof COLLECTIONS)[number] {
+  return (
+    value === "all" ||
+    value === "posts" ||
+    value === "pages" ||
+    value === "products" ||
+    value === "changelog"
+  );
+}
+
+function isSearchMode(value: string): value is "client" | "server" {
+  return value === "client" || value === "server";
+}
 
 function hitTitle(hit: SearchHit<HitStore>): string {
   return hit.store.title ?? hit.store.name ?? hit.documentId;
 }
+
+export const Route = createFileRoute("/search/")({
+  component: SearchPage,
+});
 
 function SearchPage() {
   const [term, setTerm] = useState("hello");
@@ -58,6 +75,7 @@ function SearchPage() {
 
   useEffect(() => {
     let cancelled = false;
+    // SAFETY: Vite JSON import is the generated Orama snapshot.
     void createSearcher(searchIndex as AnhurOramaIndex).then((searcher) => {
       if (!cancelled) setClientSearcher(searcher);
     });
@@ -91,6 +109,7 @@ function SearchPage() {
           limit: 20,
         });
         if (cancelled) return;
+        // SAFETY: Orama hit.store matches the indexed document fields shown in this UI.
         setClientHits(result.hits as SearchHit<HitStore>[]);
         setClientMeta({
           count: result.count,
@@ -142,10 +161,10 @@ function SearchPage() {
   const activeHits = mode === "client" ? clientHits : serverHits;
   const activeMeta = mode === "client" ? clientMeta : serverMeta;
 
-  const indexedCollections = useMemo(
-    () => (searchIndex as AnhurOramaIndex).collections,
-    [],
-  );
+  const indexedCollections = useMemo(() => {
+    // SAFETY: same generated snapshot as createSearcher.
+    return (searchIndex as AnhurOramaIndex).collections;
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -169,31 +188,26 @@ function SearchPage() {
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-        <label className="flex min-w-0 flex-1 flex-col gap-1.5 text-sm">
+        <Label className="flex-1">
           <span className="text-muted-foreground">Query</span>
-          <input
+          <Input
             value={term}
             onChange={(event) => setTerm(event.target.value)}
             placeholder="Search posts, pages, products…"
-            className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring flex h-10 w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
           />
-        </label>
-        <label className="flex w-full flex-col gap-1.5 text-sm sm:w-44">
+        </Label>
+        <Label className="w-full sm:w-44">
           <span className="text-muted-foreground">Collection</span>
-          <select
+          <Select
             value={collection}
-            onChange={(event) =>
-              setCollection(event.target.value as (typeof COLLECTIONS)[number])
-            }
-            className="border-input bg-background focus-visible:ring-ring flex h-10 w-full rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:outline-none"
-          >
-            {COLLECTIONS.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
+            items={COLLECTIONS.map((name) => ({ value: name, label: name }))}
+            onValueChange={(value) => {
+              if (isCollection(value)) {
+                setCollection(value);
+              }
+            }}
+          />
+        </Label>
         <Button type="button" variant="secondary" disabled={pending}>
           {pending ? "Searching…" : "Live"}
         </Button>
@@ -201,7 +215,11 @@ function SearchPage() {
 
       <Tabs
         value={mode}
-        onValueChange={(value) => setMode(value as "client" | "server")}
+        onValueChange={(value) => {
+          if (isSearchMode(value)) {
+            setMode(value);
+          }
+        }}
       >
         <TabsList>
           <TabsTrigger value="client">Browser</TabsTrigger>

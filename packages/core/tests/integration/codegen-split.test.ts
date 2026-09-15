@@ -35,6 +35,7 @@ describe("codegen list/document split", () => {
     expect(listSource).not.toContain("BODY_BETA_UNIQUE_MARKER");
     expect(listSource).toContain("Alpha");
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
     const allPosts = (
       await import(`${pathToFileURL(listPath).href}?t=${Date.now()}`)
     ).default as Array<{
@@ -199,15 +200,19 @@ describe("codegen list/document split", () => {
     };
     type PostListItem = Omit<Post, "body">;
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
+
     const allPosts = (
       await import(
         `${pathToFileURL(path.join(result.outputDir, "allPosts.js")).href}?t=${Date.now()}`
       )
     ).default as PostListItem[];
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
     expectTypeOf(allPosts[0]!).toMatchTypeOf<PostListItem>();
     expectTypeOf(allPosts[0]!).not.toHaveProperty("body");
 
+    // SAFETY: preserves the existing runtime contract for this assignment.
     const { getPost } = (await import(
       `${pathToFileURL(path.join(result.outputDir, "getPost.js")).href}?t=${Date.now()}`
     )) as {

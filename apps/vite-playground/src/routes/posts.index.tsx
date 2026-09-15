@@ -11,6 +11,7 @@ import {
 } from "~/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { buttonVariants } from "~/components/ui/button";
+import { Img } from "~/components/ui/img";
 import { cn } from "~/lib/utils";
 
 export const Route = createFileRoute("/posts/")({
@@ -65,7 +66,7 @@ function PostsPage() {
                 <Card key={`${post._meta.locale}-${post._meta.id}`}>
                   <CardHeader className="flex flex-row gap-4 space-y-0">
                     {post.cover ? (
-                      <img
+                      <Img
                         src={post.cover.src}
                         alt=""
                         width={post.cover.width || 160}

@@ -1,3 +1,5 @@
+import type { DocumentFields } from "./document-fields";
+
 /** Symbol marking a transform result that should drop the document. */
 export const skippedSymbol: unique symbol = Symbol.for("anhur.skipped");
 
@@ -6,12 +8,10 @@ export type SkippedSignal = {
   readonly reason?: string;
 };
 
-export function isSkippedSignal(value: unknown): value is SkippedSignal {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as SkippedSignal)[skippedSymbol] === true
-  );
+export function isSkippedSignal(
+  value: DocumentFields | SkippedSignal,
+): value is SkippedSignal {
+  return skippedSymbol in value && value[skippedSymbol] === true;
 }
 
 export function createSkippedSignal(reason?: string): SkippedSignal {

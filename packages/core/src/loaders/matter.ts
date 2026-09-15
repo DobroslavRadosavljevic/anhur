@@ -1,5 +1,6 @@
 import matter from "gray-matter";
 import { defineLoader, type Loader } from "./types";
+import { isDocumentFields, type DocumentNode } from "../document-fields";
 
 /**
  * Frontmatter + body for `.md` / `.mdx`.
@@ -9,8 +10,12 @@ export function matterLoader(): Loader {
     test: /\.(md|mdx)$/i,
     load({ raw }) {
       const parsed = matter(raw);
+      const data: DocumentNode = parsed.data ?? {};
+      if (!isDocumentFields(data)) {
+        throw new Error("Frontmatter must be a mapping (object).");
+      }
       return {
-        data: (parsed.data ?? {}) as Record<string, unknown>,
+        data,
         content: parsed.content.replace(/^\n/, ""),
       };
     },

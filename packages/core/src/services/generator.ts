@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, Layer, Path } from "effect";
+import { Context, Effect, FileSystem, Layer, Path, Predicate } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { rm } from "node:fs/promises";
 import {
@@ -21,6 +21,8 @@ import {
 } from "../codegen";
 import type { AnyContent, AnhurConfig } from "../config";
 import { isCollection, isSingleton, resolveLocalization } from "../config";
+import { ConfigInvalidError } from "../errors";
+import type { DocumentNode } from "../document-fields";
 import type { CollectedDocument } from "./content-collector";
 import { resolveViews, type BuiltDerived } from "../views";
 
@@ -29,7 +31,11 @@ export type BuiltSource = {
   documents: CollectedDocument[];
 };
 
-function serializeValue(value: unknown): string {
+function isNonEmptyString(value: DocumentNode): value is string {
+  return Predicate.isString(value) && value.length > 0;
+}
+
+function serializeValue(value: DocumentNode): string {
   return JSON.stringify(value, null, 2);
 }
 
@@ -170,238 +176,242 @@ export class Generator extends Context.Service<
       rootDir: string;
       outputDir: string;
       built: BuiltSource[];
-    }) => Effect.Effect<void, PlatformError>;
+    }) => Effect.Effect<void, PlatformError | ConfigInvalidError>;
   }
 >()("@anhur/core/Generator") {
-  static readonly layer: Layer.Layer<
+  static get layer(): Layer.Layer<
     Generator,
     never,
     FileSystem.FileSystem | Path.Path
-  > = Layer.effect(
+  > {
+    return createGeneratorLayer();
+  }
+}
+
+function createGeneratorLayer(): Layer.Layer<
+  Generator,
+  never,
+  FileSystem.FileSystem | Path.Path
+> {
+  return Layer.effect(
     Generator,
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
 
-      const writeText = (
+      const writeText = Effect.fn("writeText")(function* (
         filePath: string,
         body: string,
-      ): Effect.Effect<void, PlatformError> =>
-        Effect.gen(function* () {
-          yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
-          yield* fs.writeFileString(filePath, body);
-        });
+      ) {
+        yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+        yield* fs.writeFileString(filePath, body);
+      });
 
       const removeQuiet = (target: string): Effect.Effect<void, never> =>
-        Effect.promise(() => rm(target, { recursive: true, force: true })).pipe(
-          Effect.catch(() => Effect.void),
-        );
+        Effect.tryPromise({
+          try: () => rm(target, { recursive: true, force: true }),
+          catch: () => undefined,
+        }).pipe(Effect.catch(() => Effect.void));
 
-      const writeCollection = (
+      const writeCollection = Effect.fn("writeCollection")(function* (
         outputDir: string,
         rootDir: string,
         item: BuiltSource,
-      ): Effect.Effect<void, PlatformError> =>
-        Effect.gen(function* () {
-          if (!isCollection(item.source)) return;
+      ) {
+        if (!isCollection(item.source)) return;
 
-          const source = item.source;
-          const gen = resolveCollectionGenerate(source);
-          const listOmit = effectiveListOmit(gen.listOmit, item.documents);
-          const docsDir = path.join(outputDir, "documents", source.name);
+        const source = item.source;
+        const gen = resolveCollectionGenerate(source);
+        const listOmit = effectiveListOmit(gen.listOmit, item.documents);
+        const docsDir = path.join(outputDir, "documents", source.name);
 
-          const listItems = sortByListSort(
-            item.documents.map((doc) =>
-              toListExport(doc.data, doc._meta, listOmit, rootDir),
-            ),
-            gen.listSort,
+        const listItems = sortByListSort(
+          item.documents.map((doc) =>
+            toListExport(doc.data, doc._meta, listOmit, rootDir),
+          ),
+          gen.listSort,
+        );
+
+        yield* writeText(
+          path.join(outputDir, `${gen.listName}.js`),
+          jsModule(`export default ${serializeValue(listItems)}`),
+        );
+
+        if (!gen.emitDocuments) return;
+
+        const loaderEntries: string[] = [];
+        const loaderByKey = new Map<string, string>();
+        const basenameById = new Map<string, string>();
+
+        const addLoader = (key: string, importPath: string) => {
+          const existing = loaderByKey.get(key);
+          if (existing !== undefined) {
+            if (existing === importPath) return;
+            throw new Error(
+              `Collection "${source.name}" getter key ${JSON.stringify(key)} matches more than one document.`,
+            );
+          }
+          loaderByKey.set(key, importPath);
+          loaderEntries.push(
+            `  ${JSON.stringify(key)}: () => import(${JSON.stringify(importPath)}),`,
           );
+        };
+
+        for (const doc of item.documents) {
+          const basename = documentModuleBasename(
+            doc._meta.locale,
+            doc._meta.id,
+          );
+          const owner = basenameById.get(basename);
+          if (owner !== undefined && owner !== doc._meta.id) {
+            return yield* Effect.fail(
+              new ConfigInvalidError({
+                path: docsDir,
+                detail: `Collection "${source.name}" documents ${JSON.stringify(owner)} and ${JSON.stringify(doc._meta.id)} map to the same generated module "${basename}.js".`,
+              }),
+            );
+          }
+          basenameById.set(basename, doc._meta.id);
+          const fileName = `${basename}.js`;
+          const absDocPath = path.join(docsDir, fileName);
+          const full = toDocumentExport(doc.data, doc._meta, rootDir);
 
           yield* writeText(
-            path.join(outputDir, `${gen.listName}.js`),
-            jsModule(`export default ${serializeValue(listItems)}`),
+            absDocPath,
+            jsModule(`export default ${serializeValue(full)}`),
           );
 
-          if (!gen.emitDocuments) return;
+          const importPath = `./documents/${source.name}/${fileName}`;
+          addLoader(
+            documentLookupKey(doc._meta.locale, doc._meta.id),
+            importPath,
+          );
 
-          const loaderEntries: string[] = [];
-          const loaderByKey = new Map<string, string>();
-          const basenameById = new Map<string, string>();
-
-          const addLoader = (key: string, importPath: string) => {
-            const existing = loaderByKey.get(key);
-            if (existing !== undefined) {
-              if (existing === importPath) return;
-              throw new Error(
-                `Collection "${source.name}" getter key ${JSON.stringify(key)} matches more than one document.`,
-              );
-            }
-            loaderByKey.set(key, importPath);
-            loaderEntries.push(
-              `  ${JSON.stringify(key)}: () => import(${JSON.stringify(importPath)}),`,
-            );
-          };
-
-          for (const doc of item.documents) {
-            const basename = documentModuleBasename(
-              doc._meta.locale,
-              doc._meta.id,
-            );
-            const owner = basenameById.get(basename);
-            if (owner !== undefined && owner !== doc._meta.id) {
-              throw new Error(
-                `Collection "${source.name}" documents ${JSON.stringify(owner)} and ${JSON.stringify(doc._meta.id)} map to the same generated module "${basename}.js".`,
-              );
-            }
-            basenameById.set(basename, doc._meta.id);
-            const fileName = `${basename}.js`;
-            const absDocPath = path.join(docsDir, fileName);
-            const full = toDocumentExport(doc.data, doc._meta, rootDir);
-
-            yield* writeText(
-              absDocPath,
-              jsModule(`export default ${serializeValue(full)}`),
-            );
-
-            const importPath = `./documents/${source.name}/${fileName}`;
-            addLoader(
-              documentLookupKey(doc._meta.locale, doc._meta.id),
-              importPath,
-            );
-
-            for (const field of gen.lookupBy) {
-              if (field === "id") continue;
-              const value = doc.data[field];
-              if (typeof value === "string" && value.length > 0) {
-                addLoader(
-                  documentLookupKey(doc._meta.locale, value),
-                  importPath,
-                );
-              }
+          for (const field of gen.lookupBy) {
+            if (field === "id") continue;
+            const value = doc.data[field];
+            if (isNonEmptyString(value)) {
+              addLoader(documentLookupKey(doc._meta.locale, value), importPath);
             }
           }
+        }
 
-          yield* writeText(
-            path.join(outputDir, `${gen.getterName}.js`),
-            jsModule(
-              collectionGetterSource(
-                gen.getterName,
-                source.name,
-                gen.lookupBy,
-                loaderEntries,
-              ),
+        yield* writeText(
+          path.join(outputDir, `${gen.getterName}.js`),
+          jsModule(
+            collectionGetterSource(
+              gen.getterName,
+              source.name,
+              gen.lookupBy,
+              loaderEntries,
             ),
-          );
-        });
+          ),
+        );
+      });
 
-      const writeSingleton = (
+      const writeSingleton = Effect.fn("writeSingleton")(function* (
         config: AnhurConfig,
         outputDir: string,
         rootDir: string,
         item: BuiltSource,
-      ): Effect.Effect<void, PlatformError> =>
-        Effect.gen(function* () {
-          if (!isSingleton(item.source)) return;
+      ) {
+        if (!isSingleton(item.source)) return;
 
-          const localization = resolveLocalization(config, item.source);
-          const gen = resolveSingletonGenerate(
-            item.source,
-            localization != null,
-          );
+        const localization = resolveLocalization(config, item.source);
+        const gen = resolveSingletonGenerate(item.source, localization != null);
 
-          let exportValue: unknown = item.documents[0]
-            ? toDocumentExport(
-                item.documents[0].data,
-                item.documents[0]._meta,
-                rootDir,
-              )
+        let exportValue: DocumentNode | undefined = item.documents[0]
+          ? toDocumentExport(
+              item.documents[0].data,
+              item.documents[0]._meta,
+              rootDir,
+            )
+          : undefined;
+
+        if (localization) {
+          const preferred =
+            item.documents.find(
+              (d) => d._meta.locale === localization.defaultLocale,
+            ) ?? item.documents[0];
+          exportValue = preferred
+            ? toDocumentExport(preferred.data, preferred._meta, rootDir)
             : undefined;
+        }
 
-          if (localization) {
-            const preferred =
-              item.documents.find(
-                (d) => d._meta.locale === localization.defaultLocale,
-              ) ?? item.documents[0];
-            exportValue = preferred
-              ? toDocumentExport(preferred.data, preferred._meta, rootDir)
-              : undefined;
-          }
+        yield* writeText(
+          path.join(outputDir, `${gen.exportName}.js`),
+          jsModule(`export default ${serializeValue(exportValue)}`),
+        );
 
+        if (gen.emitAll) {
           yield* writeText(
-            path.join(outputDir, `${gen.exportName}.js`),
-            jsModule(`export default ${serializeValue(exportValue)}`),
-          );
-
-          if (gen.emitAll) {
-            yield* writeText(
-              path.join(outputDir, `${gen.variantsName}.js`),
-              jsModule(
-                `export default ${serializeValue(
-                  item.documents.map((d) =>
-                    toDocumentExport(d.data, d._meta, rootDir),
-                  ),
-                )}`,
-              ),
-            );
-          }
-
-          if (!gen.emitDocuments) return;
-
-          const docsDir = path.join(outputDir, "documents", item.source.name);
-          const loaderEntries: string[] = [];
-
-          for (const doc of item.documents) {
-            const basename = documentModuleBasename(
-              doc._meta.locale,
-              doc._meta.id,
-            );
-            const fileName = `${basename}.js`;
-            const absDocPath = path.join(docsDir, fileName);
-            const full = toDocumentExport(doc.data, doc._meta, rootDir);
-
-            yield* writeText(
-              absDocPath,
-              jsModule(`export default ${serializeValue(full)}`),
-            );
-
-            const importPath = `./documents/${item.source.name}/${fileName}`;
-            const key = documentLookupKey(doc._meta.locale, item.source.name);
-            loaderEntries.push(
-              `  ${JSON.stringify(key)}: () => import(${JSON.stringify(importPath)}),`,
-            );
-          }
-
-          yield* writeText(
-            path.join(outputDir, `${gen.getterName}.js`),
+            path.join(outputDir, `${gen.variantsName}.js`),
             jsModule(
-              singletonGetterSource(
-                gen.getterName,
-                item.source.name,
-                loaderEntries,
-              ),
+              `export default ${serializeValue(
+                item.documents.map((d) =>
+                  toDocumentExport(d.data, d._meta, rootDir),
+                ),
+              )}`,
             ),
           );
-        });
+        }
 
-      const writeDataModules = (
+        if (!gen.emitDocuments) return;
+
+        const docsDir = path.join(outputDir, "documents", item.source.name);
+        const loaderEntries: string[] = [];
+
+        for (const doc of item.documents) {
+          const basename = documentModuleBasename(
+            doc._meta.locale,
+            doc._meta.id,
+          );
+          const fileName = `${basename}.js`;
+          const absDocPath = path.join(docsDir, fileName);
+          const full = toDocumentExport(doc.data, doc._meta, rootDir);
+
+          yield* writeText(
+            absDocPath,
+            jsModule(`export default ${serializeValue(full)}`),
+          );
+
+          const importPath = `./documents/${item.source.name}/${fileName}`;
+          const key = documentLookupKey(doc._meta.locale, item.source.name);
+          loaderEntries.push(
+            `  ${JSON.stringify(key)}: () => import(${JSON.stringify(importPath)}),`,
+          );
+        }
+
+        yield* writeText(
+          path.join(outputDir, `${gen.getterName}.js`),
+          jsModule(
+            singletonGetterSource(
+              gen.getterName,
+              item.source.name,
+              loaderEntries,
+            ),
+          ),
+        );
+      });
+
+      const writeDataModules = Effect.fn("writeDataModules")(function* (
         config: AnhurConfig,
         outputDir: string,
         rootDir: string,
         built: BuiltSource[],
         derived: BuiltDerived[],
-      ): Effect.Effect<void, PlatformError> =>
-        Effect.gen(function* () {
-          for (const item of built) {
-            if (isCollection(item.source)) {
-              yield* writeCollection(outputDir, rootDir, item);
-            } else {
-              yield* writeSingleton(config, outputDir, rootDir, item);
-            }
+      ) {
+        for (const item of built) {
+          if (isCollection(item.source)) {
+            yield* writeCollection(outputDir, rootDir, item);
+          } else {
+            yield* writeSingleton(config, outputDir, rootDir, item);
           }
-          for (const entry of derived) {
-            yield* writeDerived(outputDir, entry);
-          }
-        });
+        }
+        for (const entry of derived) {
+          yield* writeDerived(outputDir, entry);
+        }
+      });
 
       const listItemTypeLines = (
         built: BuiltSource[],
@@ -447,117 +457,113 @@ export class Generator extends Context.Service<
         return lines;
       };
 
-      const writeDerived = (
+      const writeDerived = Effect.fn("writeDerived")(function* (
         outputDir: string,
         entry: BuiltDerived,
-      ): Effect.Effect<void, PlatformError> =>
-        Effect.gen(function* () {
-          if (entry.kind === "view") {
-            const gen = resolveViewGenerate(entry.derived);
-            yield* writeText(
-              path.join(outputDir, `${gen.listName}.js`),
-              jsModule(`export default ${serializeValue(entry.items)}`),
-            );
-            return;
-          }
-          if (entry.kind === "index") {
-            const gen = resolveIndexGenerate(entry.derived);
-            yield* writeText(
-              path.join(outputDir, `${gen.exportName}.js`),
-              jsModule(`export default ${serializeValue(entry.record)}`),
-            );
-            return;
-          }
-          const gen = resolveGroupGenerate(entry.derived);
+      ) {
+        if (entry.kind === "view") {
+          const gen = resolveViewGenerate(entry.derived);
+          yield* writeText(
+            path.join(outputDir, `${gen.listName}.js`),
+            jsModule(`export default ${serializeValue(entry.items)}`),
+          );
+          return;
+        }
+        if (entry.kind === "index") {
+          const gen = resolveIndexGenerate(entry.derived);
           yield* writeText(
             path.join(outputDir, `${gen.exportName}.js`),
-            jsModule(`export default ${serializeValue(entry.groups)}`),
+            jsModule(`export default ${serializeValue(entry.record)}`),
           );
-        });
+          return;
+        }
+        const gen = resolveGroupGenerate(entry.derived);
+        yield* writeText(
+          path.join(outputDir, `${gen.exportName}.js`),
+          jsModule(`export default ${serializeValue(entry.groups)}`),
+        );
+      });
 
-      const writeIndexJs = (
+      const writeIndexJs = Effect.fn("writeIndexJs")(function* (
         config: AnhurConfig,
         outputDir: string,
         built: BuiltSource[],
         derived: BuiltDerived[],
-      ): Effect.Effect<void, PlatformError> =>
-        Effect.gen(function* () {
-          const lines: string[] = [
-            "// generated by @anhur/core — do not edit",
-            "",
-          ];
+      ) {
+        const lines: string[] = [
+          "// generated by @anhur/core — do not edit",
+          "",
+        ];
 
-          if (config.localization) {
-            yield* writeText(
-              path.join(outputDir, "locales.js"),
-              jsModule(
-                [
-                  `export const locales = ${serializeValue([...config.localization.locales])};`,
-                  `export const defaultLocale = ${serializeValue(config.localization.defaultLocale)};`,
-                ].join("\n"),
-              ),
-            );
+        if (config.localization) {
+          yield* writeText(
+            path.join(outputDir, "locales.js"),
+            jsModule(
+              [
+                `export const locales = ${serializeValue([...config.localization.locales])};`,
+                `export const defaultLocale = ${serializeValue(config.localization.defaultLocale)};`,
+              ].join("\n"),
+            ),
+          );
+          lines.push(`export { locales, defaultLocale } from "./locales.js";`);
+        }
+
+        for (const item of built) {
+          if (isCollection(item.source)) {
+            const gen = resolveCollectionGenerate(item.source);
             lines.push(
-              `export { locales, defaultLocale } from "./locales.js";`,
+              `export { default as ${gen.listName} } from "./${gen.listName}.js";`,
             );
-          }
-
-          for (const item of built) {
-            if (isCollection(item.source)) {
-              const gen = resolveCollectionGenerate(item.source);
-              lines.push(
-                `export { default as ${gen.listName} } from "./${gen.listName}.js";`,
-              );
-              if (gen.emitDocuments) {
-                lines.push(
-                  `export { ${gen.getterName} } from "./${gen.getterName}.js";`,
-                );
-              }
-              continue;
-            }
-
-            const localization = resolveLocalization(config, item.source);
-            const gen = resolveSingletonGenerate(
-              item.source,
-              localization != null,
-            );
-            lines.push(
-              `export { default as ${gen.exportName} } from "./${gen.exportName}.js";`,
-            );
-            if (gen.emitAll) {
-              lines.push(
-                `export { default as ${gen.variantsName} } from "./${gen.variantsName}.js";`,
-              );
-            }
             if (gen.emitDocuments) {
               lines.push(
                 `export { ${gen.getterName} } from "./${gen.getterName}.js";`,
               );
             }
+            continue;
           }
 
-          for (const entry of derived) {
-            if (entry.kind === "view") {
-              const gen = resolveViewGenerate(entry.derived);
-              lines.push(
-                `export { default as ${gen.listName} } from "./${gen.listName}.js";`,
-              );
-            } else if (entry.kind === "index") {
-              const gen = resolveIndexGenerate(entry.derived);
-              lines.push(
-                `export { default as ${gen.exportName} } from "./${gen.exportName}.js";`,
-              );
-            } else {
-              const gen = resolveGroupGenerate(entry.derived);
-              lines.push(
-                `export { default as ${gen.exportName} } from "./${gen.exportName}.js";`,
-              );
-            }
+          const localization = resolveLocalization(config, item.source);
+          const gen = resolveSingletonGenerate(
+            item.source,
+            localization != null,
+          );
+          lines.push(
+            `export { default as ${gen.exportName} } from "./${gen.exportName}.js";`,
+          );
+          if (gen.emitAll) {
+            lines.push(
+              `export { default as ${gen.variantsName} } from "./${gen.variantsName}.js";`,
+            );
           }
+          if (gen.emitDocuments) {
+            lines.push(
+              `export { ${gen.getterName} } from "./${gen.getterName}.js";`,
+            );
+          }
+        }
 
-          lines.push("");
-          yield* writeText(path.join(outputDir, "index.js"), lines.join("\n"));
-        });
+        for (const entry of derived) {
+          if (entry.kind === "view") {
+            const gen = resolveViewGenerate(entry.derived);
+            lines.push(
+              `export { default as ${gen.listName} } from "./${gen.listName}.js";`,
+            );
+          } else if (entry.kind === "index") {
+            const gen = resolveIndexGenerate(entry.derived);
+            lines.push(
+              `export { default as ${gen.exportName} } from "./${gen.exportName}.js";`,
+            );
+          } else {
+            const gen = resolveGroupGenerate(entry.derived);
+            lines.push(
+              `export { default as ${gen.exportName} } from "./${gen.exportName}.js";`,
+            );
+          }
+        }
+
+        lines.push("");
+        yield* writeText(path.join(outputDir, "index.js"), lines.join("\n"));
+      });
 
       const toImportPath = (fromDir: string, targetFile: string): string => {
         let relative = path
@@ -570,247 +576,241 @@ export class Generator extends Context.Service<
         return relative.replace(/\.(mts|cts|tsx|ts|mjs|cjs|js)$/, "");
       };
 
-      const writeIndexDts = (
+      const writeIndexDts = Effect.fn("writeIndexDts")(function* (
         config: AnhurConfig,
         outputDir: string,
         configPath: string,
         built: BuiltSource[],
         derived: BuiltDerived[],
-      ): Effect.Effect<void, PlatformError> =>
-        Effect.gen(function* () {
-          const importPath = toImportPath(outputDir, configPath);
-          const hasDerived = derived.length > 0;
-          const localization = config.localization;
-          const lines: string[] = [
-            "// generated by @anhur/core — do not edit",
-            hasDerived
-              ? `import type { GetTypeByName, GetViewByName, OmitListFields } from "@anhur/core";`
-              : `import type { GetTypeByName, OmitListFields } from "@anhur/core";`,
-            `import type configuration from "${importPath}";`,
-            "",
-          ];
+      ) {
+        const importPath = toImportPath(outputDir, configPath);
+        const hasDerived = derived.length > 0;
+        const localization = config.localization;
+        const lines: string[] = [
+          "// generated by @anhur/core — do not edit",
+          hasDerived
+            ? `import type { GetTypeByName, GetViewByName, OmitListFields } from "@anhur/core";`
+            : `import type { GetTypeByName, OmitListFields } from "@anhur/core";`,
+          `import type configuration from "${importPath}";`,
+          "",
+        ];
 
-          if (localization) {
-            const localeLiterals = [...localization.locales];
-            const localesType = literalUnionType(localeLiterals);
-            const localesTuple = localeLiterals
-              .map((locale) => JSON.stringify(locale))
-              .join(", ");
-            lines.push(`export type Locale = ${localesType};`);
-            lines.push(
-              `export declare const locales: readonly [${localesTuple}];`,
-            );
-            lines.push(
-              `export declare const defaultLocale: ${JSON.stringify(localization.defaultLocale)};`,
-            );
-            lines.push("");
-          }
+        if (localization) {
+          const localeLiterals = [...localization.locales];
+          const localesType = literalUnionType(localeLiterals);
+          const localesTuple = localeLiterals
+            .map((locale) => JSON.stringify(locale))
+            .join(", ");
+          lines.push(`export type Locale = ${localesType};`);
+          lines.push(
+            `export declare const locales: readonly [${localesTuple}];`,
+          );
+          lines.push(
+            `export declare const defaultLocale: ${JSON.stringify(localization.defaultLocale)};`,
+          );
+          lines.push("");
+        }
 
-          for (const item of built) {
-            const { source } = item;
-            lines.push(
-              `export type ${source.typeName} = GetTypeByName<typeof configuration, "${source.name}">;`,
-            );
+        for (const item of built) {
+          const { source } = item;
+          lines.push(
+            `export type ${source.typeName} = GetTypeByName<typeof configuration, "${source.name}">;`,
+          );
 
-            if (isSingleton(source)) {
-              const sourceLocalization = resolveLocalization(config, source);
-              const gen = resolveSingletonGenerate(
-                source,
-                sourceLocalization != null,
-              );
-              const optional =
-                source.optional || item.documents.length === 0
-                  ? " | undefined"
-                  : "";
+          if (isSingleton(source)) {
+            const sourceLocalization = resolveLocalization(config, source);
+            const gen = resolveSingletonGenerate(
+              source,
+              sourceLocalization != null,
+            );
+            const optional =
+              source.optional || item.documents.length === 0
+                ? " | undefined"
+                : "";
+            lines.push(
+              `export declare const ${gen.exportName}: ${source.typeName}${optional};`,
+            );
+            if (gen.emitAll) {
               lines.push(
-                `export declare const ${gen.exportName}: ${source.typeName}${optional};`,
+                `export declare const ${gen.variantsName}: Array<${source.typeName}>;`,
               );
-              if (gen.emitAll) {
+            }
+            if (gen.emitDocuments) {
+              if (sourceLocalization && localization) {
                 lines.push(
-                  `export declare const ${gen.variantsName}: Array<${source.typeName}>;`,
-                );
-              }
-              if (gen.emitDocuments) {
-                if (sourceLocalization && localization) {
-                  lines.push(
-                    `export declare function ${gen.getterName}(query: { locale: Locale }): Promise<${source.typeName} | null>;`,
-                  );
-                } else {
-                  lines.push(
-                    `export declare function ${gen.getterName}(query?: { locale?: string }): Promise<${source.typeName} | null>;`,
-                  );
-                }
-              }
-            } else if (isCollection(source)) {
-              const gen = resolveCollectionGenerate(source);
-              const documentType = source.typeName;
-              const listOmit = effectiveListOmit(gen.listOmit, item.documents);
-              const sourceLocalized =
-                resolveLocalization(config, source) != null;
-
-              if (listOmit.length === 0) {
-                lines.push(
-                  `export type ${gen.listItemTypeName} = ${documentType};`,
+                  `export declare function ${gen.getterName}(query: { locale: Locale }): Promise<${source.typeName} | null>;`,
                 );
               } else {
                 lines.push(
-                  `export type ${gen.listItemTypeName} = OmitListFields<${documentType}, ${omitKeysUnionType(listOmit)}>;`,
-                );
-              }
-
-              if (gen.arrayTypeName !== documentType) {
-                lines.push(
-                  `export type ${gen.arrayTypeName} = Array<${documentType}>;`,
-                );
-              }
-
-              if (gen.emitIds) {
-                lines.push(
-                  `export type ${documentType}Id = ${literalUnionType(collectDocumentIds(item.documents))};`,
-                );
-              }
-
-              if (gen.emitSlugs) {
-                lines.push(
-                  `export type ${documentType}Slug = ${literalUnionType(collectStringFieldValues(item.documents, "slug"))};`,
-                );
-              }
-
-              lines.push(
-                `export declare const ${gen.listName}: Array<${gen.listItemTypeName}>;`,
-              );
-
-              if (gen.emitDocuments) {
-                lines.push(
-                  collectionGetterDts(
-                    gen.getterName,
-                    documentType,
-                    gen.lookupBy,
-                    sourceLocalized && localization
-                      ? {
-                          localeType: "Locale",
-                          localeRequired: true,
-                          includeLocale: true,
-                        }
-                      : {
-                          includeLocale: false,
-                        },
-                  ),
+                  `export declare function ${gen.getterName}(query?: { locale?: string }): Promise<${source.typeName} | null>;`,
                 );
               }
             }
-            lines.push("");
+          } else if (isCollection(source)) {
+            const gen = resolveCollectionGenerate(source);
+            const documentType = source.typeName;
+            const listOmit = effectiveListOmit(gen.listOmit, item.documents);
+            const sourceLocalized = resolveLocalization(config, source) != null;
+
+            if (listOmit.length === 0) {
+              lines.push(
+                `export type ${gen.listItemTypeName} = ${documentType};`,
+              );
+            } else {
+              lines.push(
+                `export type ${gen.listItemTypeName} = OmitListFields<${documentType}, ${omitKeysUnionType(listOmit)}>;`,
+              );
+            }
+
+            if (gen.arrayTypeName !== documentType) {
+              lines.push(
+                `export type ${gen.arrayTypeName} = Array<${documentType}>;`,
+              );
+            }
+
+            if (gen.emitIds) {
+              lines.push(
+                `export type ${documentType}Id = ${literalUnionType(collectDocumentIds(item.documents))};`,
+              );
+            }
+
+            if (gen.emitSlugs) {
+              lines.push(
+                `export type ${documentType}Slug = ${literalUnionType(collectStringFieldValues(item.documents, "slug"))};`,
+              );
+            }
+
+            lines.push(
+              `export declare const ${gen.listName}: Array<${gen.listItemTypeName}>;`,
+            );
+
+            if (gen.emitDocuments) {
+              lines.push(
+                collectionGetterDts(
+                  gen.getterName,
+                  documentType,
+                  gen.lookupBy,
+                  sourceLocalized && localization
+                    ? {
+                        localeType: "Locale",
+                        localeRequired: true,
+                        includeLocale: true,
+                      }
+                    : {
+                        includeLocale: false,
+                      },
+                ),
+              );
+            }
           }
+          lines.push("");
+        }
 
-          for (const entry of derived) {
-            if (entry.kind === "view") {
-              const { derived: view } = entry;
-              const gen = resolveViewGenerate(view);
-              lines.push(
-                ...listItemTypeLines(
-                  built,
-                  view.name,
-                  gen.listItemTypeName,
-                  gen.usesSelect,
-                  gen.listOmit,
-                  view.from,
-                ),
-              );
-              if (gen.arrayTypeName !== gen.listItemTypeName) {
-                lines.push(
-                  `export type ${gen.arrayTypeName} = Array<${gen.listItemTypeName}>;`,
-                );
-              }
-              lines.push(
-                `export declare const ${gen.listName}: Array<${gen.listItemTypeName}>;`,
-              );
-              lines.push("");
-              continue;
-            }
-
-            if (entry.kind === "index") {
-              const { derived: index } = entry;
-              const gen = resolveIndexGenerate(index);
-              const keyUnion = literalUnionType(Object.keys(entry.record));
-              lines.push(
-                ...listItemTypeLines(
-                  built,
-                  index.name,
-                  gen.listItemTypeName,
-                  gen.usesSelect,
-                  gen.listOmit,
-                  index.from,
-                ),
-              );
-              lines.push(`export type ${gen.keyTypeName} = ${keyUnion};`);
-              lines.push(
-                `export type ${gen.recordTypeName} = Record<${gen.keyTypeName}, ${gen.listItemTypeName}>;`,
-              );
-              lines.push(
-                `export declare const ${gen.exportName}: ${gen.recordTypeName};`,
-              );
-              lines.push("");
-              continue;
-            }
-
-            const { derived: group } = entry;
-            const gen = resolveGroupGenerate(group);
-            const keyUnion = literalUnionType(entry.groups.map((g) => g.key));
+        for (const entry of derived) {
+          if (entry.kind === "view") {
+            const { derived: view } = entry;
+            const gen = resolveViewGenerate(view);
             lines.push(
               ...listItemTypeLines(
                 built,
-                group.name,
+                view.name,
                 gen.listItemTypeName,
                 gen.usesSelect,
                 gen.listOmit,
-                group.from,
+                view.from,
+              ),
+            );
+            if (gen.arrayTypeName !== gen.listItemTypeName) {
+              lines.push(
+                `export type ${gen.arrayTypeName} = Array<${gen.listItemTypeName}>;`,
+              );
+            }
+            lines.push(
+              `export declare const ${gen.listName}: Array<${gen.listItemTypeName}>;`,
+            );
+            lines.push("");
+            continue;
+          }
+
+          if (entry.kind === "index") {
+            const { derived: index } = entry;
+            const gen = resolveIndexGenerate(index);
+            const keyUnion = literalUnionType(Object.keys(entry.record));
+            lines.push(
+              ...listItemTypeLines(
+                built,
+                index.name,
+                gen.listItemTypeName,
+                gen.usesSelect,
+                gen.listOmit,
+                index.from,
               ),
             );
             lines.push(`export type ${gen.keyTypeName} = ${keyUnion};`);
             lines.push(
-              `export type ${gen.groupTypeName} = { key: ${gen.keyTypeName}; count: number; items: Array<${gen.listItemTypeName}> };`,
+              `export type ${gen.recordTypeName} = Record<${gen.keyTypeName}, ${gen.listItemTypeName}>;`,
             );
-            if (gen.arrayTypeName !== gen.groupTypeName) {
-              lines.push(
-                `export type ${gen.arrayTypeName} = Array<${gen.groupTypeName}>;`,
-              );
-            }
             lines.push(
-              `export declare const ${gen.exportName}: ${gen.arrayTypeName === gen.groupTypeName ? `Array<${gen.groupTypeName}>` : gen.arrayTypeName};`,
+              `export declare const ${gen.exportName}: ${gen.recordTypeName};`,
             );
             lines.push("");
+            continue;
           }
 
-          lines.push("export {};");
-          lines.push("");
-
-          yield* writeText(
-            path.join(outputDir, "index.d.ts"),
-            lines.join("\n"),
+          const { derived: group } = entry;
+          const gen = resolveGroupGenerate(group);
+          const keyUnion = literalUnionType(entry.groups.map((g) => g.key));
+          lines.push(
+            ...listItemTypeLines(
+              built,
+              group.name,
+              gen.listItemTypeName,
+              gen.usesSelect,
+              gen.listOmit,
+              group.from,
+            ),
           );
-        });
+          lines.push(`export type ${gen.keyTypeName} = ${keyUnion};`);
+          lines.push(
+            `export type ${gen.groupTypeName} = { key: ${gen.keyTypeName}; count: number; items: Array<${gen.listItemTypeName}> };`,
+          );
+          if (gen.arrayTypeName !== gen.groupTypeName) {
+            lines.push(
+              `export type ${gen.arrayTypeName} = Array<${gen.groupTypeName}>;`,
+            );
+          }
+          lines.push(
+            `export declare const ${gen.exportName}: ${gen.arrayTypeName === gen.groupTypeName ? `Array<${gen.groupTypeName}>` : gen.arrayTypeName};`,
+          );
+          lines.push("");
+        }
 
-      const write = (options: {
+        lines.push("export {};");
+        lines.push("");
+
+        yield* writeText(path.join(outputDir, "index.d.ts"), lines.join("\n"));
+      });
+
+      const write = Effect.fn("write")(function* (options: {
         config: AnhurConfig;
         configPath: string;
         rootDir: string;
         outputDir: string;
         built: BuiltSource[];
-      }): Effect.Effect<void, PlatformError> =>
-        Effect.gen(function* () {
-          const { config, configPath, rootDir, outputDir, built } = options;
-          const derived = resolveViews(config.views ?? [], built, rootDir);
-          // Stage into a sibling dir first (see Builder). Own the staging tree so
-          // renamed/removed collections cannot leave stale allX.js / getX.js
-          // modules. Integrations rewrite their files after; live output swaps
-          // only when the full build succeeds.
-          yield* removeQuiet(outputDir);
-          yield* fs.makeDirectory(outputDir, { recursive: true });
-          yield* writeText(path.join(outputDir, ".keep"), "");
-          yield* writeDataModules(config, outputDir, rootDir, built, derived);
-          yield* writeIndexJs(config, outputDir, built, derived);
-          yield* writeIndexDts(config, outputDir, configPath, built, derived);
-        });
+      }) {
+        const { config, configPath, rootDir, outputDir, built } = options;
+        const derived = resolveViews(config.views ?? [], built, rootDir);
+        // Stage into a sibling dir first (see Builder). Own the staging tree so
+        // renamed/removed collections cannot leave stale allX.js / getX.js
+        // modules. Integrations rewrite their files after; live output swaps
+        // only when the full build succeeds.
+        yield* removeQuiet(outputDir);
+        yield* fs.makeDirectory(outputDir, { recursive: true });
+        yield* writeText(path.join(outputDir, ".keep"), "");
+        yield* writeDataModules(config, outputDir, rootDir, built, derived);
+        yield* writeIndexJs(config, outputDir, built, derived);
+        yield* writeIndexDts(config, outputDir, configPath, built, derived);
+      });
 
       return Generator.of({ write });
     }),

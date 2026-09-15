@@ -1,6 +1,10 @@
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createSearcher, type AnhurOramaIndex } from "@anhur/orama/client";
+import {
+  createSearcher,
+  isAnhurOramaIndex,
+  type AnhurOramaIndex,
+} from "@anhur/orama/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer, type ViteDevServer } from "vite";
 import { anhur } from "../../src/index";
@@ -32,23 +36,34 @@ async function waitFor<T>(
   throw new Error(`Timed out waiting for ${label}`);
 }
 
+function isFullReload<T>(payload: T): payload is T & { type: "full-reload" } {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    "type" in payload &&
+    payload.type === "full-reload"
+  );
+}
+
 function trackFullReloads(server: ViteDevServer) {
   const reloads: ReloadPayload[] = [];
   const original = server.ws.send.bind(server.ws);
-  server.ws.send = ((payload: ReloadPayload) => {
-    if (payload?.type === "full-reload") {
+  type WsSend = ViteDevServer["ws"]["send"];
+  // SAFETY: wrapper only inspects full-reload payloads; remaining overloads match original send.
+  server.ws.send = ((payload: Parameters<WsSend>[0]) => {
+    if (isFullReload(payload)) {
       reloads.push(payload);
     }
-    return original(payload as never);
-  }) as typeof server.ws.send;
+    return original(payload);
+  }) as WsSend;
   return reloads;
 }
 
 async function readOramaIndex(root: string): Promise<AnhurOramaIndex | null> {
   try {
     const raw = await readFile(path.join(root, ORAMA_INDEX), "utf8");
-    const snapshot = JSON.parse(raw) as AnhurOramaIndex;
-    if (snapshot?.version !== 2 || !Array.isArray(snapshot.documents)) {
+    const snapshot = JSON.parse(raw);
+    if (!isAnhurOramaIndex(snapshot)) {
       return null;
     }
     return snapshot;

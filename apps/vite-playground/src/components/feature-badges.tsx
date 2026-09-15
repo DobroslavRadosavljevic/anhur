@@ -1,14 +1,10 @@
-import { Badge } from "~/components/ui/badge";
+import { FeatureBadge } from "~/components/feature-badge";
 
-export function FeatureBadge({ children }: { children: React.ReactNode }) {
-  return (
-    <Badge variant="secondary" className="font-mono text-[0.7rem]">
-      {children}
-    </Badge>
-  );
-}
+type FeatureBadgesProps = {
+  items: string[];
+};
 
-export function FeatureBadges({ items }: { items: string[] }) {
+export function FeatureBadges({ items }: FeatureBadgesProps) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {items.map((item) => (

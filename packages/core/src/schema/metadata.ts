@@ -32,7 +32,7 @@ export type DocumentMetadata = {
 /**
  * Reading time + word count from the field value or document body.
  */
-export function metadata(): z.ZodType<DocumentMetadata> {
+export function metadata() {
   return z
     .string()
     .optional()
@@ -62,5 +62,5 @@ export function metadata(): z.ZodType<DocumentMetadata> {
         readingTime: time === 0 ? 1 : time,
         wordCount: Math.round(wordCount),
       };
-    }) as unknown as z.ZodType<DocumentMetadata>;
+    });
 }

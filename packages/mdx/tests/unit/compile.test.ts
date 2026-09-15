@@ -18,7 +18,7 @@ describe("compileMdx", () => {
 
   it("can disable gfm", async () => {
     const code = await compileMdx("~~strike~~", { gfm: false });
-    expect(typeof code).toBe("string");
+    expect(code.length).toBeGreaterThan(0);
   });
 });
 

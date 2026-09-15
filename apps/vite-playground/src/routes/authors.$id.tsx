@@ -1,7 +1,13 @@
-import { Link, createFileRoute, notFound } from "@tanstack/react-router";
+import {
+  Link,
+  createFileRoute,
+  notFound,
+  useLoaderData,
+} from "@tanstack/react-router";
 import { getAuthor } from "anhur/generated";
 import { FeatureBadges } from "~/components/feature-badges";
 import { buttonVariants } from "~/components/ui/button";
+import { Img } from "~/components/ui/img";
 import { cn } from "~/lib/utils";
 
 export const Route = createFileRoute("/authors/$id")({
@@ -14,7 +20,7 @@ export const Route = createFileRoute("/authors/$id")({
 });
 
 function AuthorDetail() {
-  const { author } = Route.useLoaderData();
+  const { author } = useLoaderData({ from: "/authors/$id" });
 
   return (
     <article className="space-y-6">
@@ -26,7 +32,7 @@ function AuthorDetail() {
       </Link>
       <div className="flex items-start gap-4">
         {author.avatar ? (
-          <img
+          <Img
             src={author.avatar.src}
             alt=""
             className="size-24 rounded-xl border object-cover"

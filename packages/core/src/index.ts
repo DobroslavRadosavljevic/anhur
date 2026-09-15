@@ -48,8 +48,6 @@ export {
   type AnhurConfig,
   type DocumentWithMeta,
   type TransformDocument,
-  type DocumentTransform,
-  type TransformContext,
   type InferSchemaData,
   type InferDocument,
   type InferViewData,
@@ -142,6 +140,7 @@ export {
   type AssetsStorageFilesInput,
   type AssetsStorageOptions,
   type AssetStorageClient,
+  type AssetUploadResult,
   type BuildContext,
   type CreateBuildContextOptions,
   type EmittedAsset,
@@ -200,17 +199,22 @@ export {
   type ZodTypeAny,
 } from "./schema";
 
+export type {
+  BuiltContentSnapshot,
+  CollectionOnSuccess,
+  CompleteContext,
+  CompleteHook,
+  DocumentTransform,
+  PrepareHook,
+  SingletonOnSuccess,
+  TransformContext,
+} from "./transform-types";
+
 export {
   createTransformContext,
   toTransformDocument,
   toBuiltSnapshots,
   type TransformableSource,
-  type BuiltContentSnapshot,
-  type PrepareHook,
-  type CompleteContext,
-  type CompleteHook,
-  type CollectionOnSuccess,
-  type SingletonOnSuccess,
 } from "./transform";
 
 export {
@@ -242,24 +246,18 @@ export {
   type Loader,
 } from "./loaders";
 
-export {
-  build,
-  buildEffect,
-  loadConfig,
-  resolveConfigPath,
-  type BuildOptions,
-  type BuildResult,
-  type BuildError,
-  type BuiltSource,
-} from "./build";
+export { build, loadConfig, buildEffect, resolveConfigPath } from "./build";
+export type { BuildOptions, BuildResult, BuildError } from "./services/builder";
+export type { BuiltSource } from "./services/generator";
 
-export {
-  watch,
-  watchEffect,
-  type WatchController,
-  type WatchHandlers,
-  type WatchOptions,
-} from "./watch";
+export { watch } from "./cli/host";
+
+export { watchEffect } from "./watch";
+export type {
+  WatchController,
+  WatchHandlers,
+  WatchOptions,
+} from "./services/watcher";
 
 export {
   collectWatchPaths,
@@ -280,9 +278,9 @@ export {
   ReferenceFailedError,
   LoaderNotFoundError,
   LoaderFailedError,
-  type ValidationIssue,
   type AnhurError,
 } from "./errors";
+export type { ValidationIssue } from "./errors-content";
 
 export { validateWithSchema } from "./validate";
 

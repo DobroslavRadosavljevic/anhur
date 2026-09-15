@@ -21,6 +21,7 @@ let cache: Cache | undefined;
 
 async function loadSearcher(): Promise<Searcher> {
   const raw = await readFile(indexPath, "utf8");
+  // SAFETY: Anhur complete writes this file as AnhurOramaIndex JSON.
   const snapshot = JSON.parse(raw) as AnhurOramaIndex;
   return createSearcher(snapshot);
 }

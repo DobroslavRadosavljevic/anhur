@@ -29,7 +29,7 @@ const features = [
   {
     to: "/search",
     title: "Search",
-    count: null as number | null,
+    count: null,
     description:
       "Orama full-text index built in complete — browser restore and server function over the same snapshot.",
     badges: [
@@ -202,14 +202,70 @@ function Home() {
               </CardHeader>
               <CardContent className="mt-auto space-y-4">
                 <FeatureBadges items={[...feature.badges]} />
-                <Link
-                  to={feature.to}
-                  className={cn(
-                    buttonVariants({ variant: "outline", size: "sm" }),
-                  )}
-                >
-                  Open
-                </Link>
+                {feature.to === "/search" ? (
+                  <Link
+                    to="/search"
+                    className={cn(
+                      buttonVariants({ variant: "outline", size: "sm" }),
+                    )}
+                  >
+                    Open
+                  </Link>
+                ) : feature.to === "/posts" ? (
+                  <Link
+                    to="/posts"
+                    className={cn(
+                      buttonVariants({ variant: "outline", size: "sm" }),
+                    )}
+                  >
+                    Open
+                  </Link>
+                ) : feature.to === "/pages" ? (
+                  <Link
+                    to="/pages"
+                    className={cn(
+                      buttonVariants({ variant: "outline", size: "sm" }),
+                    )}
+                  >
+                    Open
+                  </Link>
+                ) : feature.to === "/authors" ? (
+                  <Link
+                    to="/authors"
+                    className={cn(
+                      buttonVariants({ variant: "outline", size: "sm" }),
+                    )}
+                  >
+                    Open
+                  </Link>
+                ) : feature.to === "/products" ? (
+                  <Link
+                    to="/products"
+                    className={cn(
+                      buttonVariants({ variant: "outline", size: "sm" }),
+                    )}
+                  >
+                    Open
+                  </Link>
+                ) : feature.to === "/changelog" ? (
+                  <Link
+                    to="/changelog"
+                    className={cn(
+                      buttonVariants({ variant: "outline", size: "sm" }),
+                    )}
+                  >
+                    Open
+                  </Link>
+                ) : (
+                  <Link
+                    to="/about"
+                    className={cn(
+                      buttonVariants({ variant: "outline", size: "sm" }),
+                    )}
+                  >
+                    Open
+                  </Link>
+                )}
               </CardContent>
             </Card>
           ))}

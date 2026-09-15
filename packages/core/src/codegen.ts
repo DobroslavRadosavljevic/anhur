@@ -13,6 +13,12 @@ import {
   type GenerateSplit,
   type ListSort,
 } from "./config";
+import type { DocumentFields, DocumentNode } from "./document-fields";
+import {
+  isDocumentFields,
+  isNonEmptyString,
+  isNumberNode,
+} from "./document-fields";
 
 export const DEFAULT_LIST_OMIT = ["body"] as const;
 export const DEFAULT_LOOKUP_BY = ["slug"] as const;
@@ -57,7 +63,7 @@ export function resolveListOmit(
  */
 export function effectiveListOmit(
   listOmit: readonly string[],
-  documents: readonly { data: Record<string, unknown> }[],
+  documents: readonly { data: DocumentFields }[],
 ): readonly string[] {
   if (listOmit.length === 0 || documents.length === 0) return listOmit;
   const present = new Set<string>();
@@ -85,22 +91,26 @@ export function toPublicFilePath(
   return fallbackRelativePath.replace(/\\/g, "/");
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object") return false;
+function isPlainObject(value: DocumentNode): value is DocumentFields {
+  if (!isDocumentFields(value)) return false;
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }
 
-function rewriteMetaFilePaths(value: unknown, rootDir: string): unknown {
+function rewriteMetaFilePaths(
+  value: DocumentNode,
+  rootDir: string,
+): DocumentNode {
   if (Array.isArray(value)) {
     return value.map((item) => rewriteMetaFilePaths(item, rootDir));
   }
   if (!isPlainObject(value)) {
     return value;
   }
-  const out: Record<string, unknown> = {};
+  const out: DocumentFields = {};
   for (const [key, child] of Object.entries(value)) {
     if (key === "_meta" && isPlainObject(child)) {
+      // SAFETY: preserves the existing runtime contract for this assignment.
       const meta = child as ContentMeta;
       out[key] = {
         ...meta,
@@ -114,41 +124,33 @@ function rewriteMetaFilePaths(value: unknown, rootDir: string): unknown {
 }
 
 export function toDocumentExport(
-  data: Record<string, unknown>,
+  data: DocumentFields,
   meta: ContentMeta,
   rootDir?: string,
-): Record<string, unknown> {
+): DocumentFields {
   const document = {
     ...data,
     _meta: meta,
   };
   if (rootDir === undefined) return document;
-  return rewriteMetaFilePaths(document, rootDir) as Record<string, unknown>;
+  // SAFETY: rewriteMetaFilePaths returns the same document object tree.
+  return rewriteMetaFilePaths(document, rootDir) as DocumentFields;
 }
 
 /** List row: full document minus omitted heavy fields (including nested embeds). */
 export function toListExport(
-  data: Record<string, unknown>,
+  data: DocumentFields,
   meta: ContentMeta,
   listOmit: readonly string[],
   rootDir?: string,
-): Record<string, unknown> {
+): DocumentFields {
   const full = toDocumentExport(data, meta, rootDir);
   if (listOmit.length === 0) return full;
   return omitListFieldsDeep(full, listOmit);
 }
 
-function isEmbeddedDocumentValue(
-  value: unknown,
-): value is Record<string, unknown> {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    "_meta" in value &&
-    typeof (value as { _meta: unknown })._meta === "object" &&
-    (value as { _meta: unknown })._meta !== null
-  );
+function isEmbeddedDocumentValue(value: DocumentNode): value is DocumentFields {
+  return isDocumentFields(value) && "_meta" in value && value._meta != null;
 }
 
 /**
@@ -156,12 +158,12 @@ function isEmbeddedDocumentValue(
  * (`s.reference(..., { embed: true })` results — objects with `_meta`).
  */
 export function omitListFieldsDeep(
-  document: Record<string, unknown>,
+  document: DocumentFields,
   listOmit: readonly string[],
-): Record<string, unknown> {
+): DocumentFields {
   if (listOmit.length === 0) return document;
   const omit = new Set(listOmit);
-  const out: Record<string, unknown> = {};
+  const out: DocumentFields = {};
   for (const [key, value] of Object.entries(document)) {
     if (key === "_meta") {
       out[key] = value;
@@ -174,9 +176,9 @@ export function omitListFieldsDeep(
 }
 
 function lightenListValue(
-  value: unknown,
+  value: DocumentNode,
   listOmit: readonly string[],
-): unknown {
+): DocumentNode {
   if (Array.isArray(value)) {
     return value.map((item) => lightenListValue(item, listOmit));
   }
@@ -372,7 +374,7 @@ export function resolveSingletonGenerate(
   };
 }
 
-export function sortByListSort<T extends Record<string, unknown>>(
+export function sortByListSort<T extends DocumentFields>(
   items: readonly T[],
   listSort: ListSort | undefined,
 ): T[] {
@@ -386,7 +388,7 @@ export function sortByListSort<T extends Record<string, unknown>>(
     if (av == null && bv == null) return 0;
     if (av == null) return 1;
     if (bv == null) return -1;
-    if (typeof av === "number" && typeof bv === "number") {
+    if (isNumberNode(av) && isNumberNode(bv)) {
       return (av - bv) * dir;
     }
     return String(av).localeCompare(String(bv)) * dir;
@@ -436,16 +438,16 @@ export function getterQueryTypeFields(
  * Generated getters inline equivalent logic.
  */
 export function pickLookupKeyPart(
-  query: Record<string, unknown>,
+  query: DocumentFields,
   lookupBy: readonly string[],
 ): string | undefined {
-  if (typeof query.id === "string" && query.id.length > 0) {
+  if (isNonEmptyString(query.id)) {
     return query.id;
   }
   for (const field of lookupBy) {
     if (field === "id") continue;
     const value = query[field];
-    if (typeof value === "string" && value.length > 0) {
+    if (isNonEmptyString(value)) {
       return value;
     }
   }
@@ -453,13 +455,13 @@ export function pickLookupKeyPart(
 }
 
 export function collectStringFieldValues(
-  documents: readonly { data: Record<string, unknown> }[],
+  documents: readonly { data: DocumentFields }[],
   field: string,
 ): string[] {
   const values: string[] = [];
   for (const doc of documents) {
     const value = doc.data[field];
-    if (typeof value === "string" && value.length > 0) {
+    if (isNonEmptyString(value)) {
       values.push(value);
     }
   }

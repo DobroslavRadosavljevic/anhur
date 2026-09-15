@@ -30,11 +30,13 @@ export function isRelativeAssetUrl(value: string): boolean {
   return !isPassThroughUrl(value);
 }
 
-/** Split `./file.png?w=800#icon` into a filesystem path and the `?`/`#` suffix. */
-export function splitAssetUrl(value: string): {
+export type SplitAssetUrl = {
   pathname: string;
   suffix: string;
-} {
+};
+
+/** Split `./file.png?w=800#icon` into a filesystem path and the `?`/`#` suffix. */
+export function splitAssetUrl(value: string): SplitAssetUrl {
   const trimmed = value.trim();
   const hashIdx = trimmed.indexOf("#");
   const queryIdx = trimmed.indexOf("?");

@@ -12,6 +12,7 @@ import {
   defineConfig,
   syncEmittedAssetsStorage,
   schema as s,
+  type AssetStorageClient,
 } from "@anhur/core";
 import { assets } from "../../src/schema";
 
@@ -25,6 +26,18 @@ function isDockerAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+function toAssetStorageClient(client: Files): AssetStorageClient {
+  return {
+    async upload(key, body, opts) {
+      await client.upload(key, body, opts);
+    },
+    exists: (key) => client.exists(key),
+    delete: (key) =>
+      Array.isArray(key) ? client.delete(key) : client.delete(key),
+    listAll: (opts) => client.listAll(opts),
+  };
 }
 
 const dockerAvailable = isDockerAvailable();
@@ -98,7 +111,7 @@ describe.skipIf(!dockerAvailable)(
             base: `http://cdn.test/anhur/`,
             storage: {
               enabled: true,
-              files: () => files,
+              files: () => toAssetStorageClient(files),
               prefix,
               prune: opts?.prune ?? true,
               dryRun: opts?.dryRun ?? false,

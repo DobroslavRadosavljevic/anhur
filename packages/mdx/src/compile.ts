@@ -21,19 +21,26 @@ export type MdxDocumentInput = {
  *
  * Prefer `m.mdx()` in collection schemas. This function is the low-level API.
  */
+function isMdxDocumentInput(
+  source: string | MdxDocumentInput,
+): source is MdxDocumentInput {
+  return typeof source !== "string";
+}
+
 export async function compileMdx(
   source: string | MdxDocumentInput,
   options: CompileMdxOptions = {},
 ): Promise<string> {
   const { gfm = true, remarkPlugins, ...rest } = options;
 
-  const value = typeof source === "string" ? source : source.content;
-  const path = typeof source === "string" ? undefined : source.filePath;
+  const value = isMdxDocumentInput(source) ? source.content : source;
+  const path = isMdxDocumentInput(source) ? source.filePath : undefined;
 
-  const plugins = [
+  const extraPlugins = remarkPlugins ?? [];
+  const plugins: CompileOptions["remarkPlugins"] = [
     ...(gfm ? [remarkGfm] : []),
-    ...((remarkPlugins as NonNullable<CompileOptions["remarkPlugins"]>) ?? []),
-  ] as CompileOptions["remarkPlugins"];
+    ...extraPlugins,
+  ];
 
   const file = await compile(path ? { value, path } : value, {
     ...rest,

@@ -57,6 +57,8 @@
     "@testcontainers/minio": "^12.1.0",
     "@types/mdast": "^4.0.4",
     "@types/node": "^22.20.2",
+    "@types/unist": "^3.0.3",
+    "bellona": "0.4.7",
     "files-sdk": "^2.4.1",
     "mdast": "^3.0.0",
     "oxfmt": "^0.68.0",
