@@ -15,7 +15,7 @@ description: >-
   .anhur, cms/, folder i18n, or local MD/MDX/YAML/JSON content pipelines.
 license: MIT
 metadata:
-  version: "0.0.14"
+  version: "0.1.0"
   packages: "@anhur/core,@anhur/vite,@anhur/mdx,@anhur/markdown,@anhur/assets,@anhur/orama"
 ---
 

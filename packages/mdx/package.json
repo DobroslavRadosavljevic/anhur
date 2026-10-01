@@ -1,6 +1,6 @@
 {
   "name": "@anhur/mdx",
-  "version": "0.0.14",
+  "version": "0.1.0",
   "description": "MDX fields for @anhur/core and a cached React renderer",
   "keywords": [
     "anhur",

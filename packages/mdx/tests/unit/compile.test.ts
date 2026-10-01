@@ -127,9 +127,9 @@ describe("compileMdx", () => {
   });
 
   it("has a cache version covering MDX internals and the package versions", () => {
+    expect(COMPILER_VERSION).toMatch(/(^|,)@anhur\/mdx@\d+\.\d+\.\d+/);
+    expect(COMPILER_VERSION).toMatch(/(^|,)@anhur\/core@\d+\.\d+\.\d+/);
     for (const name of [
-      "@anhur/mdx@0.0.14",
-      "@anhur/core@0.0.14",
       "remark-mdx@",
       "mdast-util-to-hast@",
       "github-slugger@",

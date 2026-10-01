@@ -938,11 +938,13 @@ async function verifyAll(packages: PackageInfo[]): Promise<void> {
 async function setAllVersions(version: string): Promise<void> {
   const packages = await loadPublishablePackages();
   for (const info of packages) {
-    const pkg = await readPackageJson(info.pkgPath);
-    await writeFile(
-      info.pkgPath,
-      `${JSON.stringify({ ...pkg, version }, null, 2)}\n`,
-    );
+    // Replace only the version value, so the file keeps its formatting.
+    const text = await readFile(info.pkgPath, "utf8");
+    const pattern = /^(\s*"version"\s*:\s*)"[^"]*"/m;
+    if (!pattern.test(text)) {
+      throw new Error(`${info.pkgPath} has no "version" field`);
+    }
+    await writeFile(info.pkgPath, text.replace(pattern, `$1"${version}"`));
     console.log(`set ${info.name} → ${version}`);
   }
   // Refresh bun.lock workspace package versions so a raw `bun pm pack`

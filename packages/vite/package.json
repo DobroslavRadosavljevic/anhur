@@ -1,6 +1,6 @@
 {
   "name": "@anhur/vite",
-  "version": "0.0.14",
+  "version": "0.1.0",
   "description": "Vite plugin for @anhur/core: builds content, rebuilds on change, error overlay, serves assets",
   "keywords": [
     "anhur",

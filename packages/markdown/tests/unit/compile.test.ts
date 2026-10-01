@@ -138,10 +138,9 @@ describe("cache keys", () => {
       expect(COMPILER_VERSION).toContain(name);
     }
     expect(COMPILER_VERSION).not.toContain("unknown");
-    expect(COMPILER_VERSION.split(",").slice(0, 2)).toEqual([
-      "@anhur/markdown@0.0.14",
-      "@anhur/core@0.0.14",
-    ]);
+    const [own, core] = COMPILER_VERSION.split(",");
+    expect(own).toMatch(/^@anhur\/markdown@\d+\.\d+\.\d+/);
+    expect(core).toMatch(/^@anhur\/core@\d+\.\d+\.\d+/);
   });
 
   it("report headings only when heading ids are on", () => {

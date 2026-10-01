@@ -1,6 +1,6 @@
 {
   "name": "@anhur/core",
-  "version": "0.0.14",
+  "version": "0.1.0",
   "description": "Typed content from Markdown, MDX, YAML and JSON files: define collections, validate with Zod, import generated modules",
   "keywords": [
     "content",

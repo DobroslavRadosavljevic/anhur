@@ -1,6 +1,6 @@
 {
   "name": "@anhur/assets",
-  "version": "0.0.14",
+  "version": "0.1.0",
   "description": "Image and file fields for @anhur/core: content-hashed copies, sizes, blur placeholders, optional CDN upload",
   "keywords": [
     "anhur",

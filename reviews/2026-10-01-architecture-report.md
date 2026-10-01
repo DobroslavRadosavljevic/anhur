@@ -423,7 +423,7 @@ All of the following were run on the branch:
 ## 11. Known limits and open items
 
 - **Not committed.** About 310 changed paths on `rework/architecture`. The CI workflow has never run on GitHub.
-- **Version.** The API changed in breaking ways, but every package is still `0.0.14`. A bump (for example `0.1.0`) is a release decision.
+- **Version.** The API changed in breaking ways; the release is `0.1.0` (see `CHANGELOG.md`).
 - **Not tested:**
   - Windows (paths, case, drive letters);
   - Linux file watching (the clean-checkout CI run was on macOS; GitHub CI will cover Linux);
