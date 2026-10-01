@@ -1,55 +1,41 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { readHitStore } from "~/lib/search-store";
+
+/** Longest accepted query; longer input is rejected before tokenizing. */
+const MAX_TERM_LENGTH = 200;
 
 const searchInput = z.object({
-  term: z.string(),
-  collection: z.string().optional(),
-  locale: z.string().optional(),
+  term: z.string().trim().max(MAX_TERM_LENGTH),
+  locale: z.enum(["en", "de"]),
+  collection: z.enum(["posts", "pages", "products", "changelog"]).optional(),
   limit: z.number().int().positive().max(50).optional(),
 });
 
-const hitStore = z.object({
-  title: z.string().optional(),
-  name: z.string().optional(),
-  slug: z.string().optional(),
-  summary: z.string().optional(),
-  sku: z.string().optional(),
-  price: z.string().optional(),
-  date: z.string().optional(),
-  href: z.string().optional(),
-});
-
 /**
- * Server-side search over the same Orama index the browser can load.
- * Index IO stays inside the handler so the client bundle never pulls `node:fs`.
+ * Server-side search over the same generated index the browser loads.
+ * Index loading stays inside the handler so the client bundle never
+ * includes it twice.
  */
 export const searchContent = createServerFn({ method: "GET" })
   .validator((data) => searchInput.parse(data))
   .handler(async ({ data }) => {
     const { getSearcher } = await import("~/lib/search-index.server");
-    const searcher = await getSearcher();
-    const result = data.collection
-      ? await searcher.searchCollection(data.collection, {
-          term: data.term,
-          locale: data.locale,
-          limit: data.limit,
-        })
-      : await searcher.search({
-          term: data.term,
-          locale: data.locale,
-          limit: data.limit,
-        });
-
+    const searcher = await getSearcher(data.locale);
+    const result = await searcher.search({
+      term: data.term,
+      collection: data.collection,
+      limit: data.limit,
+    });
     return {
       count: result.count,
-      elapsed: result.elapsed,
+      elapsed: result.elapsed.formatted,
       hits: result.hits.map((hit) => ({
         id: hit.id,
         score: hit.score,
         collection: hit.collection,
-        locale: hit.locale,
         documentId: hit.documentId,
-        store: hitStore.parse(hit.store),
+        store: readHitStore(hit.store),
       })),
     };
   });

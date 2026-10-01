@@ -1,18 +1,28 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
+  "globalDependencies": ["tsconfig.base.json"],
   "tasks": {
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".output/**"]
+    },
+    "generate": {
+      "dependsOn": ["^build"],
+      "outputs": [".anhur/**"]
     },
     "dev": {
       "cache": false,
       "persistent": true
     },
     "check-types": {
-      "dependsOn": ["^check-types"]
+      "dependsOn": ["transit"]
     },
-    "lint": {},
+    "lint": {
+      "dependsOn": ["transit"]
+    },
     "lint:fix": {
       "cache": false
     },
@@ -20,7 +30,11 @@
     "format:fix": {
       "cache": false
     },
-    "test": {},
-    "test:integration": {}
+    "test": {
+      "dependsOn": ["transit"]
+    },
+    "test:integration": {
+      "dependsOn": ["transit"]
+    }
   }
 }

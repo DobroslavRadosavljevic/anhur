@@ -1,13 +1,12 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: ["./src/index.ts", "./src/client.ts"],
+  entry: ["./src/index.ts", "./src/client/index.ts"],
   format: "esm",
-  dts: true,
-  platform: "node",
+  // No source maps: they would point at `src/`, which is not published.
+  sourcemap: false,
+  dts: { sourcemap: false },
+  platform: "neutral",
   fixedExtension: false,
   clean: true,
-  exports: {
-    devExports: true,
-  },
 });

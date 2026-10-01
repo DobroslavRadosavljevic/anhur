@@ -1,300 +1,116 @@
+/**
+ * `@anhur/core` — define content: collections, singletons, views, schema
+ * helpers, and the types generated modules use. The build engine lives in
+ * `@anhur/core/build`; plugin authoring APIs in `@anhur/core/plugin`.
+ */
 export {
-  collectionConstName,
-  singletonConstName,
-  generateTypeName,
-  generateDocumentTypeName,
-  generateCollectionArrayTypeName,
-  singularizePascal,
-  isCollection,
-  isSingleton,
-  isView,
-  isIndex,
-  isGroup,
-  isDerived,
-  isLocalized,
-  resolveLocalization,
   defineCollection,
   defineSingleton,
+  createSkippedSignal,
+  isSkippedSignal,
+  type DefineCollectionInput,
+  type DefineSingletonInput,
+  type DataFromTransformOut,
+} from "./define/content";
+export {
   defineView,
   defineIndex,
   defineGroup,
   createDerivedHelpers,
-  defineConfig,
-  type ContentMeta,
-  type Localization,
-  type FolderLocalization,
-  type ContentSchema,
-  type GenerateSplit,
-  type ListSort,
-  type CollectionGenerateOptions,
-  type SingletonGenerateOptions,
-  type DerivedGenerateOptions,
-  type ViewGenerateOptions,
-  type IndexGenerateOptions,
-  type GroupGenerateOptions,
-  type CollectionDefinition,
-  type SingletonDefinition,
-  type ViewDefinition,
-  type IndexDefinition,
-  type GroupDefinition,
-  type ViewContext,
-  type AnyCollection,
-  type AnySingleton,
-  type AnyContent,
-  type AnyView,
-  type AnyIndex,
-  type AnyGroup,
-  type AnyDerived,
-  type AnhurConfig,
-  type DocumentWithMeta,
-  type TransformDocument,
-  type InferSchemaData,
-  type InferDocument,
-  type InferViewData,
-  type RemapEmbeddedRefs,
-  type RemappedCollectionDocument,
-  type OmitListFields,
-  type ConfigLocale,
-  type ContentMetaFor,
-  type DocumentForConfig,
-  type GetTypeByName,
-  type GetViewByName,
-  type DerivedName,
-  type DefineCollectionInput,
-  type DefineSingletonInput,
-  type DefineViewSingleInput,
-  type DefineViewMultiInput,
-} from "./config";
-
-export {
-  DEFAULT_LIST_OMIT,
-  DEFAULT_LOOKUP_BY,
-  collectionGetterName,
-  documentLookupKey,
-  documentModuleBasename,
-  effectiveListOmit,
-  omitKeysUnionType,
-  resolveListOmit,
-  resolveCollectionGenerate,
-  resolveSingletonGenerate,
-  resolveViewGenerate,
-  resolveIndexGenerate,
-  resolveGroupGenerate,
-  sortByListSort,
-  literalUnionType,
-  getterQueryTypeFields,
-  pickLookupKeyPart,
-  collectStringFieldValues,
-  collectDocumentIds,
-  toDocumentExport,
-  toListExport,
-  omitListFieldsDeep,
-  toPublicFilePath,
-  type ResolvedCollectionGenerate,
-  type ResolvedSingletonGenerate,
-  type ResolvedViewGenerate,
-  type ResolvedIndexGenerate,
-  type ResolvedGroupGenerate,
-} from "./codegen";
-
-export {
-  resolveViews,
-  resolveViewListItems,
-  resolveIndexRecord,
-  resolveGroupEntries,
-  createViewContext,
-  type BuiltView,
-  type BuiltIndex,
-  type BuiltGroup,
-  type BuiltDerived,
-  type ViewBuiltSource,
-} from "./views";
-export {
-  defineProcessor,
-  findProcessor,
-  type ProcessorPlugin,
-} from "./processors";
-
-export {
-  clearIntegrationHandlers,
-  createIntegrationConfigEntry,
-  defineIntegration,
-  getIntegrationHandler,
-  registerIntegration,
-  runIntegrations,
-  type IntegrationConfigEntry,
-  type IntegrationDefinition,
-  type IntegrationHandler,
-  type IntegrationInput,
-  type IntegrationRuntimeContext,
-} from "./integrations";
-
-export {
-  ASSETS_PROCESSOR_ID,
-  createBuildContext,
-  getBuildContext,
-  pruneEmittedAssets,
-  resolveAssetsConfig,
-  withBuildContext,
-  type AssetsProcessorOptions,
-  type AssetsStorageFilesInput,
-  type AssetsStorageOptions,
-  type AssetStorageClient,
-  type AssetUploadResult,
-  type BuildContext,
-  type CreateBuildContextOptions,
-  type EmittedAsset,
-  type ResolvedAssetsConfig,
-} from "./build-context";
-
-export {
-  joinPublicAssetBase,
-  resolvePublicAndLocalAssetBases,
-  assetsOutDirSegment,
-  relativeAssetRequestPath,
-  isRemoteAssetBase,
-  ensureTrailingSlash,
-  normalizeAppPublicBase,
-} from "./asset-urls";
-
-export {
-  parseSrcset,
-  serializeSrcset,
-  collectSrcsetUrls,
-  mapSrcsetUrls,
-  isSrcsetAttrName,
-  isLinkedAssetAttrName,
-  collectHtmlAssetUrls,
-  rewriteHtmlAssetAttrValue,
-  matchHtmlAssetAttrs,
-  type SrcsetCandidate,
-} from "./srcset";
-
-export { fingerprintCacheValue } from "./cache-fingerprint";
-
-export {
-  formatAssetsStorageLogLines,
-  syncEmittedAssetsStorage,
-  type AssetsStorageSyncResult,
-} from "./assets-storage";
-
-export {
-  getDocumentMeta,
-  withDocumentMeta,
-  type DocumentMeta,
-} from "./document-meta";
-
-export {
-  schema,
-  type UniqueOptions,
-  type SlugOptions,
-  type ReferenceOptions,
-  type EmbeddedDocument,
-  type ExcerptOptions,
-  type DocumentMetadata,
-  type TocEntry,
-  type TocOptions,
-  type InferZod,
-  type ZodType,
-  type ZodTypeAny,
-} from "./schema";
-
+  type DefineView,
+  type DefineIndex,
+  type DefineGroup,
+  type DerivedHelpers,
+  type TypedViewContext,
+  type ViewSourceDocument,
+} from "./define/derived";
+export { defineConfig } from "./define/config";
+export { schema } from "./schema";
 export type {
+  ExcerptOptions,
+  DocumentMetadata,
+  SlugOptions,
+  IsoDateOptions,
+  ReferenceOptions,
+} from "./schema/builtin-fields";
+export type { TocEntry, TocOptions } from "./schema/toc";
+export type {
+  AnhurConfig,
+  AnyCollection,
+  AnyContent,
+  AnyDerived,
+  AnyGroup,
+  AnyIndex,
+  AnySingleton,
+  AnyView,
   BuiltContentSnapshot,
+  CollectionDefinition,
+  CollectionGenerateOptions,
   CollectionOnSuccess,
   CompleteContext,
   CompleteHook,
+  ContentSchema,
+  DerivedGenerateOptions,
   DocumentTransform,
+  FolderLocalization,
+  GenerateSplit,
+  GroupDefinition,
+  GroupGenerateOptions,
+  IndexDefinition,
+  IndexGenerateOptions,
+  ListSort,
+  Localization,
   PrepareHook,
+  SchemaDocument,
+  SchemaOutput,
+  SingletonDefinition,
+  SingletonGenerateOptions,
   SingletonOnSuccess,
+  SkippedSignal,
   TransformContext,
-} from "./transform-types";
-
-export {
-  createTransformContext,
-  toTransformDocument,
-  toBuiltSnapshots,
-  type TransformableSource,
-} from "./transform";
-
-export {
-  createSkippedSignal,
-  isSkippedSignal,
-  skippedSymbol,
-  type SkippedSignal,
-} from "./skip";
-
-export { createPersistCache, type PersistCache } from "./persist-cache";
-
-export {
-  resolvePendingReferences,
-  type ReferenceBy,
-  type ReferenceResolveFailure,
-} from "./relations";
-
-export { isReferenceMarker, type ReferenceMarker } from "./schema/reference";
-
-export {
-  builtinLoaders,
-  defineLoader,
-  findLoader,
-  resolveLoaders,
-  matterLoader,
-  yamlLoader,
-  jsonLoader,
-  type LoadedFile,
-  type Loader,
-} from "./loaders";
-
-export { build, loadConfig, buildEffect, resolveConfigPath } from "./build";
-export type { BuildOptions, BuildResult, BuildError } from "./services/builder";
-export type { BuiltSource } from "./services/generator";
-
-export { watch } from "./cli/host";
-
-export { watchEffect } from "./watch";
+  TransformDocument,
+  ViewContext,
+  ViewDefinition,
+  ViewGenerateOptions,
+} from "./define/types";
 export type {
-  WatchController,
-  WatchHandlers,
-  WatchOptions,
-} from "./services/watcher";
-
+  ConfigLocale,
+  ContentMetaFor,
+  DerivedName,
+  DocumentForConfig,
+  EmbeddedDocument,
+  GetTypeByName,
+  GetViewByName,
+  InferDocument,
+  InferSchemaData,
+  InferViewData,
+  TypedConfig,
+  OmitListFields,
+  RemapEmbeddedRefs,
+  UnboundEmbed,
+  AlignEmbeddedRefs,
+  HideEmbeddedRefs,
+} from "./define/infer";
+export type {
+  ContentMeta,
+  DocumentFields,
+  DocumentValue,
+  DocumentWithMeta,
+  FieldPath,
+} from "./document";
 export {
-  collectWatchPaths,
-  canonicalizePath,
-  isAnhurWatchTarget,
-  isUnderWatchPath,
-} from "./watch-paths";
-
-export {
-  formatAnhurError,
-  ConfigNotFoundError,
-  ConfigInvalidError,
-  LocalizationConfigError,
-  SingletonMissingError,
-  SingletonAmbiguousError,
-  ValidationFailedError,
-  TransformFailedError,
-  ReferenceFailedError,
-  LoaderNotFoundError,
-  LoaderFailedError,
-  type AnhurError,
-} from "./errors";
-export type { ValidationIssue } from "./errors-content";
-
-export { validateWithSchema } from "./validate";
-
-export {
-  ConfigLoader,
-  type LoadConfigResult,
-  type LoadConfigError,
-} from "./services/config-loader";
-export {
-  ContentCollector,
-  type CollectedDocument,
-  type CollectError,
-} from "./services/content-collector";
-export { Generator } from "./services/generator";
-export { Builder } from "./services/builder";
-export { Watcher } from "./services/watcher";
-export { layer as nodeLiveLayer } from "./layers/node-live";
+  AnhurBuildError,
+  isAnhurBuildError,
+  formatDiagnostic,
+  formatDiagnostics,
+  type Diagnostic,
+  type DiagnosticCode,
+  type DiagnosticSeverity,
+} from "./diagnostics";
+export type {
+  AnhurPlugin,
+  ContentPlugin,
+  Loader,
+  PluginInput,
+  UniqueOptions,
+} from "./plugin/types";

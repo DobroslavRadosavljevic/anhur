@@ -30,7 +30,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "~": path.resolve(appRoot, "src"),
-      "anhur/generated": path.resolve(appRoot, ".anhur/generated"),
     },
     dedupe: ["react", "react-dom"],
   },

@@ -3,7 +3,21 @@
   "tasks": {
     "build": {
       "dependsOn": [],
-      "outputs": [".output/**"]
+      "outputs": [".output/**", ".anhur/**"],
+      "env": ["ANHUR_ASSETS_UPLOAD", "MINIO_*"]
+    },
+    "generate": {
+      "dependsOn": ["^build"],
+      "outputs": [".anhur/**"],
+      "env": ["ANHUR_ASSETS_UPLOAD", "MINIO_*"]
+    },
+    "check-types": {
+      "dependsOn": ["transit", "generate"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": ["ANHUR_ASSETS_UPLOAD", "MINIO_*"]
     }
   }
 }

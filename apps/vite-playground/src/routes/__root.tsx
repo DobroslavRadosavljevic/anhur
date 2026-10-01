@@ -6,7 +6,7 @@ import { DefaultCatchBoundary } from "~/components/default-catch-boundary";
 import { NotFound } from "~/components/not-found";
 import { SiteHeader } from "~/components/site-header";
 import appCss from "~/styles/app.css?url";
-import { seo } from "~/utils/seo";
+import { seo } from "~/lib/seo";
 
 export const Route = createRootRoute({
   head: () => ({

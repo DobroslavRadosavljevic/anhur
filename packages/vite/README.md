@@ -2,9 +2,7 @@
 
 ⚡ Vite plugin for Anhur.
 
-It rebuilds your content when files change, makes `anhur/generated` importable, and can serve copied assets from `.anhur/assets`.
-
-With `@anhur/assets` remote storage enabled and a CDN `base`, production builds skip copying assets into the Vite outDir (URLs already point at the CDN). Build logs then include an `assets storage: …` summary line.
+It builds your content before the app, makes `anhur/generated` importable, rebuilds when content changes, shows build errors in the browser overlay, and serves copied assets.
 
 ## 📦 Install
 
@@ -13,8 +11,6 @@ bun add @anhur/core @anhur/vite
 ```
 
 ## 🚀 Setup
-
-Add the plugin to Vite:
 
 ```ts
 import { defineConfig } from "vite";
@@ -25,57 +21,58 @@ export default defineConfig({
 });
 ```
 
-Put `anhur.config.ts` next to your Vite config (or pass `configPath` to the plugin).
+Put `anhur.config.ts` in the Vite root (or pass `configPath`), and point TypeScript at the output:
 
-## ✨ What happens in `vite dev` / `vite build`
-
-1. Anhur reads your content config
-2. It writes typed modules under `.anhur/generated`
-3. You import them as `anhur/generated`
+```jsonc
+// tsconfig.json
+{
+  "compilerOptions": {
+    "paths": { "anhur/generated": ["./.anhur/generated"] },
+  },
+}
+```
 
 ```ts
 import { allPosts, getPost } from "anhur/generated";
 ```
 
-No separate `anhur build` step is required for day-to-day Vite work — the plugin handles it.
+No separate `anhur build` step is needed — the plugin builds on `vite dev` and `vite build` (including `vite build --watch`).
 
-### Dev rebuilds
+## 🔁 Dev
 
-In `vite dev`, Anhur uses **Vite’s file watcher** (not a second watcher):
+- Uses Vite's file watcher. Changes to content folders, the config, and files the config imports trigger a rebuild (debounced); unrelated files do not.
+- Only changed generated modules are rewritten, so Vite's normal HMR picks them up.
+- A failed build keeps the dev server running: the error (with file and field) shows in the overlay and the terminal, and the last good output stays in place. Fixing the file reloads the page.
+- Changes made while the first build runs are picked up by a rebuild right after it.
+- `server.restart()` keeps rebuilding, also with an inline plugin instance.
+- Copied assets are served under their URL prefix, with single `Range` requests (video seeking), `ETag` / `If-None-Match`, correct content types and `X-Content-Type-Options: nosniff`. SVGs also get `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src data: 'self'; sandbox`; send the same headers from your production server or CDN. Dotfiles and paths outside the assets folder are never served.
 
-1. Subscribes to `anhur.config.ts` and each collection/singleton path
-2. On change / add / unlink → rebuild (debounced)
-3. Invalidates `anhur/generated` modules and triggers a **full page reload**
-
-On startup and each rebuild, Vite logs a short summary, for example:
-
-```text
-[anhur] built 12 document(s) → .anhur/generated
-[anhur]   posts (4): en/hello, en/world, de/hello, de/world
-[anhur]   authors (2): ada, grace
-```
-
-After a content or config change you’ll see the same shape with `rebuilt` instead of `built`. When remote asset sync runs, extra lines list counts and keys:
+Each build logs one line:
 
 ```text
-[anhur]   assets storage: 2 uploaded, 8 skipped, 1 deleted
-[anhur]     uploaded (2): anhur/cover-abc.png, anhur/notes-def.txt
-[anhur]     skipped (8): anhur/ada-….png, … +6 more
-[anhur]     deleted (1): anhur/orphan-….bin
+[anhur] rebuilt 12 document(s) in 48ms → .anhur/generated (2 written, 0 removed; posts 8, authors 4)
 ```
 
-Editing content or the Anhur config both go through that path. Unrelated files outside those roots do not trigger an Anhur rebuild.
+## 📦 Build
 
-(`anhur watch` on the CLI still uses Anhur’s own watcher — there is no Vite server there.)
+A failed content build fails `vite build` with the diagnostics. The assets of this build (the files listed in `.anhur-assets.json`, never leftovers of earlier builds) are added to the client output (for example `dist/anhur-assets/`) when they are served locally; with a CDN `base` and storage, `@anhur/assets` uploads them instead. When the assets base equals the Vite `base`, the files go to the root of the output.
+
+With `vite build --watch`, a content edit runs one content build; the Rollup rebuild caused by the rewritten generated modules reuses it.
+
+Do not run `vite build` while `vite dev` uses the same assets folder: both remove files the other one does not use.
 
 ## ⚙️ Options
 
 ```ts
 anhur({
-  // Path to anhur.config.ts if it is not at the project root
-  configPath: "./anhur.config.ts",
+  // Config file relative to the Vite root. Default: anhur.config.{ts,mts,js,mjs}
+  configPath: "./content/anhur.config.ts",
 });
 ```
+
+The Vite `base` is applied to local asset URLs (`base: "/app/"` → `/app/anhur-assets/…`).
+
+Without Vite, use the `anhur` CLI from `@anhur/core` (`anhur build`, `anhur check`, `anhur watch`).
 
 ## License
 

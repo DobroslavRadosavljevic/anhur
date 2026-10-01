@@ -1,46 +1,29 @@
 import path from "node:path";
-import { formatAssetsStorageLogLines, type BuildResult } from "@anhur/core";
+import { formatDiagnostics, type BuildResult } from "@anhur/core/build";
 
-export type BuildLogKind = "built" | "rebuilt";
-
-const MAX_IDS_PER_SOURCE = 40;
-
-function documentLabel(meta: { id: string; locale?: string }): string {
-  return meta.locale ? `${meta.locale}/${meta.id}` : meta.id;
-}
-
-/**
- * Human-readable Anhur build lines for Vite (and similar) loggers.
- */
-export function formatAnhurBuildLog(
+/** Log lines for a finished build. */
+export function formatBuildLog(
   result: BuildResult,
-  kind: BuildLogKind,
-  options: { rootDir?: string } = {},
+  kind: "built" | "rebuilt",
+  durationMs: number,
 ): string[] {
-  const total = result.built.reduce((n, item) => n + item.documents.length, 0);
-  const output = options.rootDir
-    ? path.relative(options.rootDir, result.outputDir) || result.outputDir
-    : result.outputDir;
-
-  const lines = [`[anhur] ${kind} ${total} document(s) → ${output}`];
-
-  for (const item of result.built) {
-    const ids = item.documents.map((doc) => documentLabel(doc._meta));
-    const shown = ids.slice(0, MAX_IDS_PER_SOURCE);
-    const rest = ids.length - shown.length;
-    const list =
-      ids.length === 0
-        ? "(none)"
-        : rest > 0
-          ? `${shown.join(", ")} … +${rest} more`
-          : shown.join(", ");
-
-    lines.push(`[anhur]   ${item.source.name} (${ids.length}): ${list}`);
+  const output =
+    path.relative(result.projectDir, result.outputDir) || result.outputDir;
+  const sources = result.sources
+    .map((source) => `${source.name} ${source.documents.length}`)
+    .join(", ");
+  const changed =
+    result.written.length === 0 && result.removed.length === 0
+      ? "no changes"
+      : `${result.written.length} written, ${result.removed.length} removed`;
+  const lines = [
+    `[anhur] ${kind} ${result.documentCount} document(s) in ${Math.round(durationMs)}ms → ${output} (${changed}; ${sources})`,
+    ...result.messages.map((message) => `[anhur]   ${message}`),
+  ];
+  if (result.warnings.length > 0) {
+    lines.push(
+      formatDiagnostics(result.warnings, { relativeTo: result.projectDir }),
+    );
   }
-
-  if (result.assetsStorage) {
-    lines.push(...formatAssetsStorageLogLines(result.assetsStorage));
-  }
-
   return lines;
 }

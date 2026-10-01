@@ -10,7 +10,7 @@ import {
 } from "~/components/ui/card";
 import { buttonVariants } from "~/components/ui/button";
 import { Img } from "~/components/ui/img";
-import { cn } from "~/lib/utils";
+import { cn } from "~/lib/class-names";
 
 export const Route = createFileRoute("/authors/")({
   component: AuthorsPage,

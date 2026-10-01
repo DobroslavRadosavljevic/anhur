@@ -20,6 +20,7 @@ export default defineConfig({
     "**/.turbo/**",
     "**/.anhur/**",
     "**/.temp/**",
+    "**/.tmp/**",
     "**/.tanstack/**",
     "**/routeTree.gen.ts",
     "**/bun.lock",

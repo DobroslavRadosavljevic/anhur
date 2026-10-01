@@ -1,15 +1,23 @@
 import { z } from "zod";
-import { excerpt } from "./excerpt";
-import { isodate } from "./isodate";
-import { metadata } from "./metadata";
-import { raw } from "./raw";
-import { reference } from "./reference";
-import { slug } from "./slug";
-import { toc } from "./toc";
-import { unique } from "./unique";
+import {
+  excerpt,
+  isodate,
+  metadata,
+  raw,
+  reference,
+  slug,
+  toc,
+  unique,
+} from "./builtin-fields";
 
 /**
- * Core schema helpers. Import as `import { schema as s } from "@anhur/core"`.
+ * Zod plus Anhur field helpers. Import as `import { schema as s } from "@anhur/core"`.
+ *
+ * - `s.slug()` — explicit or derived URL slug (unique per locale)
+ * - `s.reference("authors", { embed })` — id of another document
+ * - `s.unique()` — unique string, checked on output documents
+ * - `s.isodate()` — strict ISO 8601 date string
+ * - `s.raw()` / `s.excerpt()` / `s.metadata()` / `s.toc()` — from the body
  */
 export const schema = {
   ...z,
@@ -22,15 +30,3 @@ export const schema = {
   metadata,
   toc,
 };
-
-export type { UniqueOptions } from "./unique";
-export type { SlugOptions } from "./slug";
-export type {
-  EmbeddedDocument,
-  ReferenceOptions,
-  ReferenceMarker,
-} from "./reference";
-export type { ExcerptOptions } from "./excerpt";
-export type { DocumentMetadata } from "./metadata";
-export type { TocEntry, TocOptions } from "./toc";
-export type { ZodType, ZodTypeAny, infer as InferZod } from "zod";

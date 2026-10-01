@@ -1,28 +1,44 @@
 {
   "name": "@anhur/orama",
   "version": "0.0.14",
-  "description": "Build-time Orama full-text search indexes for @anhur/core collections",
+  "description": "Build-time Orama full-text search for @anhur/core collections (any language, typed hits)",
   "keywords": [
     "anhur",
     "content",
     "orama",
     "search"
   ],
+  "homepage": "https://github.com/DobroslavRadosavljevic/anhur/tree/main/packages/orama#readme",
+  "bugs": {
+    "url": "https://github.com/DobroslavRadosavljevic/anhur/issues"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DobroslavRadosavljevic/anhur.git",
+    "directory": "packages/orama"
+  },
   "files": [
     "dist",
     "LICENSE"
   ],
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/client.ts",
+    "./client": "./src/client/index.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
     "exports": {
-      ".": "./dist/index.js",
-      "./client": "./dist/client.js",
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./client": {
+        "types": "./dist/client/index.d.ts",
+        "default": "./dist/client/index.js"
+      },
       "./package.json": "./package.json"
     },
     "access": "public"
@@ -39,21 +55,25 @@
     "test:integration": "vitest run --project integration --passWithNoTests"
   },
   "dependencies": {
-    "@anhur/core": "workspace:*",
-    "@orama/orama": "3.1.18"
+    "@orama/orama": "3.1.18",
+    "@orama/stemmers": "3.1.18"
   },
   "devDependencies": {
+    "@anhur/core": "workspace:*",
     "@anhur/oxfmt": "workspace:*",
     "@anhur/oxlint": "workspace:*",
     "@types/node": "^22.20.2",
-    "bellona": "0.4.7",
-    "jiti": "^2.7.0",
+    "bellona": "0.5.0",
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",
     "tsdown": "0.22.14",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1",
     "zod": "^4.6.5"
+  },
+  "peerDependencies": {
+    "@anhur/core": "workspace:^",
+    "zod": "^4.1.0"
   },
   "engines": {
     "node": "^22.18.0 || >=24.11.0"

@@ -17,6 +17,8 @@
     "format:fix": "turbo run format:fix",
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
+    "check:root": "oxfmt --check -c tooling/oxfmt/src/index.ts scripts turbo.json package.json .github && oxlint -c tooling/oxlint/src/index.ts scripts && tsc -p scripts/tsconfig.json",
+    "format:root": "oxfmt -c tooling/oxfmt/src/index.ts scripts turbo.json package.json .github",
     "release:login": "npm login --auth-type=web --scope=@anhur",
     "release:sync-check": "bun scripts/release.ts sync-check",
     "release:version": "bun scripts/release.ts version",
@@ -26,15 +28,17 @@
     "release:publish": "bun scripts/release.ts publish"
   },
   "devDependencies": {
-    "bellona": "0.4.7",
+    "@types/node": "^22.20.2",
+    "bellona": "0.5.0",
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",
     "turbo": "^2.10.13",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "zod": "^4.6.5"
   },
   "overrides": {
     "@tanstack/start-plugin-core": "1.170.0",
     "vite": "7.3.6"
   },
-  "packageManager": "bun@1.2.19"
+  "packageManager": "bun@1.4.2"
 }

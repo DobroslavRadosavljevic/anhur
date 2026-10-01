@@ -1,115 +1,90 @@
 # Packages
 
+Node `^22.18.0` or `>=24.11.0`. `zod` `^4.1` is a peer of every package except `@anhur/vite`.
+
 ## `@anhur/core`
 
-Always required.
+Always required. Three entries:
 
-Exports (typical):
+**`@anhur/core`** (config DSL)
 
 - `defineConfig`, `defineCollection`, `defineSingleton`
-- `defineView`, `defineIndex`, `defineGroup` — build-time derived lists / maps / groups
-- `createDerivedHelpers(content)` — bind views to a content tuple for embed remapping in callbacks
+- `defineView`, `defineIndex`, `defineGroup`, `createDerivedHelpers(content)`
 - `schema as s` — Zod plus `raw`, `unique`, `slug`, `reference`, `isodate`, `excerpt`, `metadata`, `toc`
-- `getDocumentMeta()` — ALS meta inside schema `.transform` / field resolvers
-- `GetViewByName`, `GetTypeByName`, `RemapEmbeddedRefs`, `DerivedName`, `InferViewData` — typing helpers
-- `build` / `watch` (programmatic) and CLI bin `anhur`
-- `formatAnhurError`
-- Integrations: `defineIntegration`, `registerIntegration`, `createIntegrationConfigEntry`, `IntegrationConfigEntry`, …
+- `createSkippedSignal`, `isSkippedSignal`
+- Types: `GetTypeByName`, `GetViewByName`, `InferDocument`, `RemapEmbeddedRefs`, `TypedConfig`, `Diagnostic`, …
+- `AnhurBuildError`, `isAnhurBuildError`, `formatDiagnostics`
 
-Config highlights:
+**`@anhur/core/build`** (engine, for hosts and scripts)
 
-| Field          | Role                                                                                                                                                |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `content`      | Collections + singletons                                                                                                                            |
-| `views`        | `defineView` / `defineIndex` / `defineGroup` (after prepare, before codegen)                                                                        |
-| `localization` | `{ strategy: "folder", locales, defaultLocale }`                                                                                                    |
-| `outputDir`    | Default `.anhur/generated` (relative to config file)                                                                                                |
-| `cacheDir`     | Default `.anhur/cache`; `false` disables. Skipped when `assets()` rewrites bodies. Keys fingerprint plugins and compile options, not plugin counts. |
-| `loaders`      | Extra loaders before matter/yaml/json                                                                                                               |
-| `processors`   | `mdx()`, `markdown()`, `assets()`, …                                                                                                                |
-| `integrations` | `orama({…})`, `defineIntegration({…})`, … — after codegen, before `complete`                                                                        |
-| `prepare`      | After transforms/filters, before views + codegen                                                                                                    |
-| `complete`     | After codegen + per-source `onSuccess` + integrations                                                                                               |
+- `build(options)`, `check(options)`, `watch(options, { onBuild, onError })`, `createAnhur(options)` (reusable session)
+- `isRelevantChange(file, watchTargets)`, `MANIFEST_FILE`, `CONFIG_FILE_NAMES`
+- Options: `rootDir`, `configPath`, `mode` (`build` | `dev`), `publicPathPrefix`, `dryRun`
+
+**`@anhur/core/plugin`** (authoring)
+
+- `definePlugin`, `defineContentPlugin`, `defineLoader`
+- `defineField(zodSchema, { kind, compile, requires?, whenAbsent?, cache? })` — custom compile-time fields with an explicit `FieldContext` (document, body, `emitAsset`, `addDependency`, `getPlugin`)
+- `rehypeLinkedAssets`, `classifyUrl`, `parseSrcset`, `fingerprint`, `buildToc`, text helpers
+
+**CLI** `anhur build | check | watch` with `--root`, `--config`, `--json`.
+
+Config fields:
+
+| Field          | Role                                                              |
+| -------------- | ----------------------------------------------------------------- |
+| `content`      | Collections + singletons                                          |
+| `views`        | `defineView` / `defineIndex` / `defineGroup`                      |
+| `localization` | `{ strategy: "folder", locales, defaultLocale }`                  |
+| `plugins`      | `mdx()`, `markdown()`, `assets()`, `orama()`, `definePlugin(…)`   |
+| `loaders`      | Extra file loaders (tried before plugin loaders and built-ins)    |
+| `outputDir`    | Default `.anhur/generated` (relative to the config file)          |
+| `cacheDir`     | Field cache, default `.anhur/cache`; `false` disables             |
+| `prepare`      | After transforms and drafts; before references, uniqueness, views |
+| `complete`     | After the output is written, with `{ projectDir, outputDir }`     |
 
 Views detail: [views.md](views.md)
 
-Engines: Node `^22.18.0` or `>=24.11.0`.
-
 ## `@anhur/vite`
 
-Default export: `anhur(options?: { configPath?: string })`.
+`anhur(options?: { configPath?: string })` (default export too).
 
-Does:
-
-1. Resolve `anhur.config.ts` from Vite root (or `configPath`)
-2. Alias `anhur/generated` → `.anhur/generated`
-3. `optimizeDeps.exclude` that id
-4. Build on `buildStart` / `configureServer`; in dev, use Vite’s file watcher on config + content roots, then invalidate `anhur/generated` and full-reload
-5. Log document counts (and per-source ids) on startup and each rebuild
-6. Middleware for copied assets (default `/anhur-assets/`, joined with Vite `base` in generated URLs) from `.anhur/assets`
-7. Watch extra `emitAsset` sources that live outside collection folders
-
-Production: plugin copies assets into `outDir/anhur-assets` (the configured local path, not Vite `base`). Generated `src` values include Vite `base` (`/blog/anhur-assets/…` when `base: '/blog/'`). When `assets({ base })` is already a remote `http(s)` URL, that local outDir copy is skipped.
-
-Build logs include an `assets storage: N uploaded, …` line when remote sync ran, plus truncated key lists for uploaded / skipped / deleted.
+1. Creates a build session when Vite resolves its config (`dev` or `build` mode, Vite `base` as public path prefix)
+2. Resolves `anhur/generated` to the generated `index.js`; excludes it from dependency optimization
+3. `vite build`: builds in `buildStart` (fails the build with diagnostics); `--watch` adds watch files
+4. `vite dev`: builds on startup, rebuilds on relevant watcher events (debounced, serialized); errors go to the overlay and terminal without stopping the server; recovers with a reload
+5. Serves copied assets (Range, ETag, content types; no dotfiles or traversal)
+6. Copies local assets into the client build output
 
 ## `@anhur/mdx`
 
-```ts
-import { mdx, schema as m } from "@anhur/mdx";
-import { MDXContent } from "@anhur/mdx/react";
-```
-
-- `processors: [mdx({ gfm?: boolean, … })]`
-- Schema field: `body: m.mdx()`
-- React: `<MDXContent code={doc.body} />` (compiled string)
+- `mdx(options?)` plugin; `schema as m` → `m.body()` (document body) and `m.mdx()` (string field)
+- Output: a function-body string; render with `MdxContent` / `useMdxComponent` / `getMdxComponent` from `@anhur/mdx/react`
+- `import`, re-exports, dynamic `import()` and top-level `await` in MDX fail the build; options that do nothing with function-body output (`jsxImportSource`, `jsx*`, `pragma*`, `development`, `outputFormat`, `baseUrl`, `providerImportSource`) are rejected
+- `.md` files compile with MDX's Markdown format (raw HTML kept, not sanitized); `m.mdx()` fields are always MDX
+- MDX is code; evaluation uses `new Function` (CSP needs `'unsafe-eval'` where MDX renders in the browser; edge runtimes cannot render it)
 
 ## `@anhur/markdown`
 
-```ts
-import { markdown, schema as md } from "@anhur/markdown";
-```
-
-- `processors: [markdown({ gfm?: boolean })]`
-- Schema field: `body: md.markdown()` → HTML string
+- `markdown(options?)` plugin; `schema as md` → `md.body()` and `md.markdown()`
+- HTML is sanitized with `DEFAULT_SANITIZE_SCHEMA` (GitHub's schema plus media and responsive images) unless `allowDangerousHtml: true`; files are resolved only for elements that survive sanitizing; GFM footnotes and in-page anchors work; heading ids match `s.toc()`
+- Options: `gfm`, `headingIds`, `sanitizeSchema`, `allowDangerousHtml`, `remarkPlugins`, `rehypePlugins` (run after sanitizing — unsanitized), `documentLink` (`{ url, path, suffix, target, document }`)
 
 ## `@anhur/assets`
 
-```ts
-import { assets, schema as a } from "@anhur/assets";
-```
+- `assets(options?)` plugin; `schema as a` → `a.image({ allowRemote?, blur? })`, `a.file()`
+- Relative body URLs (Markdown/MDX images, media, `srcset`, JSX attributes) copied and rewritten
+- Options: `dir`, `base`, `devBase`, `roots`, `extensions`, `svg`, `storage`
+- Exports `DEFAULT_ASSET_EXTENSIONS` (images, audio, video, `.vtt`, fonts, `.pdf`) and `DOCUMENT_ASSET_EXTENSIONS` (opt-in: `.json`, `.txt`, `.csv`, archives, office files), plus `pruneAssets` / `pruneStorage`
+- SVGs are parsed and rebuilt from an allowlist (`svg: "sanitize"`, default)
+- `sharp` (optional peer) for image metadata; `files-sdk` (optional peer) for storage
 
-- `processors: [assets({ dir?: string, base?: string, storage?: … })]`
-  - Defaults: `dir: ".anhur/assets"`, `base: "/anhur-assets/"`
-- Schema: `cover: a.image()`, `brochure: a.file()` (optional variants)
-- SVG works with both helpers; the original `.svg` is copied as-is. `a.image()` fills size/blur when sharp can rasterize; otherwise size may come from SVG markup and blur stays empty
-- Rewrites relative URLs in MDX/Markdown **bodies** when those processors run, including `srcset` / `srcSet` / `imagesrcset` candidates
-- Peer/native: `sharp` — trust lifecycle scripts under Bun if install blocks them (`bun pm untrusted`)
-- **Optional CDN sync:** `storage: { enabled, files, prefix, prune?, … }` via [files-sdk](https://files-sdk.dev/) (optional peer). See [assets-storage.md](assets-storage.md).
+Storage: [assets-storage.md](assets-storage.md)
 
 ## `@anhur/orama`
 
-```ts
-import { orama } from "@anhur/orama";
-import { createSearcher } from "@anhur/orama/client";
-```
+- `orama({ collections, languages?, path? })` plugin; `languages` adds stemming for 28 languages (`@orama/stemmers`, loaded lazily per language)
+- Generates `loadSearchIndex(locale)` / `searchLocales` and the types `AnhurSearchStores` (hit stores typed from `store()`) / `AnhurSearchField` in `anhur/generated`
+- `createSearcher(index)` from `@anhur/orama/client`
 
-- `integrations: [orama({ collections: { … } })]` — not a processor
-- Types `index` / `store` from the inline `defineConfig({ content })` array
-- Writes `{outputDir}/search/orama.json` by default
-- Query with `createSearcher(snapshot)` in browser or Node
-
-Full guide: [search.md](search.md)
-
-## Dependency order (mental model)
-
-```
-core
- ├─ assets
- ├─ markdown
- ├─ mdx (often with assets for body images)
- ├─ orama (integrations; build-time index + client)
- └─ vite (depends on core; drives build in Vite apps)
-```
-
-Install only what the config uses. Empty `processors` / `integrations` is fine for YAML/JSON-only schemas using core `s.*` fields.
+Search: [search.md](search.md)

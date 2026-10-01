@@ -8,7 +8,7 @@ import { getAuthor } from "anhur/generated";
 import { FeatureBadges } from "~/components/feature-badges";
 import { buttonVariants } from "~/components/ui/button";
 import { Img } from "~/components/ui/img";
-import { cn } from "~/lib/utils";
+import { cn } from "~/lib/class-names";
 
 export const Route = createFileRoute("/authors/$id")({
   loader: async ({ params }) => {

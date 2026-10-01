@@ -11,10 +11,9 @@ dist/
 
 # Anhur
 .anhur/
+.anhur*.lock
 .temp/
-
-# Blume (docs app runtime)
-.blume/
+.tmp/
 
 # Env
 .env

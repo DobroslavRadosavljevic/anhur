@@ -1,26 +1,39 @@
 {
   "name": "@anhur/vite",
   "version": "0.0.14",
-  "description": "Vite plugin for @anhur/core",
+  "description": "Vite plugin for @anhur/core: builds content, rebuilds on change, error overlay, serves assets",
   "keywords": [
     "anhur",
     "content",
     "plugin",
     "vite"
   ],
+  "homepage": "https://github.com/DobroslavRadosavljevic/anhur/tree/main/packages/vite#readme",
+  "bugs": {
+    "url": "https://github.com/DobroslavRadosavljevic/anhur/issues"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DobroslavRadosavljevic/anhur.git",
+    "directory": "packages/vite"
+  },
   "files": [
     "dist",
     "LICENSE"
   ],
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
     "exports": {
-      ".": "./dist/index.js",
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
       "./package.json": "./package.json"
     },
     "access": "public"
@@ -36,15 +49,14 @@
     "test:watch": "vitest --project unit",
     "test:integration": "vitest run --project integration --passWithNoTests"
   },
-  "dependencies": {
-    "@anhur/core": "workspace:*"
-  },
   "devDependencies": {
+    "@anhur/assets": "workspace:*",
+    "@anhur/core": "workspace:*",
     "@anhur/orama": "workspace:*",
     "@anhur/oxfmt": "workspace:*",
     "@anhur/oxlint": "workspace:*",
     "@types/node": "^22.20.2",
-    "bellona": "0.4.7",
+    "bellona": "0.5.0",
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",
     "tsdown": "0.22.14",
@@ -54,6 +66,7 @@
     "zod": "^4.6.5"
   },
   "peerDependencies": {
+    "@anhur/core": "workspace:^",
     "vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
   },
   "engines": {

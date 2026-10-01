@@ -4,7 +4,7 @@ import {
   notFound,
   useLoaderData,
 } from "@tanstack/react-router";
-import { MDXContent } from "@anhur/mdx/react";
+import { MdxContent } from "@anhur/mdx/react";
 import { getPost } from "anhur/generated";
 import { FeatureBadges } from "~/components/feature-badges";
 import { Badge } from "~/components/ui/badge";
@@ -12,7 +12,7 @@ import { buttonVariants } from "~/components/ui/button";
 import { Img } from "~/components/ui/img";
 import { Separator } from "~/components/ui/separator";
 import { isLocale } from "~/lib/locale";
-import { cn } from "~/lib/utils";
+import { cn } from "~/lib/class-names";
 
 export const Route = createFileRoute("/posts/$locale/$slug")({
   loader: async ({ params }) => {
@@ -68,7 +68,7 @@ function PostDetailPage() {
             "s.reference(embed)",
             "transform.documents()",
             "s.excerpt/metadata/toc",
-            "m.mdx()",
+            "m.body()",
             "cover meta",
             "body rewrite",
             "attachment",
@@ -145,7 +145,7 @@ function PostDetailPage() {
       <Separator />
 
       <div className="prose-anhur">
-        <MDXContent code={post.body} />
+        <MdxContent code={post.body} />
       </div>
     </article>
   );

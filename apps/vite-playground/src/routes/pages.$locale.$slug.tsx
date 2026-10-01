@@ -10,7 +10,7 @@ import { Badge } from "~/components/ui/badge";
 import { buttonVariants } from "~/components/ui/button";
 import { Separator } from "~/components/ui/separator";
 import { isLocale } from "~/lib/locale";
-import { cn } from "~/lib/utils";
+import { cn } from "~/lib/class-names";
 
 export const Route = createFileRoute("/pages/$locale/$slug")({
   loader: async ({ params }) => {

@@ -4,9 +4,9 @@
 
 ```sh
 # Vite app (typical)
-bun add @anhur/core @anhur/vite
+bun add @anhur/core @anhur/vite zod
 
-# Opt-in processors (add only what schemas need)
+# Opt-in plugins (add only what schemas need)
 bun add @anhur/mdx @anhur/markdown @anhur/assets
 
 # Optional full-text search
@@ -15,13 +15,13 @@ bun add @anhur/orama
 
 npm/pnpm/yarn work the same package names. Prefer the project’s package manager.
 
-For `orama({…})` in `integrations`, see [search.md](search.md).
+For `orama({…})` in `plugins`, see [search.md](search.md).
 
 ## 2. Config file
 
 Place a **thin** `anhur.config.ts` at the Vite root (or pass `anhur({ configPath: "…" })`). Paths in config (`directory`, `outputDir`, asset `dir`) are relative to the **config file’s directory**.
 
-Do not inline collections/views in the config. Use the modular `cms/` tree — see [project-structure.md](project-structure.md).
+Keep the config thin; the recommended modular `cms/` tree is in [project-structure.md](project-structure.md).
 
 ## 3. Vite
 
@@ -88,6 +88,7 @@ Singletons export a const (and optional `*All` / getter per `generate`). Views /
 ## 7. Without Vite
 
 ```sh
+bunx anhur check --root .   # validate only
 bunx anhur build --root .
 bunx anhur watch --root .
 ```
@@ -111,15 +112,16 @@ If assets are ignored, production must run Anhur build (Vite plugin does this on
 2. Resolve `anhur/generated` via bundler alias or `tsconfig` paths to `.anhur/generated`.
 3. Serve assets:
    - Local/`base` path: serve `.anhur/assets` at `assets().base` (static copy or server middleware).
-   - CDN: set `assets({ storage: { enabled: true }, base: "https://cdn…/" })` so generated `src` points at the CDN (see [assets-storage.md](assets-storage.md)).
+   - CDN: set `assets({ base: "https://cdn…/site/", storage: { prefix: "site", files } })` so generated `src` points at the CDN and `anhur build` uploads (see [assets-storage.md](assets-storage.md)).
 
 There is no official Next adapter yet — wire alias + prebuild manually.
 
 ## 10. Verify
 
 ```sh
+bunx anhur check --root .   # validate only
 bunx anhur build --root .
 # or: bun run build / vite build
 ```
 
-Then import generated modules in a route and render `MDXContent` / HTML as needed.
+Then import generated modules in a route and render `MdxContent` (`@anhur/mdx/react`) / HTML as needed.

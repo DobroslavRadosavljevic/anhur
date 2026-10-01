@@ -19,7 +19,7 @@ import {
   CardTitle,
 } from "~/components/ui/card";
 import { Separator } from "~/components/ui/separator";
-import { cn } from "~/lib/utils";
+import { cn } from "~/lib/class-names";
 
 export const Route = createFileRoute("/")({
   component: Home,

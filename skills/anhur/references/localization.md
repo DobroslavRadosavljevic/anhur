@@ -19,7 +19,7 @@ import {
 - `Locale` comes from **config** `locales` (not from which folders happen to exist).
 - Localized getters require `locale: Locale`.
 - Localized documents type `_meta.locale` as `Locale` (via `GetTypeByName`).
-- Monolingual sources (`localized: false`) omit locale from the public type; runtime lookup key is still `"default"`.
+- Monolingual sources (`localized: false`) omit locale from the public type and `_meta`.
 - Share `Locale` with the app router / Intlayer — one vocabulary.
 
 No `localization` block → no `Locale` / `locales` / `defaultLocale` exports.
@@ -33,13 +33,13 @@ No `localization` block → no `Locale` / `locales` / `defaultLocale` exports.
 | `getPost(…)`                                   | One **full** document                                     | **Required** `{ locale, slug }` or `{ locale, id }`                                                            |
 | `settings` (singleton primary)                 | **`defaultLocale` only**                                  | Use as-is for default; else use the getter                                                                     |
 | `settingsAll` / `allSettings` (`variantsName`) | All locale variants of the singleton                      | Filter `_meta.locale`, or prefer the getter                                                                    |
-| `getSettings({ locale })`                      | One singleton locale                                      | **Required** `{ locale: Locale }`                                                                              |
+| `getSettings({ locale })`                      | One singleton locale                                      | `{ locale?: Locale }`; omitted → `defaultLocale`                                                               |
 | Views / groups                                 | All matching docs across locales (unless `where` narrows) | Filter in `where` with `_meta.locale`, or filter the export in the app                                         |
 | Indexes (`defineIndex`)                        | Unique keys across **all** locales                        | Do not key on `slug` alone if the same slug exists in `en`/`de` — use a composite key or the collection getter |
 
 Every generated document includes `_meta: { id, locale?, … }`. **`_meta.locale` is the locale** — not a schema field you invent.
 
-Internal monolingual key (when `localized: false`): `"default"`. Folder-i18n docs use real locale codes (`"en"`, `"de"`, …).
+Folder-i18n docs use real locale codes (`"en"`, `"de"`, …). In `orama({ languages })`, keys are locales (or `"default"` when the project has no localization).
 
 ## Config reminder
 
@@ -74,8 +74,8 @@ const byId = await getPost({ locale, id: "hello" });
 ### Getter rules (collections)
 
 1. **Localized sources:** the typed API is only `getPost({ locale: Locale; id?/slug? })`. `locale` is **required**. Typos like `"cz"` fail typecheck.
-2. **Runtime** still accepts a bare string (`getPost("hello")`) as a first-match escape hatch — do **not** use it in apps; it is ambiguous when slugs repeat across locales.
-3. Query object without `locale` at runtime defaults the lookup key to `"default"` and returns `null` on folder-i18n collections.
+2. **Runtime** also accepts a bare string (`getPost("hello")`) or a query without `locale`; both look only in `defaultLocale`. Do not rely on it in apps — pass the request locale.
+3. A bare string tries `id` first, then each `lookupBy` field; the build warns when one document's id equals another's slug.
 4. Missing combo → `null` (handle with your router’s not-found path).
 5. **Monolingual sources:** `getAuthor("jane")` or `getAuthor({ id?/slug? })` — no `locale` in the typed query.
 
@@ -87,7 +87,7 @@ import { type Locale, settings, getSettings } from "anhur/generated";
 // Primary export = defaultLocale document
 settings.title;
 
-// Any locale (including default) — locale required when localized
+// Any locale (omit `locale` for the default)
 const de = await getSettings({ locale: "de" satisfies Locale });
 ```
 
@@ -115,7 +115,7 @@ Optional build-time narrowing with a view (fixed locale or shared filter):
 ```ts
 // cms/views/featured-posts-en.ts
 import { posts } from "../collections/posts";
-import { defineView } from "./helpers";
+import { defineView } from "./derived";
 
 export const featuredPostsEn = defineView({
   name: "featuredPostsEn",
@@ -143,11 +143,11 @@ For “featured in **whatever locale the request is**”, keep one view (or just
 
 ## Relations
 
-`s.reference(…)` resolves **same locale first**, then monolingual targets. You do not need custom join logic to “find the German author for the German post.”
+`s.reference(…)` to a localized target resolves **in the referrer's locale** — there is no fallback to another locale, so a missing translation of the target fails the build with `reference-failed`. Monolingual targets (`localized: false`) are found from every locale; a monolingual document referencing a localized target looks in `defaultLocale`. You do not need custom join logic to “find the German author for the German post.”
 
 ## Search (`@anhur/orama`)
 
-Index rows include `locale`. Prefer filtering hits / searcher options by the request locale instead of post-filtering titles yourself. See [search.md](search.md).
+One index per locale: `createSearcher(await loadSearchIndex(locale))`. Monolingual collections are in every locale's index. Do not post-filter hits by locale. See [search.md](search.md).
 
 ## Monolingual sources in a localized project
 

@@ -1,12 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import { createSearcher, type Searcher } from "@anhur/orama/client";
 import {
-  createSearcher,
-  type AnhurOramaIndex,
-  type SearchHit,
-  type Searcher,
-} from "@anhur/orama/client";
+  loadSearchIndex,
+  locales,
+  type AnhurSearchField,
+  type AnhurSearchStores,
+  type Locale,
+} from "anhur/generated";
 import { searchContent } from "~/lib/search-api";
+import { isLocale } from "~/lib/locale";
+import { readHitStore, type HitStore } from "~/lib/search-store";
 import { FeatureBadges } from "~/components/feature-badges";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -22,18 +26,13 @@ import { Label } from "~/components/ui/label";
 import { Select } from "~/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 
-// Written by integrations: [orama({…})] during Anhur build.
-import searchIndex from "../../.anhur/generated/search/orama.json";
-
-type HitStore = {
-  title?: string;
-  name?: string;
-  slug?: string;
-  summary?: string;
-  sku?: string;
-  price?: string;
-  date?: string;
-  href?: string;
+/** A hit as shown in the list (store narrowed to the displayed fields). */
+type DisplayHit = {
+  readonly id: string;
+  readonly score: number;
+  readonly collection: string;
+  readonly documentId: string;
+  readonly store: HitStore;
 };
 
 const COLLECTIONS = ["all", "posts", "pages", "products", "changelog"] as const;
@@ -52,8 +51,8 @@ function isSearchMode(value: string): value is "client" | "server" {
   return value === "client" || value === "server";
 }
 
-function hitTitle(hit: SearchHit<HitStore>): string {
-  return hit.store.title ?? hit.store.name ?? hit.documentId;
+function hitTitle(hit: DisplayHit): string {
+  return hit.store.title ?? hit.documentId;
 }
 
 export const Route = createFileRoute("/search/")({
@@ -65,24 +64,40 @@ function SearchPage() {
   const [collection, setCollection] =
     useState<(typeof COLLECTIONS)[number]>("all");
   const [mode, setMode] = useState<"client" | "server">("client");
-  const [clientSearcher, setClientSearcher] = useState<Searcher | null>(null);
-  const [clientHits, setClientHits] = useState<SearchHit<HitStore>[]>([]);
+  const [locale, setLocale] = useState<Locale>("en");
+  const [clientSearcher, setClientSearcher] = useState<Searcher<
+    AnhurSearchStores,
+    AnhurSearchField
+  > | null>(null);
+  const [clientHits, setClientHits] = useState<DisplayHit[]>([]);
   const [clientMeta, setClientMeta] = useState({ count: 0, elapsed: "" });
-  const [serverHits, setServerHits] = useState<SearchHit<HitStore>[]>([]);
+  const [serverHits, setServerHits] = useState<DisplayHit[]>([]);
   const [serverMeta, setServerMeta] = useState({ count: 0, elapsed: "" });
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    // SAFETY: Vite JSON import is the generated Orama snapshot.
-    void createSearcher(searchIndex as AnhurOramaIndex).then((searcher) => {
-      if (!cancelled) setClientSearcher(searcher);
-    });
+    setClientSearcher(null);
+    setError(null);
+    void loadSearchIndex(locale)
+      .then(createSearcher)
+      .then(
+        (searcher) => {
+          if (!cancelled) setClientSearcher(searcher);
+        },
+        (cause: unknown) => {
+          if (!cancelled) {
+            setError(
+              `Cannot load the ${locale} search index: ${cause instanceof Error ? cause.message : String(cause)}`,
+            );
+          }
+        },
+      );
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [locale]);
 
   const collectionFilter = collection === "all" ? undefined : collection;
 
@@ -103,14 +118,21 @@ function SearchPage() {
 
       if (mode === "client") {
         if (!clientSearcher) return;
-        const result = await clientSearcher.search({
-          term,
-          collection: collectionFilter,
-          limit: 20,
-        });
-        if (cancelled) return;
-        // SAFETY: Orama hit.store matches the indexed document fields shown in this UI.
-        setClientHits(result.hits as SearchHit<HitStore>[]);
+        const result = await clientSearcher
+          .search({ term, collection: collectionFilter, limit: 20 })
+          .catch((cause: unknown) => {
+            if (!cancelled) {
+              setError(cause instanceof Error ? cause.message : String(cause));
+            }
+            return null;
+          });
+        if (cancelled || !result) return;
+        setClientHits(
+          result.hits.map((hit) => ({
+            ...hit,
+            store: readHitStore(hit.store),
+          })),
+        );
         setClientMeta({
           count: result.count,
           elapsed: result.elapsed.formatted,
@@ -124,25 +146,14 @@ function SearchPage() {
         const result = await searchContent({
           data: {
             term,
+            locale,
             collection: collectionFilter,
             limit: 20,
           },
         });
         if (cancelled) return;
-        setServerHits(
-          result.hits.map((hit) => ({
-            id: hit.id,
-            score: hit.score,
-            collection: hit.collection,
-            locale: hit.locale,
-            documentId: hit.documentId,
-            store: hit.store,
-          })),
-        );
-        setServerMeta({
-          count: result.count,
-          elapsed: result.elapsed.formatted,
-        });
+        setServerHits(result.hits);
+        setServerMeta({ count: result.count, elapsed: result.elapsed });
       } catch (cause) {
         if (!cancelled) {
           setError(cause instanceof Error ? cause.message : String(cause));
@@ -156,15 +167,15 @@ function SearchPage() {
     return () => {
       cancelled = true;
     };
-  }, [term, mode, collectionFilter, clientSearcher]);
+  }, [term, mode, locale, collectionFilter, clientSearcher]);
 
   const activeHits = mode === "client" ? clientHits : serverHits;
   const activeMeta = mode === "client" ? clientMeta : serverMeta;
 
-  const indexedCollections = useMemo(() => {
-    // SAFETY: same generated snapshot as createSearcher.
-    return (searchIndex as AnhurOramaIndex).collections;
-  }, []);
+  const indexedCollections = useMemo(
+    () => clientSearcher?.collections ?? [],
+    [clientSearcher],
+  );
 
   return (
     <div className="space-y-6">
@@ -173,14 +184,15 @@ function SearchPage() {
           Search
         </h1>
         <p className="text-muted-foreground max-w-2xl text-sm">
-          Full-text Orama index built in Anhur <code>complete</code>. Same
-          snapshot powers browser search and a server function.
+          Full-text Orama index per locale, built by the <code>orama()</code>{" "}
+          plugin. The same generated module powers browser search and a server
+          function.
         </p>
         <FeatureBadges
           items={[
             "@anhur/orama",
-            "complete hook",
-            "client restore",
+            "loadSearchIndex(locale)",
+            "unicode tokenizer",
             "createServerFn",
             ...indexedCollections.map((name) => `index:${name}`),
           ]}
@@ -194,6 +206,16 @@ function SearchPage() {
             value={term}
             onChange={(event) => setTerm(event.target.value)}
             placeholder="Search posts, pages, products…"
+          />
+        </Label>
+        <Label className="w-full sm:w-28">
+          <span className="text-muted-foreground">Locale</span>
+          <Select
+            value={locale}
+            items={locales.map((name) => ({ value: name, label: name }))}
+            onValueChange={(value) => {
+              if (isLocale(value)) setLocale(value);
+            }}
           />
         </Label>
         <Label className="w-full sm:w-44">
@@ -227,13 +249,14 @@ function SearchPage() {
         </TabsList>
         <TabsContent value="client" className="space-y-3">
           <p className="text-muted-foreground text-sm">
-            Restores <code>.anhur/generated/search/orama.json</code> in the
-            browser via <code>createSearcher</code>.
+            Loads <code>loadSearchIndex(locale)</code> from{" "}
+            <code>anhur/generated</code> and searches it in the browser.
           </p>
         </TabsContent>
         <TabsContent value="server" className="space-y-3">
           <p className="text-muted-foreground text-sm">
-            Calls <code>searchContent</code> — same index file, Node restore.
+            Calls <code>searchContent</code>: the same generated module, on the
+            server.
           </p>
         </TabsContent>
       </Tabs>
@@ -264,7 +287,7 @@ function SearchPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <CardTitle className="text-base">{hitTitle(hit)}</CardTitle>
                   <Badge variant="secondary">{hit.collection}</Badge>
-                  <Badge variant="outline">{hit.locale}</Badge>
+                  <Badge variant="outline">{locale}</Badge>
                   <span className="text-muted-foreground text-xs tabular-nums">
                     score {hit.score.toFixed(2)}
                   </span>

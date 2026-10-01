@@ -1,9 +1,9 @@
-# Project structure (required)
+# Project structure (recommended)
 
-Keep Anhur **schema modules**, **views**, and **author files** out of a monolithic `anhur.config.ts`. Use this layout in every project (rename the root folder only if the repo already has a convention — default name is `cms/`).
+Anhur only needs the paths you give it (`directory`, `filePath`, all relative to the config file). This layout is this skill's convention for keeping **schema modules**, **views**, and **author files** out of a monolithic `anhur.config.ts`. Use it for new projects; in an existing project, follow its documented convention (rename the root folder if the repo already has one — default name is `cms/`).
 
 ```text
-anhur.config.ts                 # thin: processors, localization, content, views, integrations
+anhur.config.ts                 # thin: localization, content, views, plugins
 cms/
   content.ts                    # `export const content = […] as const`
   collections/                  # one `defineCollection` per file
@@ -11,7 +11,7 @@ cms/
   enums/                        # shared `s.enum(…)` fragments
   objects/                      # shared `s.object(…)` / field groups
   views/
-    helpers.ts                  # `createDerivedHelpers(content)` → defineView/Index/Group
+    derived.ts                  # `createDerivedHelpers(content)` → defineView/Index/Group
     *.ts                        # one view / index / group per file
   content/                      # author files only (MD/MDX/YAML/JSON + assets)
     posts/
@@ -26,17 +26,17 @@ Paths in `directory` / `filePath` are relative to the **config file’s director
 
 ## What goes where
 
-| Path | Put here | Do not put here |
-| ---- | -------- | --------------- |
-| `cms/collections/<name>.ts` | `defineCollection({…})` | Inline enums/objects used by 2+ schemas — extract first |
-| `cms/singletons/<name>.ts` | `defineSingleton({…})` | Multi-doc folders (those are collections) |
-| `cms/enums/<name>.ts` | Closed string sets: `export const status = s.enum([…])` | Open `s.string()` fields |
-| `cms/objects/<name>.ts` | Reusable object shapes (`faqItem`, `geo`, `plan`, …) | Whole collections |
-| `cms/views/<name>.ts` | One `defineView` / `defineIndex` / `defineGroup` | Collection definitions |
-| `cms/views/helpers.ts` | `createDerivedHelpers(content)` only | Business filters |
-| `cms/content.ts` | Ordered `content` tuple (`as const`) of every collection + singleton | Views, processors |
-| `cms/content/**` | Front matter + bodies + colocated images | TypeScript schemas |
-| `anhur.config.ts` | `defineConfig({ processors, localization?, content, views?, integrations? })` | Large inline schemas |
+| Path                        | Put here                                                             | Do not put here                                         |
+| --------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------- |
+| `cms/collections/<name>.ts` | `defineCollection({…})`                                              | Inline enums/objects used by 2+ schemas — extract first |
+| `cms/singletons/<name>.ts`  | `defineSingleton({…})`                                               | Multi-doc folders (those are collections)               |
+| `cms/enums/<name>.ts`       | Closed string sets: `export const status = s.enum([…])`              | Open `s.string()` fields                                |
+| `cms/objects/<name>.ts`     | Reusable object shapes (`faqItem`, `geo`, `plan`, …)                 | Whole collections                                       |
+| `cms/views/<name>.ts`       | One `defineView` / `defineIndex` / `defineGroup`                     | Collection definitions                                  |
+| `cms/views/derived.ts`      | `createDerivedHelpers(content)` only                                 | Business filters                                        |
+| `cms/content.ts`            | Ordered `content` tuple (`as const`) of every collection + singleton | Views, plugins                                          |
+| `cms/content/**`            | Front matter + bodies + colocated images                             | TypeScript schemas                                      |
+| `anhur.config.ts`           | `defineConfig({ localization?, content, views?, plugins })`          | Large inline schemas                                    |
 
 ## Naming
 
@@ -66,20 +66,19 @@ export const content = [authors, posts, site] as const;
 ## Views helpers
 
 ```ts
-// cms/views/helpers.ts
+// cms/views/derived.ts
 import { createDerivedHelpers } from "@anhur/core";
 import { content } from "../content";
 
-export const { defineView, defineGroup, defineIndex } =
-  createDerivedHelpers(content);
+export const { defineView, defineGroup, defineIndex } = createDerivedHelpers(content);
 ```
 
-View modules must import `defineView` / `defineIndex` / `defineGroup` from `./helpers`, **not** from `@anhur/core`, so `where` / `select` / `key` see embedded references correctly.
+View modules must import `defineView` / `defineIndex` / `defineGroup` from `./derived`, **not** from `@anhur/core`, so `where` / `select` / `key` see embedded references correctly.
 
 ```ts
 // cms/views/featured-posts.ts
 import { posts } from "../collections/posts";
-import { defineView } from "./helpers";
+import { defineView } from "./derived";
 
 export const featuredPosts = defineView({
   name: "featuredPosts",
@@ -106,13 +105,11 @@ export default defineConfig({
     locales: ["en", "de"],
     defaultLocale: "en",
   },
-  processors: [
-    mdx({ gfm: true }),
-    assets({ dir: ".anhur/assets", base: "/anhur-assets/" }),
-  ],
   content,
   views: [featuredPosts, postBySlug],
-  integrations: [
+  plugins: [
+    mdx(),
+    assets(),
     orama({
       collections: {
         posts: {
@@ -130,16 +127,16 @@ export default defineConfig({
 
 When `localization` is set on the config:
 
-| Source | Default layout | Opt out |
-| ------ | -------------- | ------- |
-| Collection | `{directory}/{locale}/**` e.g. `cms/content/posts/en/hello.mdx` | `localized: false` → files directly under `directory` |
-| Singleton | `{directory}/{locale}/index.md(x)` | `localized: false` + `filePath: "cms/content/about.mdx"` |
+| Source     | Default layout                                                  | Opt out                                                  |
+| ---------- | --------------------------------------------------------------- | -------------------------------------------------------- |
+| Collection | `{directory}/{locale}/**` e.g. `cms/content/posts/en/hello.mdx` | `localized: false` → files directly under `directory`    |
+| Singleton  | `{directory}/{locale}/index.md(x)`                              | `localized: false` + `filePath: "cms/content/about.mdx"` |
 
 Rules:
 
 1. Every locale folder name must appear in `locales`; `defaultLocale` must be one of them.
 2. Mix freely: e.g. localized `posts` + monolingual `authors` (`localized: false`).
-3. App getters for folder i18n take `{ locale, id?, slug? }`. Monolingual sources use the internal locale key `default`.
+3. App getters for folder i18n take `{ locale, id?, slug? }`. Monolingual sources take an id/slug string or `{ id?, slug? }`.
 4. Do **not** invent a second i18n system beside Anhur’s folder strategy unless the project already documents one.
 5. Consume locale data with generated APIs + `_meta.locale` — see [localization.md](localization.md).
 
@@ -156,7 +153,7 @@ export const posts = defineCollection({
   schema: s.object({
     title: s.string(),
     slug: s.slug(),
-    body: m.mdx(),
+    body: m.body(),
   }),
 });
 ```

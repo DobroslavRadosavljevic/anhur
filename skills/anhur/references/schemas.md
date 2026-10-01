@@ -4,28 +4,28 @@
 
 Re-exports Zod (`s.object`, `s.string`, `s.boolean`, …) plus:
 
-| Helper                                        | Purpose                                                          |
-| --------------------------------------------- | ---------------------------------------------------------------- |
-| `s.raw()`                                     | Uncompiled body / string blob                                    |
-| `s.slug()`                                    | Slug field (lookup-friendly)                                     |
-| `s.unique()`                                  | Unique across collection (e.g. SKU)                              |
-| `s.reference("authors", { embed?: boolean })` | Cross-collection ref; `embed: true` types as the target document |
-| `s.isodate()`                                 | ISO date string (accepts string or `Date` from YAML)             |
-| `s.excerpt({ length? })`                      | Excerpt from body                                                |
-| `s.metadata()`                                | Document metadata object                                         |
-| `s.toc({ maxDepth? })`                        | Table of contents entries                                        |
+| Helper                                               | Purpose                                                                                                    |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `s.raw()`                                            | The document body (or the field's own string); `""` for YAML/JSON                                          |
+| `s.slug({ from?, removeIndex?, pattern?, unique? })` | Value from the file, or derived from the id; `^[a-z0-9]+(-[a-z0-9]+)*$` by default; unique per locale      |
+| `s.unique({ scope?, group? })`                       | String unique per `locale` (default) / `collection` / `project`                                            |
+| `s.reference("authors", { by?, embed? })`            | Id (or `by: "slug"`) of another document; checked after transforms; `embed: true` inlines the final target |
+| `s.isodate({ output? })`                             | Strict ISO 8601 (string or YAML `Date`) → UTC `datetime` (default) or `date`                               |
+| `s.excerpt({ length? })`                             | Plain-text excerpt of the body (default 260 chars incl. `…`)                                               |
+| `s.metadata()`                                       | `{ readingTime, wordCount }` (any script; 230 wpm)                                                         |
+| `s.toc({ maxDepth? })`                               | Heading tree; built by `markdown()` / `mdx()` with the same pipeline as the body, so anchors match its ids |
 
-Use Zod `.optional()`, `.transform()`, etc. on these fields.
+Use Zod `.optional()`, `.default()`, `.transform()`, etc. on these fields; they also work in nested objects, arrays and discriminated unions (not plain `z.union`).
 
-Inside schema `.transform`, `getDocumentMeta()` from `@anhur/core` yields `_meta`-like info (id, locale, paths).
+Content fields compile **before** Zod validates. Document info (`id`, `locale`, paths) is on `doc._meta` in `transform`; custom fields get it from their `FieldContext` (`defineField` in `@anhur/core/plugin`).
 
 ## Opt-in schema namespaces
 
-| Import                                | Field                   |
-| ------------------------------------- | ----------------------- |
-| `schema as m` from `@anhur/mdx`       | `m.mdx()`               |
-| `schema as md` from `@anhur/markdown` | `md.markdown()`         |
-| `schema as a` from `@anhur/assets`    | `a.image()`, `a.file()` |
+| Import                                | Field                                                |
+| ------------------------------------- | ---------------------------------------------------- |
+| `schema as m` from `@anhur/mdx`       | `m.body()` (document body), `m.mdx()` (string field) |
+| `schema as md` from `@anhur/markdown` | `md.body()`, `md.markdown()`                         |
+| `schema as a` from `@anhur/assets`    | `a.image()`, `a.file()`                              |
 
 ## Collection `generate`
 
@@ -87,12 +87,17 @@ Shared with derived exports (`defineConfig({ views })`). See [views.md](views.md
 
 ## Lifecycle hooks
 
-Order: validate → refs → **transform** (skip/draft) → **prepare** → **views/indexes/groups** → codegen → source **onSuccess** → integrations → **complete**.
+Order: compile fields + validate → **transform** (`ctx.skip`, `ctx.documents`) → drop drafts / skips → **prepare** → references (check + embed) → uniqueness → **views** → plugin `generate` → write output (plugin `beforePublish` / `afterPublish`) → source **onSuccess** → **complete**.
 
-- `prepare(sources)` — mutate documents before views + write
-- `onSuccess` on collection/singleton — after that source’s codegen
-- `complete` — project-wide after all success hooks
+- `transform(doc, ctx)` — return new fields or `ctx.skip(reason)`; `ctx.documents(source)` is the frozen, validated, pre-transform data of any source
+- `prepare(sources)` — mutate final documents before views + write
+- `onSuccess(documents)` on a collection/singleton — after the output is written
+- `complete(sources, { projectDir, outputDir })` — project-wide, last
+
+A document is a **draft** when its file has a top-level `draft: true` (it works without declaring the field; declare `draft: s.boolean().optional()` to type it). Drafts are validated but never written, never satisfy references and never cause uniqueness conflicts.
 
 ## References
 
-`s.reference("authors", { embed: true })` replaces the string with the related document (`{ …fields, _meta }`) after collect. TypeScript types follow: `Post["author"]` is the author document shape, not `string`. Without `embed`, the field stays a string id/key. The referenced collection must be registered in `content`.
+`s.reference("authors", { embed: true })` replaces the string with the related document (`{ …fields, _meta }`) after transforms (the target's transform fields included; embed cycles are rejected). TypeScript types follow: `Post["author"]` is the author document shape, not `string`. Without `embed`, the field stays a string id/key. The referenced collection must be registered in `content`.
+
+Every reference written in the file is checked against the final targets, even when a transform renames or drops the field. Embedding (and the generated type) applies where the transform output still has a string at the schema's reference location; a transform that sets a new value there gets it checked too.

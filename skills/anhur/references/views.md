@@ -9,15 +9,14 @@ They run **after** transforms and `prepare`, and emit list-only modules (no gett
 - Bind helpers once:
 
 ```ts
-// cms/views/helpers.ts
+// cms/views/derived.ts
 import { createDerivedHelpers } from "@anhur/core";
 import { content } from "../content";
 
-export const { defineView, defineGroup, defineIndex } =
-  createDerivedHelpers(content);
+export const { defineView, defineGroup, defineIndex } = createDerivedHelpers(content);
 ```
 
-Import `defineView` / `defineIndex` / `defineGroup` from `./helpers` in view modules (not from `@anhur/core`) so embed fields remap in `where` / `select` / `key` / `by`.
+Import `defineView` / `defineIndex` / `defineGroup` from `./derived` in view modules (not from `@anhur/core`) so embed fields remap in `where` / `select` / `key` / `by`.
 
 Register each export in the thin `anhur.config.ts` `views` array. Do not put views in the `content` tuple.
 
@@ -94,7 +93,7 @@ defineGroup({
 
 ## Pipeline order
 
-validate → refs → transform → prepare → **resolve views/indexes/groups** → codegen → onSuccess → integrations → complete
+validate → transform → drafts/skips → prepare → references → uniqueness → **resolve views/indexes/groups** → plugin generate → write → onSuccess → complete
 
 ## Anti-patterns
 

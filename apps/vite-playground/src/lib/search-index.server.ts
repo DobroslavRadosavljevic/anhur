@@ -1,47 +1,27 @@
-import { readFile, stat } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { createSearcher, type Searcher } from "@anhur/orama/client";
 import {
-  createSearcher,
-  type AnhurOramaIndex,
-  type Searcher,
-} from "@anhur/orama/client";
+  loadSearchIndex,
+  type AnhurSearchField,
+  type AnhurSearchStores,
+  type Locale,
+} from "anhur/generated";
 
-const indexPath = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../.anhur/generated/search/orama.json",
-);
+/** Searcher over the generated index (typed stores and fields). */
+export type SiteSearcher = Searcher<AnhurSearchStores, AnhurSearchField>;
 
-type Cache = {
-  mtimeMs: number;
-  searcher: Promise<Searcher>;
-};
-
-let cache: Cache | undefined;
-
-async function loadSearcher(): Promise<Searcher> {
-  const raw = await readFile(indexPath, "utf8");
-  // SAFETY: Anhur complete writes this file as AnhurOramaIndex JSON.
-  const snapshot = JSON.parse(raw) as AnhurOramaIndex;
-  return createSearcher(snapshot);
-}
+const searchers = new Map<Locale, Promise<SiteSearcher>>();
 
 /**
- * Load (and reload) the build-time Orama snapshot when the file changes.
- * Vite rebuilds rewrite this JSON; a forever cache would serve stale hits.
+ * Searcher for a locale. The index is a generated module, so it is bundled
+ * into the server build (no file paths to resolve at runtime) and replaced
+ * by Vite on rebuilds in dev.
  */
-export async function getSearcher(): Promise<Searcher> {
-  const info = await stat(indexPath);
-  if (!cache || cache.mtimeMs !== info.mtimeMs) {
-    cache = {
-      mtimeMs: info.mtimeMs,
-      searcher: loadSearcher(),
-    };
+export function getSearcher(locale: Locale): Promise<SiteSearcher> {
+  let searcher = searchers.get(locale);
+  if (!searcher) {
+    searcher = loadSearchIndex(locale).then(createSearcher);
+    searcher.catch(() => searchers.delete(locale));
+    searchers.set(locale, searcher);
   }
-  return cache.searcher;
-}
-
-/** Test helper — drop the in-memory searcher so the next call reloads. */
-export function clearSearcherCache(): void {
-  cache = undefined;
+  return searcher;
 }

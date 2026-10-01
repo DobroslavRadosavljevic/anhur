@@ -1,88 +1,73 @@
 # Assets storage (CDN / S3-compatible)
 
-Build-time sync of emitted assets to any [files-sdk](https://files-sdk.dev/) backend (S3, R2, MinIO, GCS, …). Authoring stays **local files in git**; the cloud is delivery only.
+Build-time upload of copied assets to any [files-sdk](https://files-sdk.dev/) backend (S3, R2, MinIO, GCS, …). Authoring stays **local files in git**; the bucket is delivery only.
 
 ## When to use
 
-- Production/CI builds should serve images from a CDN
-- You want hashed immutable URLs (`cover-a1b2c3d4.png`) on object storage
-- Dev should keep serving from disk via Vite (no bucket traffic)
+- Production builds should serve images from a CDN
+- Hashed, immutable URLs (`cover-1a2b3c4d5e6f7a8b.png`) on object storage
+- Dev keeps serving local copies through Vite (no bucket traffic)
 
-## Config shape (enable gate B)
-
-Always pass `storage`; gate with `enabled`:
+## Config
 
 ```ts
 import { Files } from "files-sdk";
 import { r2 } from "files-sdk/r2"; // or minio / s3 / …
 import { assets } from "@anhur/assets";
 
-const upload = process.env.ANHUR_ASSETS_UPLOAD === "1";
-
 assets({
-  dir: ".anhur/assets",
-  base: upload ? "https://cdn.example.com/anhur/" : "/anhur-assets/",
+  base: "https://cdn.example.com/site/", // public URL of the prefix
   storage: {
-    enabled: upload,
-    prefix: "anhur",
-    prune: true,
-    files: () =>
-      new Files({
-        adapter: r2({
-          bucket: "anhur-assets",
-          accountId: process.env.R2_ACCOUNT_ID!,
-          accessKeyId: process.env.R2_ACCESS_KEY_ID,
-          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-        }),
-      }),
+    prefix: "site",
+    files: () => new Files({ adapter: r2({ bucket: "assets" /* … */ }) }),
   },
 });
 ```
 
-### Options
+- `base` must be an absolute URL ending with `/<prefix>/` — setup fails otherwise.
+- `files` may be a client or a factory; the factory is only called when a sync runs, so builds that never upload never load provider SDKs.
+- Do not set a `prefix` on the `Files` client — Anhur applies `storage.prefix`.
 
-| Field          | When `enabled: true`   | Notes                                                                             |
-| -------------- | ---------------------- | --------------------------------------------------------------------------------- |
-| `enabled`      | required               | `false` → local only; `files`/`prefix` optional                                   |
-| `files`        | required               | Prefer a **factory** so disabled builds never construct the client                |
-| `prefix`       | required               | Isolates list/delete (e.g. `"anhur"`)                                             |
-| `prune`        | default `true`         | Delete remote keys under prefix not emitted this build                            |
-| `pruneEmpty`   | default `false`        | If `true`, allow prune when this build emitted **zero** assets (full prefix wipe) |
-| `dryRun`       | default `false`        | Plan uploads/deletes without writing                                              |
-| `concurrency`  | default `8`            | Parallel uploads                                                                  |
-| `cacheControl` | default immutable year | Sent on upload                                                                    |
+## When uploads happen
 
-Install peers for the adapter you use, e.g. MinIO/S3:
+| Mode                         | URLs in generated data       | Upload |
+| ---------------------------- | ---------------------------- | ------ |
+| `vite build` / `anhur build` | `base` (CDN)                 | yes    |
+| `vite dev` / `anhur watch`   | `devBase` (`/anhur-assets/`) | no     |
+| dev with `syncInDev: true`   | `base`                       | yes    |
 
-```sh
-bun add files-sdk @aws-sdk/client-s3 @aws-sdk/s3-presigned-post @aws-sdk/s3-request-presigner
+Files are copied locally first (`dir`, default `.anhur/assets`), then keys missing in the bucket are uploaded with their content type and `Cache-Control: public, max-age=31536000, immutable`. Existing keys are skipped (names are content-hashed).
+
+To build without uploading (e.g. local production builds), gate the whole `storage` option on an env var:
+
+```ts
+const upload = process.env.ANHUR_ASSETS_UPLOAD === "1";
+assets({
+  base: upload ? "https://cdn.example.com/site/" : "/anhur-assets/",
+  storage: upload ? { prefix: "site", files: () => new Files({ … }) } : undefined,
+});
 ```
 
-`files-sdk` is an **optional peer** of `@anhur/assets`.
+## Pruning
 
-## Lifecycle
+Off by default — previews and rollbacks may still reference older files.
 
-1. Emit locally (content-hashed copy under `dir`) — always
-2. Generated `src` uses `base` (CDN origin when uploading)
-3. After successful codegen: upload missing keys → prune orphans (if enabled) → local prune
-4. Vite: when `storage.enabled` and `base` is `http(s)`, skip copying assets into the Vite outDir
+| Option       | Effect                                                                                             |
+| ------------ | -------------------------------------------------------------------------------------------------- |
+| `prune`      | Delete unused Anhur assets: only direct children of the prefix with hashed names (batches of 1000) |
+| `pruneEmpty` | Allow pruning when the build has no assets                                                         |
+| `dryRun`     | Log what would be uploaded / deleted without changing anything                                     |
 
-Build logs include a summary line when sync runs (`uploaded` / `skipped` / `deleted`), plus truncated key lists so you can see exactly which objects changed. The same lines appear in Vite and `anhur build` / `anhur watch`.
+Pruning runs only in build mode (never in dev, even with `syncInDev`) and only after the generated output was published, so a build that fails later never removes files the live site uses. Keys in sub-folders (`site/preview/…`) and files with other names (`site/uploads/photo.jpg`) are never touched. Still, only enable `prune` when one deployment owns the prefix.
 
-## Hard rules for agents
+## Drafts
 
-1. Do **not** invent browser/signed upload media libraries — out of scope. This feature is **build-time sync only**.
-2. Require non-empty `prefix` when enabled.
-3. Prefer `files: () => new Files(…)` factories.
-4. Do **not** set a constructor `prefix` on the `Files` instance — Anhur applies `storage.prefix`.
-5. Empty emit skips prune unless `pruneEmpty: true` (avoids wiping the CDN).
-6. Fail the build on upload errors or bulk-delete partial failures.
-7. Document: no concurrent prod builds sharing one prefix (prune race).
+Assets are only collected from documents that end up in the output: drafts and skipped documents never upload their images.
 
 ## Local MinIO
 
-Repo root: `docker compose -f docker-compose.minio.yml up` (throwaway credentials — local only).
+`docker compose -f docker-compose.minio.yml up` at the Anhur repo root (throwaway credentials), then the playground with `ANHUR_ASSETS_UPLOAD=1`.
 
-## Guide
+## Peers
 
-User-facing docs: apps docs [Assets](/guides/assets) / package `@anhur/assets` README.
+Install `files-sdk` plus the adapter's own peers (e.g. `@aws-sdk/client-s3` for S3/MinIO/R2). `ERR_MODULE_NOT_FOUND` for an SDK means a missing adapter peer.

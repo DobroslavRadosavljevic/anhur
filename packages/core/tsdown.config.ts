@@ -1,26 +1,21 @@
 import { defineConfig } from "tsdown";
 
 /**
- * Library build for publish. Dev keeps JIT `exports` → `src`;
- * built paths land in `publishConfig` (applied by `scripts/release.ts` for Bun).
+ * Library build for publish. In the workspace, `exports` point at `src`;
+ * the release script swaps in `publishConfig.exports` (dist).
  */
 export default defineConfig({
   entry: {
     index: "./src/index.ts",
-    cli: "./src/cli.ts",
+    build: "./src/build/index.ts",
+    plugin: "./src/plugin/index.ts",
+    cli: "./src/cli/main.ts",
   },
   format: "esm",
-  dts: true,
+  // No source maps: they would point at `src/`, which is not published.
+  sourcemap: false,
+  dts: { sourcemap: false },
   platform: "node",
-  // `"type": "module"` → `.js` / `.d.ts` (match markdown/mdx; avoid mixed .mjs/.js).
   fixedExtension: false,
   clean: true,
-  exports: {
-    devExports: true,
-    // CLI is a bin entry, not a public import path.
-    exclude: ["cli"],
-    bin: {
-      anhur: "./src/cli.ts",
-    },
-  },
 });

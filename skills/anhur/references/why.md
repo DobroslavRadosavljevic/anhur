@@ -8,17 +8,17 @@ Authors edit `content/…`. Developers import generated modules. The build fails
 
 ## Problem it solves
 
-| Pain                                            | Anhur answer                                                     |
-| ----------------------------------------------- | ---------------------------------------------------------------- |
-| “What’s the shape of a post?”                   | Zod schema in `anhur.config.ts`                                  |
-| “Did we forget `title` on this MDX?”            | Build error at collect time                                      |
+| Pain                                            | Anhur answer                                                              |
+| ----------------------------------------------- | ------------------------------------------------------------------------- |
+| “What’s the shape of a post?”                   | Zod schema in `anhur.config.ts`                                           |
+| “Did we forget `title` on this MDX?”            | Build error at collect time                                               |
 | “How do I load all posts in a locale?”          | Folder i18n + `allPosts.filter(p => p._meta.locale === locale)` / getters |
 | “How do I load one post in the right locale?”   | `getPost({ locale, slug })` — not custom lang fields                      |
-| “Post → author without stringly ids everywhere” | `s.reference("authors", { embed?: true })`                       |
-| “MDX + images without custom Vite glue”         | Opt-in `@anhur/mdx` + `@anhur/assets` + Vite plugin              |
-| “Serve hashed assets from a CDN in prod”        | `assets({ storage })` + files-sdk (build-time sync)              |
-| “Heavy body on every list item”                 | Default **light** list (omit `body`) + `getPost()` for full docs |
-| “Featured / SKU map / category pages at build”  | `defineView` / `defineIndex` / `defineGroup` under `views`       |
+| “Post → author without stringly ids everywhere” | `s.reference("authors", { embed?: true })`                                |
+| “MDX + images without custom Vite glue”         | Opt-in `@anhur/mdx` + `@anhur/assets` + Vite plugin                       |
+| “Serve hashed assets from a CDN in prod”        | `assets({ storage })` + files-sdk (build-time sync)                       |
+| “Heavy body on every list item”                 | Default **light** list (omit `body`) + `getPost()` for full docs          |
+| “Featured / SKU map / category pages at build”  | `defineView` / `defineIndex` / `defineGroup` under `views`                |
 
 ## Why not just…
 
@@ -34,8 +34,8 @@ Great for pages that _are_ the route. Weaker for querying lists, joining authors
 ## Design bets (so agents don’t invent the wrong product)
 
 1. **Local files first** — no CMS connector in v0
-2. **Zod + fail-fast** — missing processor for `m.mdx()` / `a.image()` fails the build
-3. **Modular packages** — core stays free of MDX/sharp; opt in with processors
+2. **Zod + fail-fast** — every error in every file is reported with its field path; a missing plugin for `m.body()` / `a.image()` fails the build; a failed build never touches the previous output
+3. **Modular packages** — core stays free of MDX/sharp; opt in with `plugins`
 4. **Vite first** — `@anhur/vite`; CLI for CI / non-Vite; Next adapter later
 5. **Whole-document i18n** — locale folders, not field-level translation yet
 

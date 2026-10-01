@@ -9,7 +9,7 @@
   },
   "files": ["src"],
   "dependencies": {
-    "bellona": "0.4.7"
+    "bellona": "0.5.0"
   },
   "peerDependencies": {
     "oxlint": "^1.83.0"

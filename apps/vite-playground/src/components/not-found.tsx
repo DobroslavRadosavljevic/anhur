@@ -1,7 +1,7 @@
 import { type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { Button, buttonVariants } from "~/components/ui/button";
-import { cn } from "~/lib/utils";
+import { cn } from "~/lib/class-names";
 
 type NotFoundProps = {
   children?: ReactNode;

@@ -1,24 +1,36 @@
-export { buildOramaIndex } from "./build";
-export { createSearcher, type Searcher } from "./client";
+export { orama } from "./plugin";
+export { generateSearchModules, type RuntimeOramaOptions } from "./build";
+export { createUnicodeTokenizer, type TokenizerSpec } from "./tokenizer";
 export {
-  createOramaIntegration,
-  ensureOramaRegistered,
-  orama,
-} from "./integration";
+  STEMMER_LANGUAGES,
+  loadStemmer,
+  type Stemmer,
+  type StemmerLanguage,
+} from "./stemmers";
 export type {
-  AnhurOramaIndex,
+  AnhurSearchIndex,
+  CheckedCollections,
   CollectionName,
-  CollectionSearchConfig,
+  CollectionSearch,
+  IndexValues,
   JsonObject,
-  OramaCollectionsConfig,
+  JsonValue,
   OramaFieldType,
   OramaFieldValue,
-  OramaIndexDocument,
-  OramaIntegrationOptions,
-  OramaIntegrationOptions as OramaOptions,
+  OramaOptions,
+  OramaPlugin,
+  OramaPluginName,
+  OramaPluginTypes,
+  OramaSchema,
+  SearchCollections,
   SearchDocument,
   SearchHit,
   SearchQuery,
   SearchResult,
-  ValidateOramaCollections,
+  SearchStoresOf,
+  StoredJson,
+  StoreObject,
+  StoresOf,
+  StoreValue,
+  StringFieldsOf,
 } from "./types";

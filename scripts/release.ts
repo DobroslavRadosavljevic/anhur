@@ -3,8 +3,10 @@
  * Local release tooling for synced `@anhur/*` packages.
  *
  * Bun does not apply `publishConfig.exports` / `bin` when packing (unlike
- * yarn/pnpm). This script overlays those fields for pack/publish, then
- * restores `package.json`.
+ * yarn/pnpm). This script stages each package in a temp folder — its
+ * `files`, README, LICENSE and a `package.json` with those fields applied —
+ * and packs / publishes from there, so the workspace `package.json` is never
+ * changed (an interrupted publish leaves nothing to restore).
  *
  * Bun also resolves `workspace:*` from **bun.lock** (not live sibling
  * package.json). The overlay therefore pins every publishable `@anhur/*`
@@ -12,18 +14,33 @@
  * tarball still has a mismatched pin.
  *
  * Auth: `bun publish --auth-type web` (npm browser 2FA / web login).
+ * Publishing skips versions already on npm, so a failed run can be resumed,
+ * and prerelease versions (`1.0.0-beta.1`) publish under the `next` tag.
  *
  * `pack` / `prepare` / `publish` always run publish gates (source shape,
  * dist artifacts, real pack + tarball inspection) so an invalid package
  * cannot be published.
  */
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 
-const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const rootDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 const packagesDir = path.join(rootDir, "packages");
 
 /** Publish order: dependents after dependencies. */
@@ -37,8 +54,11 @@ const PUBLISH_ORDER = [
 ] as const;
 
 /** Subpath exports that must exist on the published package. */
-const REQUIRED_EXPORTS: Record<(typeof PUBLISH_ORDER)[number], readonly string[]> = {
-  "@anhur/core": ["."],
+const REQUIRED_EXPORTS: Record<
+  (typeof PUBLISH_ORDER)[number],
+  readonly string[]
+> = {
+  "@anhur/core": [".", "./build", "./plugin"],
   "@anhur/assets": ["."],
   "@anhur/markdown": ["."],
   "@anhur/mdx": [".", "./react"],
@@ -46,34 +66,58 @@ const REQUIRED_EXPORTS: Record<(typeof PUBLISH_ORDER)[number], readonly string[]
   "@anhur/vite": ["."],
 };
 
-type PackageJson = {
-  name: string;
-  version: string;
-  private?: boolean;
-  description?: string;
-  license?: string;
-  type?: string;
-  files?: string[];
-  bin?: Record<string, string> | string;
-  exports?: unknown;
-  dependencies?: Record<string, string>;
-  peerDependencies?: Record<string, string>;
-  peerDependenciesMeta?: Record<string, unknown>;
-  scripts?: unknown;
-  devDependencies?: unknown;
-  inlinedDependencies?: unknown;
-  engines?: { node?: string };
-  publishConfig?: {
-    access?: string;
-    exports?: unknown;
-    bin?: Record<string, string> | string;
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
-};
+type PublishableName = (typeof PUBLISH_ORDER)[number];
+
+/** `exports` value: a path, `null`, or conditions / subpaths. */
+type ExportsValue = string | null | { readonly [key: string]: ExportsValue };
+
+const ExportsSchema: z.ZodType<ExportsValue> = z.lazy(() =>
+  z.union([z.string(), z.null(), z.record(z.string(), ExportsSchema)]),
+);
+const StringMapSchema = z.record(z.string(), z.string());
+const BinSchema = z.union([z.string(), StringMapSchema]);
+
+/** The `package.json` fields this script reads; other fields pass through. */
+const PackageJsonSchema = z.looseObject({
+  name: z.string(),
+  version: z.string(),
+  private: z.boolean().optional(),
+  description: z.string().optional(),
+  license: z.string().optional(),
+  type: z.string().optional(),
+  files: z.array(z.string()).optional(),
+  bin: BinSchema.optional(),
+  exports: ExportsSchema.optional(),
+  dependencies: StringMapSchema.optional(),
+  peerDependencies: StringMapSchema.optional(),
+  engines: z.looseObject({ node: z.string().optional() }).optional(),
+  publishConfig: z
+    .looseObject({
+      access: z.string().optional(),
+      exports: ExportsSchema.optional(),
+      bin: BinSchema.optional(),
+    })
+    .optional(),
+});
+
+type PackageJson = z.infer<typeof PackageJsonSchema>;
+
+/** `bun.lock` workspaces block: `"packages/core": { "name": …, "version": … }`. */
+const LockfileSchema = z.looseObject({
+  workspaces: z.record(
+    z.string(),
+    z.looseObject({ version: z.string().optional() }),
+  ),
+});
+
+/** Source map fields the publish gate reads. */
+const SourceMapSchema = z.looseObject({
+  sourceRoot: z.string().optional(),
+  sources: z.array(z.string().nullable()),
+});
 
 type PackageInfo = {
-  name: (typeof PUBLISH_ORDER)[number];
+  name: PublishableName;
   dir: string;
   pkgPath: string;
   pkg: PackageJson;
@@ -98,6 +142,15 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
+async function readPackageJson(filePath: string): Promise<PackageJson> {
+  const raw: unknown = JSON.parse(await readFile(filePath, "utf8"));
+  return PackageJsonSchema.parse(raw);
+}
+
+function isPublishableName(name: string): name is PublishableName {
+  return PUBLISH_ORDER.some((candidate) => candidate === name);
+}
+
 async function loadPublishablePackages(): Promise<PackageInfo[]> {
   const entries = await readdir(packagesDir, { withFileTypes: true });
   const packages: PackageInfo[] = [];
@@ -106,19 +159,13 @@ async function loadPublishablePackages(): Promise<PackageInfo[]> {
     if (!entry.isDirectory()) continue;
     const dir = path.join(packagesDir, entry.name);
     const pkgPath = path.join(dir, "package.json");
-    try {
-      const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as PackageJson;
-      if (pkg.private) continue;
-      if (!pkg.name?.startsWith("@anhur/")) continue;
-      packages.push({
-        name: pkg.name as PackageInfo["name"],
-        dir,
-        pkgPath,
-        pkg,
-      });
-    } catch {
-      // skip
+    if (!(await exists(pkgPath))) continue;
+    const pkg = await readPackageJson(pkgPath);
+    if (pkg.private || !pkg.name.startsWith("@anhur/")) continue;
+    if (!isPublishableName(pkg.name)) {
+      throw new Error(`Publishable package not in PUBLISH_ORDER: ${pkg.name}`);
     }
+    packages.push({ name: pkg.name, dir, pkgPath, pkg });
   }
 
   const byName = new Map(packages.map((p) => [p.name, p]));
@@ -131,9 +178,6 @@ async function loadPublishablePackages(): Promise<PackageInfo[]> {
     ordered.push(info);
     byName.delete(name);
   }
-  if (byName.size > 0) {
-    throw new Error(`Publishable packages not in PUBLISH_ORDER: ${[...byName.keys()].join(", ")}`);
-  }
   return ordered;
 }
 
@@ -143,7 +187,9 @@ function assertSyncedVersions(packages: PackageInfo[]): string {
     const detail = packages.map((p) => `${p.name}@${p.pkg.version}`).join(", ");
     throw new Error(`Package versions are not synced: ${detail}`);
   }
-  return packages[0]!.pkg.version;
+  const [first] = packages;
+  if (!first) throw new Error("No publishable packages");
+  return first.pkg.version;
 }
 
 /**
@@ -158,21 +204,21 @@ async function assertLockfileWorkspaceVersions(
   if (!(await exists(lockPath))) {
     throw new Error("Missing bun.lock — run bun install");
   }
-  const lockText = await readFile(lockPath, "utf8");
+  const lockfile = parseLockfile(await readFile(lockPath, "utf8"));
   const problems: string[] = [];
 
   for (const info of packages) {
     const relDir = path.relative(rootDir, info.dir).replaceAll("\\", "/");
-    // bun.lock workspaces block: "packages/core": { "name": "@anhur/core", "version": "…",
-    const pattern = new RegExp(
-      `"${relDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:\\s*\\{[\\s\\S]*?"version"\\s*:\\s*"([^"]+)"`,
-    );
-    const match = lockText.match(pattern);
-    if (!match) {
+    const entry = lockfile.workspaces[relDir];
+    if (!entry) {
       problems.push(`bun.lock missing workspace entry for ${relDir}`);
       continue;
     }
-    const locked = match[1]!;
+    const locked = entry.version;
+    if (locked === undefined) {
+      problems.push(`bun.lock workspace entry for ${relDir} has no version`);
+      continue;
+    }
     if (locked !== releaseVersion) {
       problems.push(
         `bun.lock ${relDir} version is ${locked}, expected ${releaseVersion} (run: bun scripts/release.ts version ${releaseVersion})`,
@@ -187,6 +233,36 @@ async function assertLockfileWorkspaceVersions(
         .join("\n")}`,
     );
   }
+}
+
+/**
+ * Parse `bun.lock`: JSON that allows trailing commas. Commas before `}` or
+ * `]` are dropped outside strings, then the text is parsed as JSON.
+ */
+function parseLockfile(text: string): z.infer<typeof LockfileSchema> {
+  let output = "";
+  let inString = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      output += char;
+      if (char === "\\") {
+        output += text[index + 1] ?? "";
+        index += 1;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') inString = true;
+    if (char === ",") {
+      const next = /\S/.exec(text.slice(index + 1));
+      if (next?.[0] === "}" || next?.[0] === "]") continue;
+    }
+    output += char;
+  }
+  const raw: unknown = JSON.parse(output);
+  return LockfileSchema.parse(raw);
 }
 
 async function run(
@@ -208,7 +284,11 @@ async function run(
   });
 }
 
-async function runCapture(command: string, args: string[], cwd: string): Promise<string> {
+async function runCapture(
+  command: string,
+  args: string[],
+  cwd: string,
+): Promise<string> {
   return await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
@@ -226,41 +306,45 @@ async function runCapture(command: string, args: string[], cwd: string): Promise
     child.on("error", reject);
     child.on("exit", (code) => {
       if (code === 0) resolve(stdout);
-      else reject(new Error(`${command} ${args.join(" ")} exited ${code}\n${stderr || stdout}`));
+      else
+        reject(
+          new Error(
+            `${command} ${args.join(" ")} exited ${code}\n${stderr || stdout}`,
+          ),
+        );
     });
   });
 }
 
 /** Resolve `exports` map values to relative file paths (ignore `package.json` self-export). */
-function collectExportFiles(exportsField: unknown): Map<string, string> {
+function collectExportFiles(
+  exportsField: ExportsValue | undefined,
+): Map<string, string> {
   const out = new Map<string, string>();
 
-  const take = (subpath: string, value: unknown): void => {
+  const take = (subpath: string, value: ExportsValue | undefined): void => {
     if (typeof value === "string") {
       out.set(subpath, value);
       return;
     }
-    if (!value || typeof value !== "object" || Array.isArray(value)) return;
-    const record = value as Record<string, unknown>;
+    if (value === null || value === undefined) return;
     // Prefer import/default/types order for the JS file; types alone is not the runtime entry.
     const runtime =
-      record.import ?? record.default ?? record.require ?? record.node ?? record.browser;
-    if (typeof runtime === "string") {
-      out.set(subpath, runtime);
-      return;
-    }
-    if (runtime && typeof runtime === "object") {
-      take(subpath, runtime);
-    }
+      value.import ??
+      value.default ??
+      value.require ??
+      value.node ??
+      value.browser;
+    take(subpath, runtime);
   };
 
   if (typeof exportsField === "string") {
     out.set(".", exportsField);
     return out;
   }
-  if (!exportsField || typeof exportsField !== "object") return out;
+  if (exportsField === null || exportsField === undefined) return out;
 
-  for (const [key, value] of Object.entries(exportsField as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(exportsField)) {
     take(key, value);
   }
   return out;
@@ -273,7 +357,9 @@ function declarationForJs(jsRelative: string): string {
   return `${jsRelative}.d.ts`;
 }
 
-function binEntries(bin: PackageJson["bin"] | undefined): Array<[string, string]> {
+function binEntries(
+  bin: PackageJson["bin"] | undefined,
+): Array<[string, string]> {
   if (!bin) return [];
   if (typeof bin === "string") return [["anhur", bin]];
   return Object.entries(bin);
@@ -293,7 +379,9 @@ function workspaceProtocolProblems(
   const problems: string[] = [];
   for (const [name, version] of Object.entries(deps)) {
     if (version.includes("workspace:")) {
-      problems.push(`${label}.${name} still uses workspace protocol (${version})`);
+      problems.push(
+        `${label}.${name} still uses workspace protocol (${version})`,
+      );
     }
   }
   return problems;
@@ -303,86 +391,108 @@ function workspaceProtocolProblems(
  * Bun `pm pack` / `publish` replaces `workspace:*` from **bun.lock**, not from
  * sibling package.json. After a version bump the lockfile can still say 0.0.5
  * while package.json says 0.0.6 — and npm gets the stale pin.
- * Always write the synced release version into the publish overlay.
+ * Always write the synced release version into the publish overlay:
+ * dependencies exactly, peers as `^version` (plugins accept compatible cores).
  */
 function pinPublishableAnhurDeps(
   deps: Record<string, string> | undefined,
-  releaseVersion: string,
+  pin: string,
 ): Record<string, string> | undefined {
   if (!deps) return deps;
   const out: Record<string, string> = {};
   for (const [name, range] of Object.entries(deps)) {
-    out[name] = isPublishableAnhur(name) ? releaseVersion : range;
+    out[name] = isPublishableAnhur(name) ? pin : range;
   }
   return out;
 }
 
-/** Packed @anhur/* deps/peers must equal the lockstep release version. */
+/** Packed @anhur/* deps/peers must equal the lockstep pin. */
 function anhurLockstepProblems(
   label: string,
   deps: Record<string, string> | undefined,
-  releaseVersion: string,
+  pin: string,
 ): string[] {
   if (!deps) return [];
   const problems: string[] = [];
   for (const [name, range] of Object.entries(deps)) {
     if (!isPublishableAnhur(name)) continue;
-    if (range !== releaseVersion) {
+    if (range !== pin) {
       problems.push(
-        `${label}.${name} must be exactly "${releaseVersion}" (got "${range}") — Bun may have resolved workspace:* from a stale bun.lock`,
+        `${label}.${name} must be exactly "${pin}" (got "${range}") — Bun may have resolved workspace:* from a stale bun.lock`,
       );
     }
   }
   return problems;
 }
 
-function buildPublishPackageJson(original: PackageJson, releaseVersion: string): PackageJson {
-  const pkg = structuredClone(original);
+function buildPublishPackageJson(
+  original: PackageJson,
+  releaseVersion: string,
+): PackageJson {
+  const {
+    scripts: _scripts,
+    devDependencies: _devDependencies,
+    inlinedDependencies: _inlinedDependencies,
+    ...pkg
+  } = structuredClone(original);
   const publish = pkg.publishConfig ?? {};
 
-  if (publish.exports) {
-    pkg.exports = publish.exports;
-  }
-  if (publish.bin) {
-    pkg.bin = publish.bin;
-  }
-  pkg.publishConfig = {
-    access: publish.access ?? "public",
+  return {
+    ...pkg,
+    ...(publish.exports ? { exports: publish.exports } : {}),
+    ...(publish.bin ? { bin: publish.bin } : {}),
+    publishConfig: { access: publish.access ?? "public" },
+    dependencies: pinPublishableAnhurDeps(pkg.dependencies, releaseVersion),
+    peerDependencies: pinPublishableAnhurDeps(
+      pkg.peerDependencies,
+      `^${releaseVersion}`,
+    ),
   };
-
-  pkg.dependencies = pinPublishableAnhurDeps(pkg.dependencies, releaseVersion);
-  pkg.peerDependencies = pinPublishableAnhurDeps(pkg.peerDependencies, releaseVersion);
-
-  delete pkg.scripts;
-  delete pkg.devDependencies;
-  delete pkg.inlinedDependencies;
-  return pkg;
 }
 
 /**
- * Overlay `publishConfig.exports` / `bin` onto the package for Bun pack/publish.
- * Restores the original file afterward.
+ * Run `fn` in a temp copy of the package: its `files`, README and LICENSE,
+ * plus a `package.json` with `publishConfig.exports` / `bin` applied for
+ * Bun pack/publish. The workspace package is never modified.
  */
-async function withPublishOverlay<T>(
+async function withStagedPackage<T>(
   info: PackageInfo,
   releaseVersion: string,
-  fn: () => Promise<T>,
+  fn: (stageDir: string) => Promise<T>,
 ): Promise<T> {
-  const original = await readFile(info.pkgPath, "utf8");
-  const pkg = buildPublishPackageJson(JSON.parse(original) as PackageJson, releaseVersion);
+  const pkg = buildPublishPackageJson(
+    await readPackageJson(info.pkgPath),
+    releaseVersion,
+  );
 
   const exportsJson = JSON.stringify(pkg.exports ?? {});
   if (exportsJson.includes("./src/")) {
     throw new Error(
-      `${info.name}: publish overlay still points exports at ./src/ — rebuild with tsdown exports.devExports`,
+      `${info.name}: publish overlay still points exports at ./src/ — set publishConfig.exports to ./dist/ files`,
     );
   }
 
-  await writeFile(info.pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  const stageRoot = await mkdtemp(path.join(tmpdir(), "anhur-stage-"));
+  const stageDir = path.join(stageRoot, "package");
   try {
-    return await fn();
+    await mkdir(stageDir);
+    for (const entry of new Set([
+      ...(pkg.files ?? []),
+      "README.md",
+      "LICENSE",
+    ])) {
+      const source = path.join(info.dir, entry);
+      if (await exists(source)) {
+        await cp(source, path.join(stageDir, entry), { recursive: true });
+      }
+    }
+    await writeFile(
+      path.join(stageDir, "package.json"),
+      `${JSON.stringify(pkg, null, 2)}\n`,
+    );
+    return await fn(stageDir);
   } finally {
-    await writeFile(info.pkgPath, original);
+    await rm(stageRoot, { recursive: true, force: true });
   }
 }
 
@@ -394,7 +504,10 @@ async function ensureCliNodeShebang(coreDir: string): Promise<void> {
   }
   const source = await readFile(cliPath, "utf8");
   if (source.startsWith("#!/usr/bin/env bun")) {
-    await writeFile(cliPath, source.replace(/^#!\/usr\/bin\/env bun\n/, "#!/usr/bin/env node\n"));
+    await writeFile(
+      cliPath,
+      source.replace(/^#!\/usr\/bin\/env bun\n/, "#!/usr/bin/env node\n"),
+    );
   }
 }
 
@@ -415,18 +528,36 @@ function checkSourcePackage(info: PackageInfo): string[] {
   const problems: string[] = [];
 
   if (pkg.private) problems.push("package is private");
-  if (pkg.type !== "module") problems.push(`type must be "module" (got ${String(pkg.type)})`);
+  if (pkg.type !== "module")
+    problems.push(`type must be "module" (got ${String(pkg.type)})`);
   if (!pkg.description?.trim()) problems.push("missing description");
-  if (pkg.license !== "MIT") problems.push(`license must be MIT (got ${String(pkg.license)})`);
-  if (!pkg.files?.includes("dist")) problems.push('files[] must include "dist"');
+  if (pkg.license !== "MIT")
+    problems.push(`license must be MIT (got ${String(pkg.license)})`);
+  if (!pkg.files?.includes("dist"))
+    problems.push('files[] must include "dist"');
+  for (const entry of pkg.files ?? []) {
+    if (
+      /[*?[\]{}!]/.test(entry) ||
+      entry.startsWith("/") ||
+      entry.includes("..")
+    ) {
+      problems.push(
+        `files[] entry "${entry}" must be a plain relative path (staging copies it as is)`,
+      );
+    }
+  }
   if (!pkg.engines?.node) problems.push("missing engines.node");
 
   const localExports = JSON.stringify(pkg.exports ?? {});
   if (!localExports.includes("./src/")) {
-    problems.push("local exports must point at ./src/ for JIT workspace installs");
+    problems.push(
+      "local exports must point at ./src/ for JIT workspace installs",
+    );
   }
   if (localExports.includes("./dist/")) {
-    problems.push("local exports must not point at ./dist/ (publishConfig owns dist)");
+    problems.push(
+      "local exports must not point at ./dist/ (publishConfig owns dist)",
+    );
   }
 
   const publish = pkg.publishConfig;
@@ -438,41 +569,56 @@ function checkSourcePackage(info: PackageInfo): string[] {
       problems.push("publishConfig.exports must not point at ./src/");
     }
     if (publishExports.includes(".mjs") || publishExports.includes(".d.mts")) {
-      problems.push('publishConfig.exports must use .js / .d.ts (not .mjs) with "type":"module"');
+      problems.push(
+        'publishConfig.exports must use .js / .d.ts (not .mjs) with "type":"module"',
+      );
     }
     const exportFiles = collectExportFiles(publish.exports);
     for (const subpath of REQUIRED_EXPORTS[name]) {
       const target = exportFiles.get(subpath);
       if (!target) {
-        problems.push(`publishConfig.exports missing required subpath "${subpath}"`);
+        problems.push(
+          `publishConfig.exports missing required subpath "${subpath}"`,
+        );
         continue;
       }
       if (subpath !== "./package.json" && !target.startsWith("./dist/")) {
-        problems.push(`publishConfig.exports["${subpath}"] must be under ./dist/ (got ${target})`);
+        problems.push(
+          `publishConfig.exports["${subpath}"] must be under ./dist/ (got ${target})`,
+        );
       }
       if (target.endsWith(".js") === false && subpath !== "./package.json") {
-        problems.push(`publishConfig.exports["${subpath}"] must end with .js (got ${target})`);
+        problems.push(
+          `publishConfig.exports["${subpath}"] must end with .js (got ${target})`,
+        );
       }
     }
   }
 
   if (publish?.access && publish.access !== "public") {
-    problems.push(`publishConfig.access must be public (got ${publish.access})`);
+    problems.push(
+      `publishConfig.access must be public (got ${publish.access})`,
+    );
   }
 
   if (name === "@anhur/core") {
     const localBin = binEntries(pkg.bin);
     const publishBin = binEntries(publish?.bin);
-    if (localBin.length === 0) problems.push("missing bin.anhur for local JIT");
-    if (publishBin.length === 0) problems.push("missing publishConfig.bin.anhur");
+    if (localBin.length === 0) problems.push("missing bin.anhur");
+    if (publishBin.length === 0)
+      problems.push("missing publishConfig.bin.anhur");
+    // The CLI runs under plain Node, which cannot load the TypeScript sources,
+    // so the workspace bin is the built file too (`bun run build` first).
     for (const [, target] of localBin) {
-      if (!target.includes("/src/")) {
-        problems.push(`local bin must point at ./src/ (got ${target})`);
+      if (target !== "./dist/cli.js") {
+        problems.push(`bin must be ./dist/cli.js (got ${target})`);
       }
     }
     for (const [, target] of publishBin) {
       if (target !== "./dist/cli.js") {
-        problems.push(`publishConfig.bin must be ./dist/cli.js (got ${target})`);
+        problems.push(
+          `publishConfig.bin must be ./dist/cli.js (got ${target})`,
+        );
       }
     }
   } else if (pkg.bin || publish?.bin) {
@@ -499,7 +645,9 @@ async function checkDistArtifacts(info: PackageInfo): Promise<string[]> {
     if (relative.endsWith(".js")) {
       const dtsRel = declarationForJs(relative);
       if (!(await exists(path.join(info.dir, dtsRel)))) {
-        problems.push(`missing declaration for exports["${subpath}"]: ${dtsRel}`);
+        problems.push(
+          `missing declaration for exports["${subpath}"]: ${dtsRel}`,
+        );
       }
     }
   }
@@ -536,8 +684,10 @@ async function checkPackedPackage(
   if (packedPkg.version !== info.pkg.version) {
     problems.push(`packed version mismatch (${packedPkg.version})`);
   }
-  if (packedPkg.type !== "module") problems.push('packed type must be "module"');
-  if (packedPkg.scripts) problems.push("packed package.json must not include scripts");
+  if (packedPkg.type !== "module")
+    problems.push('packed type must be "module"');
+  if (packedPkg.scripts)
+    problems.push("packed package.json must not include scripts");
   if (packedPkg.devDependencies) {
     problems.push("packed package.json must not include devDependencies");
   }
@@ -555,17 +705,38 @@ async function checkPackedPackage(
 
   const access = packedPkg.publishConfig?.access;
   if (access !== "public") {
-    problems.push(`packed publishConfig.access must be public (got ${String(access)})`);
+    problems.push(
+      `packed publishConfig.access must be public (got ${String(access)})`,
+    );
   }
   if (packedPkg.publishConfig?.exports || packedPkg.publishConfig?.bin) {
-    problems.push("packed publishConfig must only set access (exports/bin already overlaid)");
+    problems.push(
+      "packed publishConfig must only set access (exports/bin already overlaid)",
+    );
   }
 
-  problems.push(...workspaceProtocolProblems("dependencies", packedPkg.dependencies));
-  problems.push(...workspaceProtocolProblems("peerDependencies", packedPkg.peerDependencies));
-  problems.push(...anhurLockstepProblems("dependencies", packedPkg.dependencies, info.pkg.version));
   problems.push(
-    ...anhurLockstepProblems("peerDependencies", packedPkg.peerDependencies, info.pkg.version),
+    ...workspaceProtocolProblems("dependencies", packedPkg.dependencies),
+  );
+  problems.push(
+    ...workspaceProtocolProblems(
+      "peerDependencies",
+      packedPkg.peerDependencies,
+    ),
+  );
+  problems.push(
+    ...anhurLockstepProblems(
+      "dependencies",
+      packedPkg.dependencies,
+      info.pkg.version,
+    ),
+  );
+  problems.push(
+    ...anhurLockstepProblems(
+      "peerDependencies",
+      packedPkg.peerDependencies,
+      `^${info.pkg.version}`,
+    ),
   );
 
   for (const required of ["package.json", "LICENSE", "README.md"] as const) {
@@ -588,7 +759,9 @@ async function checkPackedPackage(
     if (target.endsWith(".js")) {
       const dtsRel = declarationForJs(target);
       if (!(await exists(path.join(packageRoot, dtsRel)))) {
-        problems.push(`tarball missing declaration ${dtsRel} for exports["${subpath}"]`);
+        problems.push(
+          `tarball missing declaration ${dtsRel} for exports["${subpath}"]`,
+        );
       }
     }
   }
@@ -601,7 +774,9 @@ async function checkPackedPackage(
     }
     const source = await readFile(abs, "utf8");
     if (!source.startsWith("#!/usr/bin/env node\n")) {
-      problems.push(`packed bin.${binName} must start with #!/usr/bin/env node`);
+      problems.push(
+        `packed bin.${binName} must start with #!/usr/bin/env node`,
+      );
     }
   }
 
@@ -621,15 +796,20 @@ async function packToTemp(info: PackageInfo): Promise<{
 }> {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "anhur-release-"));
   try {
-    const packOut = await withPublishOverlay(info, info.pkg.version, async () =>
-      runCapture("bun", ["pm", "pack", "--destination", tempRoot], info.dir),
+    const packOut = await withStagedPackage(
+      info,
+      info.pkg.version,
+      async (stageDir) =>
+        runCapture("bun", ["pm", "pack", "--destination", tempRoot], stageDir),
     );
     const tarballName = packOut
       .split("\n")
       .map((line) => line.trim())
       .find((line) => line.endsWith(".tgz"));
     if (!tarballName) {
-      throw new Error(`${info.name}: bun pm pack did not print a .tgz name\n${packOut}`);
+      throw new Error(
+        `${info.name}: bun pm pack did not print a .tgz name\n${packOut}`,
+      );
     }
     const tarballPath = path.join(tempRoot, path.basename(tarballName));
     if (!(await exists(tarballPath))) {
@@ -640,10 +820,14 @@ async function packToTemp(info: PackageInfo): Promise<{
     await run("mkdir", ["-p", extractDir]);
     await run("tar", ["-xzf", tarballPath, "-C", extractDir]);
     const packageRoot = path.join(extractDir, "package");
-    const packedPkg = JSON.parse(
-      await readFile(path.join(packageRoot, "package.json"), "utf8"),
-    ) as PackageJson;
-    const fileList = await runCapture("find", [packageRoot, "-type", "f"], packageRoot);
+    const packedPkg = await readPackageJson(
+      path.join(packageRoot, "package.json"),
+    );
+    const fileList = await runCapture(
+      "find",
+      [packageRoot, "-type", "f"],
+      packageRoot,
+    );
 
     return { tarballPath, extractDir, packageRoot, packedPkg, fileList };
   } catch (error) {
@@ -652,8 +836,44 @@ async function packToTemp(info: PackageInfo): Promise<{
   }
 }
 
+/** Every source map in the tarball must point at files that are in the tarball. */
+async function sourceMapProblems(
+  packageRoot: string,
+  relativeFiles: readonly string[],
+): Promise<string[]> {
+  const problems: string[] = [];
+  for (const file of relativeFiles.filter((name) => name.endsWith(".map"))) {
+    const raw: unknown = JSON.parse(
+      await readFile(path.join(packageRoot, file), "utf8"),
+    );
+    const map = SourceMapSchema.parse(raw);
+    for (const source of map.sources) {
+      if (source === null) continue;
+      const target = path.resolve(
+        packageRoot,
+        path.dirname(file),
+        map.sourceRoot ?? "",
+        source,
+      );
+      if (
+        !target.startsWith(`${packageRoot}${path.sep}`) ||
+        !(await exists(target))
+      ) {
+        problems.push(
+          `${file} points at ${source}, which is not in the tarball`,
+        );
+        break;
+      }
+    }
+  }
+  return problems;
+}
+
 async function assertPublishable(info: PackageInfo): Promise<void> {
-  const problems = [...checkSourcePackage(info), ...(await checkDistArtifacts(info))];
+  const problems = [
+    ...checkSourcePackage(info),
+    ...(await checkDistArtifacts(info)),
+  ];
 
   if (!(await exists(path.join(info.dir, "LICENSE")))) {
     problems.push("missing LICENSE");
@@ -668,7 +888,11 @@ async function assertPublishable(info: PackageInfo): Promise<void> {
 
   const packed = await packToTemp(info);
   try {
-    const packedProblems = await checkPackedPackage(info, packed.packedPkg, packed.packageRoot);
+    const packedProblems = await checkPackedPackage(
+      info,
+      packed.packedPkg,
+      packed.packageRoot,
+    );
     if (packedProblems.length > 0) {
       throw new PublishCheckError(info.name, packedProblems);
     }
@@ -680,6 +904,14 @@ async function assertPublishable(info: PackageInfo): Promise<void> {
       .map((abs) => path.relative(packed.packageRoot, abs))
       .filter((rel) => rel && !rel.startsWith(".."))
       .sort();
+
+    const mapProblems = await sourceMapProblems(
+      packed.packageRoot,
+      relativeFiles,
+    );
+    if (mapProblems.length > 0) {
+      throw new PublishCheckError(info.name, mapProblems);
+    }
 
     console.log(`\n${info.name} OK (${relativeFiles.length} files)`);
     for (const file of relativeFiles) {
@@ -697,7 +929,7 @@ async function verifyAll(packages: PackageInfo[]): Promise<void> {
     if (info.name === "@anhur/core") {
       await ensureCliNodeShebang(info.dir);
       // Reload shebang-sensitive checks after possible rewrite.
-      info.pkg = JSON.parse(await readFile(info.pkgPath, "utf8")) as PackageJson;
+      info.pkg = await readPackageJson(info.pkgPath);
     }
     await assertPublishable(info);
   }
@@ -706,10 +938,11 @@ async function verifyAll(packages: PackageInfo[]): Promise<void> {
 async function setAllVersions(version: string): Promise<void> {
   const packages = await loadPublishablePackages();
   for (const info of packages) {
-    const raw = await readFile(info.pkgPath, "utf8");
-    const pkg = JSON.parse(raw) as PackageJson;
-    pkg.version = version;
-    await writeFile(info.pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+    const pkg = await readPackageJson(info.pkgPath);
+    await writeFile(
+      info.pkgPath,
+      `${JSON.stringify({ ...pkg, version }, null, 2)}\n`,
+    );
     console.log(`set ${info.name} → ${version}`);
   }
   // Refresh bun.lock workspace package versions so a raw `bun pm pack`
@@ -719,6 +952,8 @@ async function setAllVersions(version: string): Promise<void> {
 }
 
 async function qualityGates(): Promise<void> {
+  console.log("\n→ check:root");
+  await run("bun", ["run", "check:root"]);
   console.log("\n→ format");
   await run("bun", ["run", "format"]);
   console.log("\n→ lint");
@@ -733,21 +968,53 @@ async function qualityGates(): Promise<void> {
 
 async function buildPackages(): Promise<void> {
   console.log("\n→ build (@anhur/*)");
-  await run("bun", ["run", "build", ...PUBLISH_ORDER.map((name) => `--filter=${name}`)]);
+  await run("bun", [
+    "run",
+    "build",
+    ...PUBLISH_ORDER.map((name) => `--filter=${name}`),
+  ]);
+}
+
+/** npm dist-tag for a version: prereleases (`1.0.0-beta.1`) go to `next`, not `latest`. */
+function distTag(version: string): "latest" | "next" {
+  return version.includes("-") ? "next" : "latest";
+}
+
+/** Whether `name@version` is already on npm (read-only `npm view`). */
+async function isPublished(name: string, version: string): Promise<boolean> {
+  try {
+    const output = await runCapture(
+      "npm",
+      ["view", `${name}@${version}`, "version"],
+      rootDir,
+    );
+    return output.trim() === version;
+  } catch (cause) {
+    if (cause instanceof Error && cause.message.includes("E404")) return false;
+    throw cause;
+  }
 }
 
 async function publishAll(packages: PackageInfo[]): Promise<void> {
   console.log("\n→ publish (bun publish --auth-type web)");
   for (const info of packages) {
+    const { version } = info.pkg;
+    if (await isPublished(info.name, version)) {
+      console.log(`\nSkipping ${info.name}@${version} (already on npm)`);
+      continue;
+    }
     await assertDistReady(info);
     if (info.name === "@anhur/core") {
       await ensureCliNodeShebang(info.dir);
     }
-    console.log(`\nPublishing ${info.name}@${info.pkg.version}…`);
-    await withPublishOverlay(info, info.pkg.version, async () => {
-      await run("bun", ["publish", "--auth-type", "web", "--access", "public"], {
-        cwd: info.dir,
-      });
+    const tag = distTag(version);
+    console.log(`\nPublishing ${info.name}@${version} (tag ${tag})…`);
+    await withStagedPackage(info, version, async (stageDir) => {
+      await run(
+        "bun",
+        ["publish", "--auth-type", "web", "--access", "public", "--tag", tag],
+        { cwd: stageDir },
+      );
     });
   }
 }
@@ -761,11 +1028,14 @@ Commands:
   verify                  Build + publish gates (source/dist/tarball)
   prepare                 Quality gates + build + publish gates
   pack                    Build + publish gates (alias of verify)
-  publish                 prepare, then bun publish --auth-type web (local only)
+  publish                 prepare, then bun publish --auth-type web (local only);
+                          skips versions already on npm (resume a failed run),
+                          prereleases publish with --tag next
 
 Publish gates fail the release if exports/bin/types/LICENSE/README/workspace
 protocols/shebang/packed package.json shape are invalid, or if packed
-@anhur/* dependency/peer versions are not exactly the synced release version
+@anhur/* dependencies are not exactly the synced release version (peers:
+^version)
 (Bun otherwise resolves workspace:* from a stale bun.lock).
 
 Publishable packages (lockstep versions):

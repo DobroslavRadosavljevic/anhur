@@ -1,190 +1,183 @@
 # Pitfalls
 
-## Monolithic `anhur.config.ts`
+Every build error is a diagnostic: `code`, `message`, `file`, `fieldPath`, `hint`. Read the hint first. Codes below are the `code` values.
 
-**Symptom:** Config file owns every `defineCollection`, inline enums, and views; hard to review and reuse.
+## Missing plugin (`config-invalid`)
 
-**Fix:** Split into `cms/collections`, `singletons`, `enums`, `objects`, `views`, plus `cms/content.ts`. Keep config as wire-up only. See [project-structure.md](project-structure.md).
+**Symptom:** `m.body()` / `md.body()` / `a.image()` reports that it needs a plugin.
 
-## Views from `@anhur/core` instead of helpers
+**Fix:** Add `mdx()`, `markdown()` or `assets()` to `defineConfig({ plugins })`. There are no `processors` / `integrations` options any more — everything is a plugin.
 
-**Symptom:** Embed/reference fields mistyped or not remapped in `where` / `select` when using `createDerivedHelpers` elsewhere.
+## Old API names
 
-**Fix:** Import `defineView` / `defineIndex` / `defineGroup` from `cms/views/helpers.ts` (`createDerivedHelpers(content)`).
+| Old                                          | Now                                                      |
+| -------------------------------------------- | -------------------------------------------------------- |
+| `processors: [...]`, `integrations: [...]`   | `plugins: [...]`                                         |
+| `m.mdx()` for the body                       | `m.body()` (`m.mdx()` is for string fields)              |
+| `md.markdown()` for the body                 | `md.body()`                                              |
+| `MDXContent`                                 | `MdxContent` (`@anhur/mdx/react`)                        |
+| `search/orama.json` + `createSearcher(json)` | `createSearcher(await loadSearchIndex(locale))`          |
+| `storage.enabled`                            | uploads run in build mode; gate `storage` itself         |
+| `getDocumentMeta()` (AsyncLocalStorage)      | `transform(doc)` → `doc._meta`, or `defineField` context |
+| `defineIntegration`                          | `definePlugin({ generate })`                             |
+| `build` / `watch` from `@anhur/core`         | `@anhur/core/build`                                      |
 
-## Processor missing
+## Relative asset without `assets()`
 
-**Symptom:** Build error that `m.mdx()` / `md.markdown()` / `a.image()` requires a processor.
+**Symptom:** `./x.png` in a field or body fails the build.
 
-**Fix:** Add matching `mdx()`, `markdown()`, or `assets()` to `defineConfig({ processors })`.
+**Fix:** Register `assets()`. Absolute `https://` URLs need `a.image({ allowRemote: true })` in fields; in bodies they pass through.
 
-## Relative body asset without `assets()`
+## Asset refused (`asset-failed`)
 
-**Symptom:** Relative `![…](./x.png)` or `<img src="./x.png">` fails the build.
+**Symptom:** "outside the folders assets may be read from", "dotfile", "node_modules", or "does not allow".
 
-**Fix:** Register `assets({ … })`. Absolute `https://` URLs are fine without it. Relative `srcset` / `srcSet` / `imagesrcset` candidates are copied the same way as `src`.
+**Fix:**
+
+- Keep files inside the project folder, or add `assets({ roots: ["../shared"] })`. Dotfiles are never copied; `node_modules` only through an explicit `roots` entry.
+- Default extensions are media, fonts and `.pdf`. Data and documents (`.json`, `.txt`, `.csv`, `.zip`, office files) are opt-in so authors cannot publish `package.json` or a key file by linking it: `assets({ extensions: [...DEFAULT_ASSET_EXTENSIONS, ...DOCUMENT_ASSET_EXTENSIONS] })`, or list only what you need.
+- `a.image()` reads only formats sharp can decode (no `.ico` / `.bmp`); use `a.file()` for those.
+
+## Remote URL refused
+
+`a.image({ allowRemote: true })` / `a.file({ allowRemote: true })` accept only `https://`, `http://`, `//host/…` and `/path` values. `javascript:`, `data:` and other schemes fail the build.
+
+## SVG refused or changed
+
+With `svg: "sanitize"` (default) SVGs are parsed as XML and rebuilt from an allowlist: scripts, event handlers, `foreignObject`, foreign namespaces and non-http(s) links are removed, and an SVG that does not parse fails the build. Serve SVGs with `X-Content-Type-Options: nosniff` and a restrictive CSP (see the assets README).
+
+## Link to another document treated as broken
+
+Links to pages (`./intro.md`, `../guide/`, `./other.html`, extensionless or version-like paths such as `./release-1.0`) are **not** assets and stay as written. Map them with `documentLink` on `markdown()` / `mdx()`: it gets `{ url, path, suffix, target, document }` (`target` is the project-relative path) and Anhur appends `suffix` (`?query#hash`) to what you return. MDX component props are only treated as files when they start with `./` or `../`.
 
 ## Import path wrong
 
-**Symptom:** Cannot resolve `@anhur/generated` or `./.anhur/generated` in app code.
+**Symptom:** Cannot resolve `anhur/generated`.
 
-**Fix:** Import **`anhur/generated`** only. Ensure Vite plugin is installed and `tsconfig` paths map that id.
+**Fix:** Import `anhur/generated` only (not `./.anhur/generated`). Vite: `plugins: [anhur()]`. TypeScript: `"paths": { "anhur/generated": ["./.anhur/generated"] }`. Other bundlers: alias the id to `.anhur/generated/index.js`.
 
 ## Generated folder missing in CI
 
-**Symptom:** `tsc` fails on missing modules under `.anhur/generated`.
+**Fix:** Run `anhur build` (or `vite build`) before `tsc`. `anhur check` validates but writes nothing.
 
-**Fix:** Run `anhur build` (or Vite build) before typecheck, or commit generated output.
+## Output folder refused (`output-unsafe`)
 
-## Wrong document type / getter for plural names
+**Symptom:** Anhur will not write into `outputDir`.
 
-**Symptom:** `use_cases` produced `UseCas` / `getUseCas` on older `@anhur/core` (before pluralize-backed naming).
+**Fix:** The folder has files Anhur did not create (no `.anhur-manifest.json`). Point `outputDir` at a dedicated folder, or empty it. Anhur never deletes files it did not write.
 
-**Fix:** Upgrade `@anhur/core`. Defaults are `UseCase` / `getUseCase` / `allUseCases`. Set `typeName` on `defineCollection` (not under `generate`) when you need a custom type. Default getter follows `typeName`.
+## Build locked (`output-locked`)
 
-## Stale `allX.js` / `getX.js` after rename or remove
+**Symptom:** Another build is writing the same output.
 
-**Symptom:** Old list/getter modules still on disk after deleting a collection (pre-wipe codegen).
+**Fix:** Stop the other process (two `vite dev` servers, or `anhur watch` + `vite dev` on one project). Stale locks from crashed processes are cleared automatically.
 
-**Fix:** Current Anhur clears `outputDir` on every generate. Rebuild once after upgrading; no manual `rm -rf` needed for normal renames.
+## Duplicate id (`duplicate-id`)
+
+`hello.md` and `hello.mdx` (or `Hello.md` + `hello.md`) in one folder map to the same id. Keep one.
+
+## Duplicate slug / unique value (`unique-conflict`)
+
+`s.slug()` is unique per locale by default. Drafts and skipped documents never conflict. Change the value, or `s.slug({ unique: false })`. Unique values are typed: `1` and `"1"` are different.
+
+## Slug cannot be derived
+
+Derived slugs transliterate to ASCII (`Straße` → `strasse`, `Đorđe` → `djordje`, `Здраво` → `zdravo`, Greek too). Names with letters that have no ASCII spelling (Chinese, Japanese, Arabic, …) fail with a message: set `slug` in the file. With `removeIndex`, the root `index` file gets `"index"` (or `""` when your `pattern` allows an empty slug).
+
+## Reference failed (`reference-failed`)
+
+**Symptom:** "no document … in locale "de"".
+
+**Fix:** References resolve in the referrer's locale — add the target in that locale, or make the target `localized: false`. A reference to a draft or skipped document fails too.
+
+## Embed cycle
+
+`posts.related → posts` with `embed: true` both ways is rejected. Embed in one direction and keep the other as a plain reference.
+
+## Front matter not parsed
+
+Only YAML front matter is supported: the first line must be exactly `---` (or `---yaml`). `---js` / TOML front matter and duplicate keys are errors; YAML merge keys (`<<: *defaults`) work. `----` is never front matter, and a leading `---` without a closing line is a thematic break — unless `key: value` lines follow it, then it is an "unclosed front matter" error.
 
 ## Locale folder mismatch
 
-**Symptom:** Missing documents for a locale, or unexpected monolingual merge.
-
-**Fix:** Localized sources need `{directory}/{locale}/…` (e.g. `cms/content/posts/en/…`). Opt out with `localized: false`. `defaultLocale` must be listed in `locales`.
+Localized sources need `{directory}/{locale}/…`. Files directly under `directory` (or in unknown locale folders) produce warnings and are ignored. Use `localized: false` for monolingual sources. `defaultLocale` must be in `locales`.
 
 ## Wrong locale / null from getter / mixed-locale lists
 
-**Symptom:** `getPost({ slug })` is `null`; detail page shows the wrong language; index page lists every locale; `defineIndex({ key: "slug" })` fails the build; TypeScript rejects `locale: "cz"`.
-
-**Fix:** Pass `{ locale, slug }` with generated `Locale` (`locale` is required on localized getters). Scope lists with `allX.filter((d) => d._meta.locale === locale)`. Import `Locale` / `locales` / `defaultLocale` from `anhur/generated` instead of hand-rolling unions. Do not index bare `slug` when the same slug exists in multiple locales. See [localization.md](localization.md).
-
-## Sharp / Bun lifecycle
-
-**Symptom:** `@anhur/assets` install fails or sharp missing under Bun.
-
-**Fix:** `bun pm untrusted` → trust `sharp` (and related) via `trustedDependencies` as needed.
-
-## Asset storage enabled without CDN `base`
-
-**Symptom:** Build fails: `storage.enabled: true` requires an absolute `http(s)` URL for `base`.
-
-**Fix:** Set `base` to the public CDN origin in prod/CI (e.g. `https://cdn.example.com/anhur/`). Keep `/anhur-assets/` for local with `enabled: false`.
-
-## Asset storage wiped the bucket / unexpected deletes
-
-**Symptom:** Remote objects under the prefix disappeared after a build with few or no assets.
-
-**Fix:** Empty emit skips prune by default. Do not set `pruneEmpty: true` unless you intend a full prefix wipe. Always use a dedicated `prefix`. Do not run concurrent prod builds that share one prefix.
-
-## Asset storage / files-sdk missing peers
-
-**Symptom:** `ERR_MODULE_NOT_FOUND` for `@aws-sdk/client-s3` (or similar) when constructing a MinIO/S3/R2 adapter.
-
-**Fix:** Install `files-sdk` plus the adapter’s optional peers (see [files-sdk adapters](https://files-sdk.dev/) and [assets-storage.md](assets-storage.md)). Prefer a `files: () => new Files(…)` factory so local `enabled: false` builds never load the provider SDK.
-
-## Cache stale after plugin or compile option change
-
-**Symptom:** MDX/Markdown output ignores a new remark/rehype plugin or plugin option while `cacheDir` is enabled and `assets()` is not registered.
-
-**Fix:** Cache keys fingerprint plugin functions and `[plugin, options]` tuples (not just plugin counts). Prefer the tuple form so option changes invalidate. Delete `.anhur/cache` if you still see a stale compile after a factory-style `plugin(options)` call.
-
-## Vite `base` vs asset URLs
-
-**Symptom:** With `base: '/blog/'`, generated image `src` is `/anhur-assets/…` (404) or files were copied to `dist/blog/anhur-assets/`.
-
-**Fix:** `@anhur/vite` joins Vite `base` onto generated asset URLs (`/blog/anhur-assets/…`) and still copies files to `dist/anhur-assets/` (Vite does not put `base` on disk). Set `assets({ base: "https://…" })` when the CDN origin is Anhur’s public URL; that skips the local outDir copy.
-
-## Shared assets outside content folders
-
-**Symptom:** Editing `shared/logo.png` referenced from Markdown does not rebuild.
-
-**Fix:** After a successful build, Anhur watches parent directories of `emitAsset` sources that sit outside collection/singleton roots. The first content save that references the file is enough for Vite to subscribe; CLI watch adds the same extra roots.
+Pass `{ locale, slug }` with the generated `Locale`. Scope lists with `_meta.locale`. Do not index a bare `slug` across locales. See [localization.md](localization.md).
 
 ## Draft still appears
 
-**Fix:** Return `ctx.skip(...)` or set `draft: true` in validated data **before** codegen (transform). `prepare` can also remove docs from `sources[].documents`.
+`draft: true` must be a top-level **boolean** in the file (the string `"true"` does not count). It works even when the schema does not declare `draft`; declare `draft: s.boolean().optional()` to type it. Or `return ctx.skip("reason")` from `transform`.
+
+## Transform reading other files
+
+`ctx.documents(source)` gives validated, pre-transform, frozen documents of another source. Reading files with `fs` inside `transform` is not tracked for rebuilds; use a custom field with `context.addDependency(path)` instead.
+
+## Plain union with content fields
+
+`s.union([s.object({ cover: a.image() }), …])` is rejected — the walker cannot tell which branch holds the field. Use `s.discriminatedUnion("type", [...])`; references and uniques are then checked only in the variant a document selects.
+
+## Field helper in an unsupported place
+
+Config errors: field helpers inside `z.map()` / `z.set()` or as record keys, and compiled helpers (`s.slug()`, `s.raw()`, `s.toc()`, Markdown/MDX/asset fields) after a `.transform()` / `z.preprocess()` / `z.codec()` — they run on the raw input before Zod. Supported: `z.string().pipe(s.slug())`, `z.preprocess(fn, s.reference("authors"))`, `.catchall(s.reference(...))`, compiled fields inside `.default({})` / `.prefault({})` objects, and recursive (`z.lazy`) schemas at any depth.
+
+## MDX import fails
+
+`import`, `export … from`, dynamic `import()` and top-level `await` in MDX are rejected with the line. Pass components: `<MdxContent code={post.body} components={{ X }} />`.
+
+## MDX blank under CSP
+
+Rendering uses `new Function`. Allow `'unsafe-eval'` on pages that render MDX in the browser, or render on the server only. Edge runtimes (Cloudflare Workers, Vercel Edge) cannot render MDX at all — use a Node.js runtime.
+
+## Markdown HTML stripped
+
+Raw HTML is sanitized with `DEFAULT_SANITIZE_SCHEMA` (GitHub's schema plus `video` / `audio` / `source` / `track` / `picture` and responsive `img`; scripts, handlers, `style` removed). Pass your own `sanitizeSchema` (start from `DEFAULT_SANITIZE_SCHEMA`), or `allowDangerousHtml: true` for fully trusted content only. Your `rehypePlugins` run **after** sanitizing — a plugin that turns text into HTML can reintroduce XSS.
+
+## Orama row rejected
+
+**Symptom:** `orama: posts document "x" (…): … "title"`.
+
+**Fix:** `index()` must return exactly the `schema` fields with matching types (e.g. `summary ?? ""` for optional strings).
+
+## Orama `doc` not typed
+
+Put `orama({...})` in the same `defineConfig({ content, plugins })` as the content tuple. Do not pass `content` or generics. Keys must be collection names.
+
+## Search finds nothing in a non-Latin language
+
+You probably set `languages: { sr: "english" }`. Remove it — the default Unicode tokenizer handles any script.
+
+## Sharp under Bun
+
+`bun pm untrusted` → trust `sharp` via `trustedDependencies`.
+
+## Storage base mismatch
+
+**Symptom:** "base … does not end with the storage prefix".
+
+**Fix:** `base: "https://cdn.example.com/site/"` with `prefix: "site"`.
+
+## Vite `base` and assets
+
+Generated local asset URLs include Vite `base` (`/blog/anhur-assets/…`); files are copied to `dist/anhur-assets/`.
+
+## Views
+
+- `defineView` with `from: [posts, pages]` requires `select`.
+- Views go in `views`, never in `content`.
+- Duplicate `defineIndex` keys fail the build — use `s.unique()` or a composite key.
+- `listSort` on numeric strings sorts as text — use `generate.compare` or store numbers.
+- Callbacks that read embeds/transform fields need `createDerivedHelpers(content)`. With plain `defineView` / `defineIndex` / `defineGroup`, embed fields are opaque (`UnboundEmbed`) and cannot be keys.
+
+## Hook snapshot cannot be changed
+
+`ctx.documents()`, `onSuccess` and `complete` get frozen documents; `Map`, `Set` and `Date` values in them throw on `set` / `add` / `delete` / `setX`. Copy before changing (`new Map(value)`).
 
 ## Config not found
 
-**Fix:** Config defaults to `anhur.config.ts` under Vite root / `--root`. Pass `configPath` / `--config` when relocated. All relative paths are from the config file directory.
+Default: `anhur.config.{ts,mts,js,mjs}` in the Vite root / `--root`. Pass `configPath` / `--config` otherwise. All paths in the config are relative to the config file.
 
-## Scope rename
+## Light list missing a field
 
-If packages are published under a different npm scope than `@anhur/*`, install that scope but keep virtual import `anhur/generated` and `.anhur/` dirs unless the release notes say otherwise.
-
-## Orama / integrations typing weak (`doc` is `any`)
-
-**Symptom:** `orama({ collections: { posts: { index: (doc) => … }}})` does not type `doc` from your collections.
-
-**Fix:** Put the factory next to an inline `content` array in a normal `defineConfig` (no generics):
-
-```ts
-export default defineConfig({
-  content: [posts, pages],
-  integrations: [orama({…})],
-});
-```
-
-Do **not**:
-
-- Pass `content` into `orama(…)`
-- Use `defineConfig<typeof content>(…)` (unnecessary now)
-- Use `complete: orama(…)` or `{ id: "orama", … }` as the app DX
-
-If you author a custom package and `doc` is still `any`, return `createIntegrationConfigEntry` (deferred resolver) + `NoInfer` on options — see [search.md](search.md).
-
-## Unknown Orama collection / singleton key
-
-**Symptom:** Type error on a key under `collections` (or a singleton name like `settings`).
-
-**Fix:** Only collection names from `content` are allowed. Singletons are not searchable via Orama config.
-
-## Search index missing
-
-**Symptom:** Cannot import / read `.anhur/generated/search/orama.json`.
-
-**Fix:** Ensure `orama({…})` is in `integrations` and a build has run. Confirm `directory` / `filename` if customized.
-
-## Unknown integration id at build
-
-**Symptom:** `@anhur/core: unknown integration "…"`.
-
-**Fix:** Import the package that calls `registerIntegration` (e.g. `import { orama } from "@anhur/orama"`), or use `defineIntegration({ id, onComplete })` for one-offs.
-
-## Duplicate index key
-
-**Symptom:** Build fails because two documents share the same `defineIndex` key (e.g. SKU).
-
-**Fix:** Make the key unique in content (`s.unique()`), or change `key` / filter with `where` so only one row wins.
-
-## Multi-collection view without `select`
-
-**Symptom:** Config/build rejects a `defineView` with `from: [posts, pages]`.
-
-**Fix:** Always provide `select`. Rows are tagged with `collection`.
-
-## Views in `content`
-
-**Symptom:** Type error or unused helpers when putting `defineView` / `defineIndex` / `defineGroup` in `content`.
-
-**Fix:** Register them under `defineConfig({ views: […] })` only.
-
-## String sort on numeric prices
-
-**Symptom:** `"99"` sorts after `"149"` with `listSort: { by: "price" }`.
-
-**Fix:** Use `generate.compare: (a, b) => Number(a.price) - Number(b.price)` (or store numbers in the schema).
-
-## Embed phantom on view callbacks (`doc.provider.slug` fails)
-
-**Symptom:** `by: (doc) => doc.provider.slug` type-errors, or you need `as unknown as { slug: string }` casts. Generated `allProxies` types are fine.
-
-**Fix:** Pass `content` (same array as `defineConfig`) into `defineView` / `defineIndex` / `defineGroup`, or use `createDerivedHelpers(content)`. Generated view exports remap embeds via `GetViewByName` without that step — this is only for config callbacks.
-
-## Embedded `body` still on light list rows
-
-**Symptom (before 0.0.11):** `allProxies[0].body` missing but `allProxies[0].provider.body` still present.
-
-**Fix:** Light lists strip `listOmit` keys (default `body`) from nested embeds too. Use `getX` / full split when you need embedded bodies.
+`allX` omits `generate.listOmit` (default `["body"]`) — also inside embeds. Use `getX()` or `listOmit: []` / `split: "full"`.
