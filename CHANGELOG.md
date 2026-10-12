@@ -2,6 +2,18 @@
 
 All `@anhur/*` packages are released together with the same version.
 
+## Unreleased
+
+### Fixed
+
+- **`@anhur/vite`**: after a content edit in `vite dev`, an SSR page could render the old content and fail to hydrate. There were two causes:
+  - Vite told the browser to reload at the same time as the SSR module runner, which drops its modules later, in its own queue.
+  - Other plugins could reload the page for the content file before Anhur rebuilt it. `@tailwindcss/vite` does this for files it scans for class names.
+
+  Hot updates for content files and Anhur's output now wait until the rebuild is done and the runnable server environments reloaded the new output. Then Vite and the other plugins update the browser.
+
+- **`@anhur/vite`**: while a build fails, a page that reloads gets the error overlay again. Before, a reload cleared it.
+
 ## 0.1.0 — 2026-10-01
 
 A rework of the whole build engine: explicit context instead of global state, a fixed pipeline, safe file handling, and every error reported with its file and field. It contains **breaking changes**; see the migration below. The full design report is in [`reviews/2026-10-01-architecture-report.md`](reviews/2026-10-01-architecture-report.md).
