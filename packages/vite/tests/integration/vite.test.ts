@@ -100,15 +100,21 @@ async function loadClientGraph(
 }
 
 /**
- * A dev server with an SSR module that renders the post titles, and a log of
- * what that module renders at the moment the browser gets a reload or update.
+ * A dev server with an SSR module that renders the post titles, a log of what
+ * that module renders at the moment the browser gets a reload or update, and
+ * the files of the reloads Vite itself sends to the SSR module runner.
  */
-async function startSsrProject(plugins: Plugin[]): Promise<{
+async function startSsrProject(
+  plugins: Plugin[],
+  files: { readonly [file: string]: string } = {},
+): Promise<{
   readonly project: TestProject;
   readonly rendered: unknown[];
+  readonly serverReloads: string[];
 }> {
   const project = await createProject({
     ...FILES,
+    ...files,
     "server.js":
       'import { allPosts } from "anhur/generated";\nexport const titles = allPosts.map((post) => post.title);\n',
   });
@@ -140,7 +146,17 @@ async function startSsrProject(plugins: Plugin[]): Promise<{
     }
     send(payload);
   }) as typeof client.hot.send;
-  return { project, rendered };
+
+  const serverReloads: string[] = [];
+  const sendToServer = ssr.hot.send.bind(ssr.hot);
+  // SAFETY: Vite only calls send(payload) here, and the wrapper passes the call on unchanged.
+  ssr.hot.send = ((payload: HotPayload) => {
+    if (payload.type === "full-reload") {
+      serverReloads.push(path.basename(payload.triggeredBy ?? "*"));
+    }
+    sendToServer(payload);
+  }) as typeof ssr.hot.send;
+  return { project, rendered, serverReloads };
 }
 
 /** The error overlay message Vite sends over the HMR socket. */
@@ -367,6 +383,26 @@ describe("vite dev", () => {
     await project.write("content/one.md", "---\ntitle: Edited\n---\n");
     await until(async () => (rendered.length > 0 ? true : undefined));
     expect(rendered[0]).toEqual(["Edited"]);
+  });
+
+  it("keeps the server reloads of a build when an edit during it starts another build", async () => {
+    const slow = CONFIG.replace(
+      "title: s.string()",
+      "title: s.string().transform(async (value) => { await new Promise((done) => setTimeout(done, 800)); return value; })",
+    );
+    const { project, rendered, serverReloads } = await startSsrProject(
+      [anhur()],
+      { "anhur.config.ts": slow },
+    );
+    await project.write("content/one.md", "---\ntitle: Edited\n---\n");
+    // During that build, an edit that changes no output starts a second one.
+    await new Promise((done) => setTimeout(done, 400));
+    await project.write("content/one.md", "---\ntitle: Edited\n---\n");
+    await until(async () => (rendered.length > 0 ? true : undefined), 15_000);
+    await new Promise((done) => setTimeout(done, 1000));
+    expect(rendered[0]).toEqual(["Edited"]);
+    // The plugin already reloaded the runner for the written files.
+    expect(serverReloads).toEqual([]);
   });
 
   it("holds other plugins' reloads for a content file until the rebuild is done", async () => {

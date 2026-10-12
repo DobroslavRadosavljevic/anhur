@@ -157,8 +157,12 @@ type DevServerState = {
   settled: Promise<void>;
   /** Resolves `settled`; `undefined` when no build is expected. */
   settle: (() => void) | undefined;
-  /** Output files the last rebuild reloaded in the runnable server environments. */
-  refreshed: ReadonlySet<string>;
+  /**
+   * Output files the builds of the open `settled` reloaded in the runnable
+   * server environments. Several builds can run before `settled` resolves
+   * (an edit during a build starts another one), so this collects them all.
+   */
+  readonly refreshed: Set<string>;
   readonly added: Set<string>;
   targets: WatchTargets;
   release: () => Promise<void>;
@@ -345,6 +349,7 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
       /** Open `settled` for the next build, unless it is already open. */
       const expectBuild = () => {
         if (state.settle) return;
+        state.refreshed.clear();
         state.settled = new Promise((resolve) => {
           state.settle = resolve;
         });
@@ -420,9 +425,8 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
             try {
               const next = await runBuild(owned, "rebuilt");
               const changed = [...next.written, ...next.removed];
-              state.refreshed = new Set(
-                changed.map((file) => normalizePath(file)),
-              );
+              for (const file of changed)
+                state.refreshed.add(normalizePath(file));
               if (changed.length > 0)
                 await refreshEnvironments(server, changed);
               if (state.failing && next.written.length === 0) {
