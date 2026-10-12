@@ -6,10 +6,15 @@ import {
   build,
   createLogger,
   createServer,
+  isRunnableDevEnvironment,
+  type DevEnvironment,
+  type HotPayload,
   type Logger,
+  type Plugin,
   type ViteDevServer,
 } from "vite";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { anhur } from "../../src";
 import {
   createProject,
@@ -74,6 +79,123 @@ async function loadPosts(server: ViteDevServer): Promise<readonly string[]> {
   // SAFETY: the generated index exports allPosts (checked by the assertions).
   const loaded = (await server.ssrLoadModule("anhur/generated")) as PostsModule;
   return loaded.allPosts.map((post) => post.title);
+}
+
+/** Transform `url` and every module it imports, as a browser page load would. */
+async function loadClientGraph(
+  client: DevEnvironment,
+  url: string,
+): Promise<void> {
+  const seen = new Set<string>();
+  const queue = [url];
+  for (let next = queue.shift(); next; next = queue.shift()) {
+    if (seen.has(next)) continue;
+    seen.add(next);
+    await client.transformRequest(next);
+    const module = await client.moduleGraph.getModuleByUrl(next);
+    for (const imported of module?.importedModules ?? []) {
+      queue.push(imported.url);
+    }
+  }
+}
+
+/**
+ * A dev server with an SSR module that renders the post titles, a log of what
+ * that module renders at the moment the browser gets a reload or update, and
+ * the files of the reloads Vite itself sends to the SSR module runner.
+ */
+async function startSsrProject(
+  plugins: Plugin[],
+  files: { readonly [file: string]: string } = {},
+): Promise<{
+  readonly project: TestProject;
+  readonly rendered: unknown[];
+  readonly serverReloads: string[];
+}> {
+  const project = await createProject({
+    ...FILES,
+    ...files,
+    "server.js":
+      'import { allPosts } from "anhur/generated";\nexport const titles = allPosts.map((post) => post.title);\n',
+  });
+  projects.push(project);
+  const server = await createServer({
+    root: project.dir,
+    logLevel: "silent",
+    plugins,
+    server: { middlewareMode: true, ws: false },
+  });
+  servers.push(server);
+  const ssr = server.environments.ssr;
+  if (!ssr || !isRunnableDevEnvironment(ssr)) {
+    throw new Error("expected a runnable SSR environment");
+  }
+  await ssr.runner.import("/server.js");
+  const client = server.environments.client;
+  await loadClientGraph(client, "/main.js");
+  // The watcher reports the first build's files late; let those events pass.
+  await new Promise((done) => setTimeout(done, 1000));
+
+  const rendered: unknown[] = [];
+  const send = client.hot.send.bind(client.hot);
+  // SAFETY: Vite only calls send(payload) here, and the wrapper passes the call on unchanged.
+  client.hot.send = ((payload: HotPayload) => {
+    if (payload.type === "full-reload" || payload.type === "update") {
+      const entry = ssr.runner.evaluatedModules.getModuleByUrl("/server.js");
+      rendered.push(entry?.evaluated ? entry.exports?.titles : undefined);
+    }
+    send(payload);
+  }) as typeof client.hot.send;
+
+  const serverReloads: string[] = [];
+  const sendToServer = ssr.hot.send.bind(ssr.hot);
+  // SAFETY: Vite only calls send(payload) here, and the wrapper passes the call on unchanged.
+  ssr.hot.send = ((payload: HotPayload) => {
+    if (payload.type === "full-reload") {
+      serverReloads.push(path.basename(payload.triggeredBy ?? "*"));
+    }
+    sendToServer(payload);
+  }) as typeof ssr.hot.send;
+  return { project, rendered, serverReloads };
+}
+
+/** The error overlay message Vite sends over the HMR socket. */
+const HmrError = z.object({
+  type: z.literal("error"),
+  err: z.object({ message: z.string(), plugin: z.string().optional() }),
+});
+type HmrError = z.infer<typeof HmrError>;
+
+/** An HMR WebSocket like the one a page opens, connected and ready. */
+async function connectHmr(url: string): Promise<{
+  readonly nextError: () => Promise<HmrError>;
+  readonly close: () => void;
+}> {
+  const socket = new WebSocket(url.replace(/^http/, "ws"), "vite-hmr");
+  const errors: HmrError[] = [];
+  const waiting: ((payload: HmrError) => void)[] = [];
+  socket.addEventListener("message", (event) => {
+    const parsed = HmrError.safeParse(JSON.parse(String(event.data)));
+    if (!parsed.success) return;
+    const resolve = waiting.shift();
+    if (resolve) resolve(parsed.data);
+    else errors.push(parsed.data);
+  });
+  await new Promise((resolve, reject) => {
+    socket.addEventListener("open", resolve);
+    socket.addEventListener("error", () => reject(new Error("no socket")));
+  });
+  return {
+    nextError: () => {
+      const buffered = errors.shift();
+      if (buffered) return Promise.resolve(buffered);
+      return new Promise((resolve, reject) => {
+        waiting.push(resolve);
+        setTimeout(() => reject(new Error("no error payload in 5 s")), 5000);
+      });
+    },
+    close: () => socket.close(),
+  };
 }
 
 describe("vite build", () => {
@@ -256,6 +378,53 @@ describe("vite dev", () => {
     ).toEqual(["Early edit"]);
   });
 
+  it("updates the SSR modules before it tells the browser to reload", async () => {
+    const { project, rendered } = await startSsrProject([anhur()]);
+    await project.write("content/one.md", "---\ntitle: Edited\n---\n");
+    await until(async () => (rendered.length > 0 ? true : undefined));
+    expect(rendered[0]).toEqual(["Edited"]);
+  });
+
+  it("keeps the server reloads of a build when an edit during it starts another build", async () => {
+    const slow = CONFIG.replace(
+      "title: s.string()",
+      "title: s.string().transform(async (value) => { await new Promise((done) => setTimeout(done, 800)); return value; })",
+    );
+    const { project, rendered, serverReloads } = await startSsrProject(
+      [anhur()],
+      { "anhur.config.ts": slow },
+    );
+    await project.write("content/one.md", "---\ntitle: Edited\n---\n");
+    // During that build, an edit that changes no output starts a second one.
+    await new Promise((done) => setTimeout(done, 400));
+    await project.write("content/one.md", "---\ntitle: Edited\n---\n");
+    await until(async () => (rendered.length > 0 ? true : undefined), 15_000);
+    await new Promise((done) => setTimeout(done, 1000));
+    expect(rendered[0]).toEqual(["Edited"]);
+    // The plugin already reloaded the runner for the written files.
+    expect(serverReloads).toEqual([]);
+  });
+
+  it("holds other plugins' reloads for a content file until the rebuild is done", async () => {
+    // Like @tailwindcss/vite, which reloads the page when a file it scans changes.
+    const reloadOnContent: Plugin = {
+      name: "reload-on-content",
+      enforce: "pre",
+      hotUpdate({ file }) {
+        if (!file.endsWith(".md")) return;
+        this.environment.hot.send({ type: "full-reload" });
+        return [];
+      },
+    };
+    const { project, rendered } = await startSsrProject([
+      reloadOnContent,
+      anhur(),
+    ]);
+    await project.write("content/one.md", "---\ntitle: Edited\n---\n");
+    await until(async () => (rendered.length > 0 ? true : undefined));
+    expect(rendered[0]).toEqual(["Edited"]);
+  });
+
   it("starts even when the first build fails", async () => {
     const project = await createProject({
       ...FILES,
@@ -276,5 +445,38 @@ describe("vite dev", () => {
         return current.length > 0 ? current : undefined;
       }),
     ).toEqual(["First post"]);
+  });
+
+  it("sends the build error again to a browser that connects while the build fails", async () => {
+    const project = await createProject(FILES);
+    projects.push(project);
+    const server = await createServer({
+      root: project.dir,
+      logLevel: "silent",
+      plugins: [anhur()],
+      server: { port: 0, strictPort: false, hmr: { port: 0 } },
+    });
+    servers.push(server);
+    await server.listen();
+    const url = server.resolvedUrls?.local[0];
+    if (!url) throw new Error("expected a local URL");
+
+    // An open page gets the error first; then it reloads (for example because
+    // another plugin reloaded it) and connects again.
+    const open = await connectHmr(url);
+    try {
+      await project.write("content/one.md", "---\ntitle: 1\n---\n");
+      await open.nextError();
+      const reloaded = await connectHmr(url);
+      try {
+        expect(await reloaded.nextError()).toMatchObject({
+          err: { plugin: "anhur", message: expect.stringContaining("one.md") },
+        });
+      } finally {
+        reloaded.close();
+      }
+    } finally {
+      open.close();
+    }
   });
 });

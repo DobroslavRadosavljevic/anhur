@@ -42,6 +42,8 @@ No separate `anhur build` step is needed — the plugin builds on `vite dev` and
 
 - Uses Vite's file watcher. Changes to content folders, the config, and files the config imports trigger a rebuild (debounced); unrelated files do not.
 - Only changed generated modules are rewritten, so Vite's normal HMR picks them up.
+- SSR stays in step with the browser. For a content change, hot updates wait until the rebuild is done and runnable server environments (the SSR module runner) dropped the old content. This also holds for other plugins that reload the page for files they scan, such as `@tailwindcss/vite`. The page reload then renders the new content on the server too, with no hydration mismatch.
+- While a build fails, a page that loads or reloads gets the error overlay again.
 - A failed build keeps the dev server running: the error (with file and field) shows in the overlay and the terminal, and the last good output stays in place. Fixing the file reloads the page.
 - Changes made while the first build runs are picked up by a rebuild right after it.
 - `server.restart()` keeps rebuilding, also with an inline plugin instance.

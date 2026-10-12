@@ -1,5 +1,12 @@
 import path from "node:path";
-import type { HotPayload, Logger, Plugin, ViteDevServer } from "vite";
+import {
+  isRunnableDevEnvironment,
+  normalizePath,
+  type HotPayload,
+  type Logger,
+  type Plugin,
+  type ViteDevServer,
+} from "vite";
 import {
   createAnhur,
   isAnhurBuildError,
@@ -65,6 +72,67 @@ function sendToClient(server: ViteDevServer, payload: HotPayload): void {
 }
 
 /**
+ * Makes every environment drop the modules of the files one build wrote,
+ * before Vite sends the browser its update.
+ *
+ * Without this, Vite handles each written file on its own: it sends the
+ * browser a reload and the SSR module runner a "program reload" at the same
+ * time, and the runner handles it later, in its own queue. A page request
+ * from that reload can then render the old content on the server and fail
+ * to hydrate.
+ *
+ * Runnable server environments are reloaded here the way Vite's module
+ * runner does it (clear, then import the entrypoints again), but awaited.
+ * Other server environments keep Vite's own handling.
+ */
+async function refreshEnvironments(
+  server: ViteDevServer,
+  files: readonly string[],
+): Promise<void> {
+  const normalized = files.map((file) => normalizePath(file));
+  for (const environment of Object.values(server.environments ?? {})) {
+    for (const file of normalized) environment.moduleGraph.onFileChange(file);
+  }
+  for (const environment of Object.values(server.environments ?? {})) {
+    if (environment.name === "client") continue;
+    if (!isRunnableDevEnvironment(environment)) continue;
+    const { runner } = environment;
+    if (runner.isClosed()) continue;
+    const changed = normalized.flatMap((file) => [
+      ...(runner.evaluatedModules.getModulesByFile(file) ?? []),
+    ]);
+    if (changed.length === 0) continue;
+    const entrypoints = new Set<string>();
+    const seen = new Set<string>();
+    const queue = changed.map((node) => node.id);
+    for (let id = queue.pop(); id !== undefined; id = queue.pop()) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const node = runner.evaluatedModules.getModuleById(id);
+      if (!node) continue;
+      if (node.importers.size === 0) entrypoints.add(node.url);
+      else queue.push(...node.importers);
+    }
+    await runner.hmrClient?.notifyListeners("vite:beforeFullReload", {
+      type: "full-reload",
+      triggeredBy: normalized[0],
+    });
+    runner.evaluatedModules.clear();
+    for (const url of entrypoints) {
+      if (runner.isClosed()) break;
+      try {
+        await runner.import(url);
+      } catch (cause) {
+        environment.logger.error(
+          `[anhur] reloading ${url} after a content change failed: ${errorMessage(cause)}`,
+          { timestamp: true },
+        );
+      }
+    }
+  }
+}
+
+/**
  * Rebuild state of one dev server. `server.restart()` creates a new server
  * (reusing an inline plugin instance) before the old one closes, so every
  * piece of dev state belongs to its server, never to the plugin.
@@ -79,6 +147,22 @@ type DevServerState = {
   building: boolean;
   pending: boolean;
   failing: boolean;
+  /** The overlay error of the failing build, sent again to browsers that connect later. */
+  error: HotPayload | undefined;
+  /**
+   * Settles when the build that picks up the latest content change is done
+   * and every environment dropped the old output. It covers the debounce
+   * delay too. `hotUpdate` waits for it before Vite tells the browser.
+   */
+  settled: Promise<void>;
+  /** Resolves `settled`; `undefined` when no build is expected. */
+  settle: (() => void) | undefined;
+  /**
+   * Output files the builds of the open `settled` reloaded in the runnable
+   * server environments. Several builds can run before `settled` resolves
+   * (an edit during a build starts another one), so this collects them all.
+   */
+  readonly refreshed: Set<string>;
   readonly added: Set<string>;
   targets: WatchTargets;
   release: () => Promise<void>;
@@ -237,12 +321,17 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
         building: false,
         pending: false,
         failing: false,
+        error: undefined,
+        settled: Promise.resolve(),
+        settle: undefined,
+        refreshed: new Set<string>(),
         added: new Set<string>(),
         targets: { directories: [], files: [], ignore: [] },
         release: async () => {
           if (state.disposed) return;
           state.disposed = true;
           if (state.timer) clearTimeout(state.timer);
+          settle();
           const remaining = (users.get(owned) ?? 1) - 1;
           if (remaining > 0) {
             users.set(owned, remaining);
@@ -256,6 +345,19 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
           }
           await owned.close();
         },
+      };
+      /** Open `settled` for the next build, unless it is already open. */
+      const expectBuild = () => {
+        if (state.settle) return;
+        state.refreshed.clear();
+        state.settled = new Promise((resolve) => {
+          state.settle = resolve;
+        });
+      };
+      const settle = () => {
+        const resolve = state.settle;
+        state.settle = undefined;
+        resolve?.();
       };
       for (const environment of Object.values(server.environments ?? {})) {
         serverStates.set(environment, state);
@@ -293,7 +395,7 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
         const message = errorMessage(cause);
         server.config.logger.error(`[anhur] ${message}`, { timestamp: true });
         state.failing = true;
-        sendToClient(server, {
+        state.error = {
           type: "error",
           err: {
             message: message.replace(/^Anhur build failed[^\n]*\n/, ""),
@@ -303,31 +405,51 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
               ? cause.diagnostics[0]?.file
               : undefined,
           },
-        });
+        };
+        sendToClient(server, state.error);
       };
+      // Another plugin may reload the page after the error was sent (for
+      // example when it scans the content file too), which clears the overlay.
+      server.ws.on("connection", () => {
+        if (state.error && !state.disposed) sendToClient(server, state.error);
+      });
 
       const rebuild = async () => {
         state.pending = true;
         if (state.building) return;
-        while (state.pending && !state.disposed) {
-          state.pending = false;
-          state.building = true;
-          try {
-            const next = await runBuild(owned, "rebuilt");
-            if (state.failing && next.written.length === 0) {
-              sendToClient(server, { type: "full-reload" });
+        expectBuild();
+        try {
+          while (state.pending && !state.disposed) {
+            state.pending = false;
+            state.building = true;
+            try {
+              const next = await runBuild(owned, "rebuilt");
+              const changed = [...next.written, ...next.removed];
+              for (const file of changed)
+                state.refreshed.add(normalizePath(file));
+              if (changed.length > 0)
+                await refreshEnvironments(server, changed);
+              if (state.failing && next.written.length === 0) {
+                sendToClient(server, { type: "full-reload" });
+              }
+              state.failing = false;
+              state.error = undefined;
+            } catch (cause) {
+              reportError(cause);
+            } finally {
+              state.building = false;
             }
-            state.failing = false;
-          } catch (cause) {
-            reportError(cause);
-          } finally {
-            state.building = false;
+            await syncWatched().catch((cause: unknown) => reportError(cause));
           }
-          await syncWatched().catch((cause: unknown) => reportError(cause));
+        } finally {
+          // A change that came in during this build has its own timer; keep
+          // `settled` open for the build that timer starts.
+          if (!state.timer) settle();
         }
       };
 
       const schedule = () => {
+        expectBuild();
         if (state.timer) clearTimeout(state.timer);
         state.timer = setTimeout(() => {
           state.timer = undefined;
@@ -348,6 +470,7 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
       server.watcher.on("change", onFileEvent);
       server.watcher.on("unlink", onFileEvent);
 
+      expectBuild();
       try {
         await runBuild(owned, "built");
       } catch (cause) {
@@ -361,7 +484,36 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
         early.some((file) => isRelevantChange(file, state.targets))
       ) {
         schedule();
+      } else {
+        settle();
       }
+    },
+
+    // For a content file or Anhur's own output, wait until the rebuild is
+    // done and the environments dropped the old output (`refreshEnvironments`).
+    // `order: "pre"` runs this before other plugins' hooks, so the browser
+    // hears about the change last, also from plugins that reload the page for
+    // files they scan (such as @tailwindcss/vite). The client then gets the
+    // normal update; runnable server environments are already reloaded, so
+    // Vite has nothing left to do there.
+    hotUpdate: {
+      order: "pre",
+      async handler({ file }) {
+        const state = serverStates.get(this.environment);
+        if (!state) return;
+        const absolute = path.resolve(file);
+        const output = result !== undefined && isAnhurOutput(absolute, result);
+        if (!output && !isRelevantChange(absolute, state.targets)) return;
+        await state.settled;
+        if (
+          output &&
+          this.environment.name !== "client" &&
+          isRunnableDevEnvironment(this.environment) &&
+          state.refreshed.has(normalizePath(file))
+        ) {
+          return [];
+        }
+      },
     },
 
     // A dev server closes its plugin containers on `server.close()` (also in
