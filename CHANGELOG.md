@@ -2,7 +2,7 @@
 
 All `@anhur/*` packages are released together with the same version.
 
-## Unreleased
+## 0.1.1 — 2026-10-12
 
 ### Fixed
 
