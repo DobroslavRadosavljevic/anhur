@@ -7,7 +7,11 @@ import type {
 import type { CompileOptions } from "@mdx-js/mdx";
 import type { PluggableList } from "unified";
 import { optionsCacheKey } from "./cache-key";
-import { COMPILER_VERSION, extractMdxHeadings } from "./compile";
+import {
+  COMPILER_VERSION,
+  compileMdxWithHeadings,
+  extractMdxHeadings,
+} from "./compile";
 
 /** Plugin name; `m.body()` / `m.mdx()` require it. */
 export const MDX_PLUGIN = "mdx";
@@ -39,6 +43,40 @@ export type MdxPlugin = AnhurPlugin & {
   readonly name: typeof MDX_PLUGIN;
   readonly mdxOptions: MdxOptions;
 };
+
+/** Plugin options, then field options on top (plugin lists run first). */
+export function resolveOptions(
+  context: FieldContext,
+  field: MdxOptions,
+): MdxOptions {
+  const plugin = context.getPlugin(MDX_PLUGIN);
+  const base = isMdxPlugin(plugin) ? plugin.mdxOptions : {};
+  return {
+    ...base,
+    ...field,
+    remarkPlugins: [
+      ...(base.remarkPlugins ?? []),
+      ...(field.remarkPlugins ?? []),
+    ],
+    rehypePlugins: [
+      ...(base.rehypePlugins ?? []),
+      ...(field.rehypePlugins ?? []),
+    ],
+    recmaPlugins: [...(base.recmaPlugins ?? []), ...(field.recmaPlugins ?? [])],
+  };
+}
+
+/**
+ * Key under which the compiled document body is shared between the fields
+ * of a document (`context.share`): `m.body()` and `s.toc()` with the same
+ * options compile the body once.
+ */
+export function bodyShareKey(
+  resolved: MdxOptions,
+  context: FieldContext,
+): string {
+  return `mdx:body:${optionsCacheKey(resolved, context)}`;
+}
 
 /**
  * `@mdx-js/mdx` options that do nothing or break with the function-body
@@ -108,8 +146,23 @@ export function mdx(options: MdxOptions = {}): MdxPlugin {
     headings: {
       key: (context: FieldContext) =>
         `${COMPILER_VERSION};${optionsCacheKey(options, context)}`,
-      extract: (body: string, context: FieldContext) =>
-        extractMdxHeadings(body, options, context),
+      extract: async (body: string, context: FieldContext) => {
+        // `m.body()` with these options compiles the same body: take the
+        // headings it finds instead of compiling a second time.
+        const resolved = resolveOptions(context, {});
+        const key = bodyShareKey(resolved, context);
+        if (context.isShared(key)) {
+          try {
+            const compiled = await context.share(key, (shared) =>
+              compileMdxWithHeadings(body, resolved, shared),
+            );
+            return compiled.headings;
+          } catch {
+            // The body field reports the problem; the TOC need not fail too.
+          }
+        }
+        return extractMdxHeadings(body, options, context);
+      },
     },
   };
 }

@@ -16,6 +16,7 @@ import type {
   LinkRole,
   ResolvedLink,
 } from "../plugin/types";
+import { rememberSignature, type SignatureMemo } from "./file-signature";
 import { isInside, relativeTo } from "./paths";
 import type { ResolvedProject } from "./resolve";
 import type { SourceFile } from "./types";
@@ -52,10 +53,41 @@ export type FieldSession = {
    */
   readonly assetRoots: readonly string[];
   readonly hashes: Map<string, AssetHashEntry>;
+  /** Stats taken in this build: every path is looked at once. */
+  readonly stats: SignatureMemo;
+  /**
+   * Assets checked in this build, by the path a field gave. Documents that
+   * share a file (a logo, an author photo) check and hash it once.
+   */
+  readonly emitted: Map<string, Promise<AssetRef>>;
 };
 
 export function createEffectRecorder(): EffectRecorder {
   return { assets: new Map(), dependencies: new Set(), warnings: [] };
+}
+
+/** Add what `from` recorded to `into`. */
+export function mergeEffects(from: EffectRecorder, into: EffectRecorder): void {
+  for (const [key, asset] of from.assets) into.assets.set(key, asset);
+  for (const dependency of from.dependencies) into.dependencies.add(dependency);
+  into.warnings.push(...from.warnings);
+}
+
+/** A value shared between the fields of a document, and what computing it reported. */
+type SharedValue = {
+  readonly value: Promise<unknown>;
+  readonly effects: EffectRecorder;
+};
+
+/** Values the fields of one document share while it is compiled. */
+export type DocumentShares = {
+  /** Keys fields announced (`CompileFieldSpec.shares`). */
+  readonly announced: Set<string>;
+  readonly values: Map<string, SharedValue>;
+};
+
+export function createDocumentShares(): DocumentShares {
+  return { announced: new Set(), values: new Map() };
 }
 
 /** SHA-256 (hex) of `prefix` followed by the bytes of `file`, streamed. */
@@ -112,23 +144,10 @@ async function hashFile(
   return hash;
 }
 
-/** Native real path (on-disk case), or the path itself when it does not exist. */
-async function realRoot(root: string): Promise<string> {
-  try {
-    return await realpath(root);
-  } catch {
-    return path.resolve(root);
-  }
-}
-
 /** The most specific allowed root that contains `real`. */
-async function matchingRoot(
-  session: FieldSession,
-  real: string,
-): Promise<string | undefined> {
-  const roots = await Promise.all(session.assetRoots.map(realRoot));
+function matchingRoot(session: FieldSession, real: string): string | undefined {
   let best: string | undefined;
-  for (const root of roots) {
+  for (const root of session.assetRoots) {
     if (!isInside(real, root)) continue;
     if (best === undefined || root.length > best.length) best = root;
   }
@@ -139,14 +158,10 @@ function hasNodeModulesSegment(relativePath: string): boolean {
   return relativePath.split(/[\\/]/).includes("node_modules");
 }
 
-/**
- * Check and register a file as an asset. Shared by field contexts and by
- * cache replay, so both apply the same rules.
- */
-export async function emitAssetFile(
+/** Check a file against the asset rules and describe it. */
+async function checkAssetFile(
   session: FieldSession,
   absolutePath: string,
-  recorder: EffectRecorder,
 ): Promise<AssetRef> {
   const { project } = session;
   const shown = relativeTo(project.projectDir, absolutePath);
@@ -162,7 +177,7 @@ export async function emitAssetFile(
   } catch {
     throw new Error(`File not found: ${shown}`);
   }
-  const root = await matchingRoot(session, real);
+  const root = matchingRoot(session, real);
   if (!root) {
     throw new Error(
       `"${shown}" is outside the folders assets may be read from (the project directory and assets({ roots })).`,
@@ -183,6 +198,13 @@ export async function emitAssetFile(
   if (!info.isFile()) {
     throw new Error(`"${shown}" is not a file.`);
   }
+  rememberSignature(session.stats, real, {
+    size: info.size,
+    mtimeMs: info.mtimeMs,
+    ctimeMs: info.ctimeMs,
+    ino: info.ino,
+    isFile: true,
+  });
   const extension = path.extname(real).toLowerCase();
   const allowed = host.host.extensions;
   if (allowed && !allowed.includes(extension)) {
@@ -193,7 +215,7 @@ export async function emitAssetFile(
   const version = host.host.transformVersion?.(extension);
   const hash = await hashFile(session, real, info, version);
   const fileName = assetFileName(path.basename(real), hash);
-  const asset: AssetRef = {
+  return {
     src: `${session.publicBase}${encodeURIComponent(fileName)}`,
     sourcePath: real,
     fileName,
@@ -201,7 +223,25 @@ export async function emitAssetFile(
     size: info.size,
     contentType: contentTypeForPath(real),
   };
-  recorder.assets.set(real, asset);
+}
+
+/**
+ * Check and register a file as an asset. Shared by field contexts and by
+ * cache replay, so both apply the same rules. A file is checked once per
+ * build, however many documents use it.
+ */
+export async function emitAssetFile(
+  session: FieldSession,
+  absolutePath: string,
+  recorder: EffectRecorder,
+): Promise<AssetRef> {
+  let pending = session.emitted.get(absolutePath);
+  if (!pending) {
+    pending = checkAssetFile(session, absolutePath);
+    session.emitted.set(absolutePath, pending);
+  }
+  const asset = await pending;
+  recorder.assets.set(asset.sourcePath, asset);
   return asset;
 }
 
@@ -212,6 +252,7 @@ export function createFieldContext(
   body: string | undefined,
   fieldPath: FieldPath,
   recorder: EffectRecorder,
+  shares: DocumentShares = createDocumentShares(),
 ): FieldContext {
   const emitAsset = (absolutePath: string): Promise<AssetRef> =>
     emitAssetFile(session, path.resolve(absolutePath), recorder);
@@ -266,5 +307,32 @@ export function createFieldContext(
     warn: (message) => {
       recorder.warnings.push(message);
     },
+    share: async <TValue>(
+      key: string,
+      compute: (context: FieldContext) => TValue | Promise<TValue>,
+    ): Promise<TValue> => {
+      let shared = shares.values.get(key);
+      if (!shared) {
+        const effects = createEffectRecorder();
+        const context = createFieldContext(
+          session,
+          file,
+          body,
+          fieldPath,
+          effects,
+          shares,
+        );
+        shared = {
+          effects,
+          value: Promise.resolve().then(() => compute(context)),
+        };
+        shares.values.set(key, shared);
+      }
+      // SAFETY: a key stands for one computation, so for one type of value.
+      const value = (await shared.value) as TValue;
+      mergeEffects(shared.effects, recorder);
+      return value;
+    },
+    isShared: (key) => shares.announced.has(key),
   };
 }

@@ -1,6 +1,10 @@
 import type { AnyContent } from "@anhur/core";
 import { defineContentPlugin } from "@anhur/core/plugin";
-import { generateSearchModules, type RuntimeOramaOptions } from "./build";
+import {
+  createSearchMemory,
+  generateSearchModules,
+  type RuntimeOramaOptions,
+} from "./build";
 import type {
   OramaOptions,
   OramaPlugin,
@@ -45,11 +49,12 @@ export function orama<
   const runtime = options as RuntimeOramaOptions;
   // SAFETY: the name is "orama" at runtime; the brand on its type is a phantom (type-only) carrier of the store types.
   const name = "orama" as OramaPluginName<StoresOf<TCollections>>;
+  const memory = createSearchMemory();
   return defineContentPlugin<TContent, OramaPluginName<StoresOf<TCollections>>>(
     () => ({
       name,
       version: "4",
-      generate: (context) => generateSearchModules(runtime, context),
+      generate: (context) => generateSearchModules(runtime, context, memory),
     }),
   );
 }

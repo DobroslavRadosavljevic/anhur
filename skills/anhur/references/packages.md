@@ -27,21 +27,22 @@ Always required. Three entries:
 - `defineField(zodSchema, { kind, compile, requires?, whenAbsent?, cache? })` — custom compile-time fields with an explicit `FieldContext` (document, body, `emitAsset`, `addDependency`, `getPlugin`)
 - `rehypeLinkedAssets`, `classifyUrl`, `parseSrcset`, `fingerprint`, `buildToc`, text helpers
 
-**CLI** `anhur build | check | watch` with `--root`, `--config`, `--json`.
+**CLI** `anhur build | check | watch` with `--root`, `--config`, `--json`, `--timings`.
 
 Config fields:
 
-| Field          | Role                                                              |
-| -------------- | ----------------------------------------------------------------- |
-| `content`      | Collections + singletons                                          |
-| `views`        | `defineView` / `defineIndex` / `defineGroup`                      |
-| `localization` | `{ strategy: "folder", locales, defaultLocale }`                  |
-| `plugins`      | `mdx()`, `markdown()`, `assets()`, `orama()`, `definePlugin(…)`   |
-| `loaders`      | Extra file loaders (tried before plugin loaders and built-ins)    |
-| `outputDir`    | Default `.anhur/generated` (relative to the config file)          |
-| `cacheDir`     | Field cache, default `.anhur/cache`; `false` disables             |
-| `prepare`      | After transforms and drafts; before references, uniqueness, views |
-| `complete`     | After the output is written, with `{ projectDir, outputDir }`     |
+| Field          | Role                                                                                         |
+| -------------- | -------------------------------------------------------------------------------------------- |
+| `content`      | Collections + singletons                                                                     |
+| `views`        | `defineView` / `defineIndex` / `defineGroup`                                                 |
+| `localization` | `{ strategy: "folder", locales, defaultLocale }`                                             |
+| `plugins`      | `mdx()`, `markdown()`, `assets()`, `orama()`, `definePlugin(…)`                              |
+| `loaders`      | Extra file loaders (tried before plugin loaders and built-ins)                               |
+| `outputDir`    | Default `.anhur/generated` (relative to the config file)                                     |
+| `cacheDir`     | Disk caches (validated documents, compiled fields), default `.anhur/cache`; `false` disables |
+| `workers`      | Worker threads for compiling many documents: `true` (default, up to 6), a number, or `false` |
+| `prepare`      | After transforms and drafts; before references, uniqueness, views                            |
+| `complete`     | After the output is written, with `{ projectDir, outputDir }`                                |
 
 Views detail: [views.md](views.md)
 

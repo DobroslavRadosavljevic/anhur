@@ -101,6 +101,23 @@ export type FieldContext = {
   /** Rebuild / invalidate the cached value when this file changes. */
   readonly addDependency: (absolutePath: string) => void;
   readonly warn: (message: string) => void;
+  /**
+   * Compute a value once per document and share it between the fields of
+   * that document (a compiled body that two fields read). The first field
+   * that asks for `key` starts `compute`; the others wait for the same
+   * value. `compute` gets a context of its own: the assets, dependencies
+   * and warnings it reports count for every field that asked.
+   */
+  readonly share: <TValue>(
+    key: string,
+    compute: (context: FieldContext) => TValue | Promise<TValue>,
+  ) => Promise<TValue>;
+  /**
+   * True when a field of this document announced `key` in
+   * {@link CompileFieldSpec.shares}: asking for it through `share` joins
+   * work that is done anyway.
+   */
+  readonly isShared: (key: string) => boolean;
 };
 
 /** Input value of a field as read from the file (before validation). */
@@ -150,6 +167,23 @@ export type CompileFieldSpec = {
     readonly version: string;
     readonly key: (context: FieldContext) => string;
   };
+  /**
+   * Keys of the values this field computes through `context.share()`.
+   * Another field of the same document can then take a by-product of that
+   * work instead of doing its own (`s.toc()` reads the headings of the
+   * body `m.body()` compiles).
+   */
+  readonly shares?: (context: FieldContext) => readonly string[];
+  /**
+   * The value depends only on the input, the body, the document and what
+   * the field reports through its context (`resolveLink`, `emitAsset`,
+   * `addDependency`). When every compiled field of a source is `pure` (or
+   * has `cache`), the engine keeps whole validated documents on disk and a
+   * later run reuses them without reading the unchanged files. Leave it
+   * out for fields that read anything else: the network, the clock,
+   * environment variables.
+   */
+  readonly pure?: boolean;
 };
 
 /** `s.reference()` marker: the value stays a string id / slug until the relations pass. */

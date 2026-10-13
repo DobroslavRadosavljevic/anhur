@@ -6,7 +6,11 @@ import type {
 import type { Options } from "rehype-sanitize";
 import type { PluggableList } from "unified";
 import { optionsCacheKey } from "./cache-key";
-import { COMPILER_VERSION, extractMarkdownHeadings } from "./compile";
+import {
+  COMPILER_VERSION,
+  compileMarkdownWithHeadings,
+  extractMarkdownHeadings,
+} from "./compile";
 
 /** Plugin name; `md.body()` / `md.markdown()` require it. */
 export const MARKDOWN_PLUGIN = "markdown";
@@ -50,6 +54,42 @@ export type MarkdownPlugin = AnhurPlugin & {
   readonly markdownOptions: MarkdownOptions;
 };
 
+/** Plugin options, then field options on top (plugin lists run first). */
+export function resolveOptions(
+  context: FieldContext,
+  field: MarkdownOptions,
+): MarkdownOptions {
+  const plugin = context.getPlugin(MARKDOWN_PLUGIN);
+  const base = isMarkdownPlugin(plugin) ? plugin.markdownOptions : {};
+  return {
+    gfm: field.gfm ?? base.gfm,
+    allowDangerousHtml: field.allowDangerousHtml ?? base.allowDangerousHtml,
+    sanitizeSchema: field.sanitizeSchema ?? base.sanitizeSchema,
+    headingIds: field.headingIds ?? base.headingIds,
+    documentLink: field.documentLink ?? base.documentLink,
+    remarkPlugins: [
+      ...(base.remarkPlugins ?? []),
+      ...(field.remarkPlugins ?? []),
+    ],
+    rehypePlugins: [
+      ...(base.rehypePlugins ?? []),
+      ...(field.rehypePlugins ?? []),
+    ],
+  };
+}
+
+/**
+ * Key under which the compiled document body is shared between the fields
+ * of a document (`context.share`): `md.body()` and `s.toc()` with the same
+ * options compile the body once.
+ */
+export function bodyShareKey(
+  resolved: MarkdownOptions,
+  context: FieldContext,
+): string {
+  return `markdown:body:${optionsCacheKey(resolved, context)}`;
+}
+
 /**
  * Register Markdown → HTML compilation: `defineConfig({ plugins: [markdown()] })`.
  *
@@ -69,8 +109,23 @@ export function markdown(options: MarkdownOptions = {}): MarkdownPlugin {
     headings: {
       key: (context: FieldContext) =>
         `${COMPILER_VERSION};${optionsCacheKey(options, context)}`,
-      extract: (body: string, context: FieldContext) =>
-        extractMarkdownHeadings(body, options, context),
+      extract: async (body: string, context: FieldContext) => {
+        // `md.body()` with these options compiles the same body: take the
+        // headings it finds instead of compiling a second time.
+        const resolved = resolveOptions(context, {});
+        const key = bodyShareKey(resolved, context);
+        if (context.isShared(key)) {
+          try {
+            const compiled = await context.share(key, (shared) =>
+              compileMarkdownWithHeadings(body, resolved, shared),
+            );
+            return compiled.headings;
+          } catch {
+            // The body field reports the problem; the TOC need not fail too.
+          }
+        }
+        return extractMarkdownHeadings(body, options, context);
+      },
     },
   };
 }

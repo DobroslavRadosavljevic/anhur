@@ -8,7 +8,7 @@ import {
   type ResolvedLink,
 } from "@anhur/core/plugin";
 import { z } from "zod";
-import { IMAGE_EXTENSIONS, readImageMeta } from "./image-meta";
+import { IMAGE_EXTENSIONS, readImageMeta, type ImageMeta } from "./image-meta";
 import { ASSETS_PLUGIN } from "./plugin";
 
 /** A local image copied as an asset, with its size. */
@@ -94,6 +94,30 @@ async function resolveLocal(
   return { src: url, remote: true };
 }
 
+/** Images read lately, by content hash: a file many documents use is decoded once. */
+const IMAGE_META_MEMO_SIZE = 4096;
+const imageMetas = new Map<string, Promise<ImageMeta>>();
+
+/** Size and placeholder of an image; `hash` stands for its content. */
+function imageMetaOf(
+  sourcePath: string,
+  hash: string,
+  blur: boolean,
+): Promise<ImageMeta> {
+  const key = `${blur ? "b" : "p"}:${hash}:${sourcePath}`;
+  let meta = imageMetas.get(key);
+  if (!meta) {
+    if (imageMetas.size >= IMAGE_META_MEMO_SIZE) imageMetas.clear();
+    meta = readImageMeta(sourcePath, { blur });
+    imageMetas.set(key, meta);
+    // A failed read is tried again next time.
+    meta.catch(() => {
+      imageMetas.delete(key);
+    });
+  }
+  return meta;
+}
+
 /** a.image() reads sizes of these formats only (`.ico`, `.bmp` → use a.file()). */
 function checkImageExtension(input: FieldInput): void {
   if (!isString(input)) return;
@@ -150,7 +174,11 @@ export function image(
         "a.image()",
       );
       if (!("kind" in link)) return link;
-      const meta = await readImageMeta(link.asset.sourcePath, { blur });
+      const meta = await imageMetaOf(
+        link.asset.sourcePath,
+        link.asset.hash,
+        blur,
+      );
       const result: AnhurImage = {
         src: link.url,
         contentType: link.asset.contentType,
@@ -184,6 +212,7 @@ export function file(
     kind: "file",
     requires: ASSETS_PLUGIN,
     whenAbsent: "skip",
+    pure: true,
     compile: async (input, context) => {
       const link = await resolveLocal(
         input,

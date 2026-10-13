@@ -1,0 +1,444 @@
+import { randomUUID } from "node:crypto";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import path from "node:path";
+import { Predicate, Schema } from "effect";
+import { messageOf } from "../diagnostics";
+import type { OutputFile, PlanRevision } from "./codegen";
+import {
+  isSettled,
+  mapPool,
+  readSignature,
+  sameSignature,
+  type FileSignature,
+} from "./file-signature";
+import { GENERATED_HEADER } from "./serialize";
+
+/** Name of the manifest that marks a folder as Anhur output. */
+export const MANIFEST_FILE = ".anhur-manifest.json";
+const MANIFEST_VERSION = 1;
+const SAFE_PATH =
+  /^(?:[A-Za-z0-9_@-][A-Za-z0-9_.@-]*\/)*[A-Za-z0-9_@-][A-Za-z0-9_.@-]*$/;
+const WRITE_CONCURRENCY = 16;
+const VERIFY_CONCURRENCY = 32;
+
+export type WriteResult = {
+  /** Absolute paths written in this build. */
+  readonly written: readonly string[];
+  /** Absolute paths removed in this build. */
+  readonly removed: readonly string[];
+};
+
+/** Files of an output folder with the hash of their text (`""`: unknown). */
+export type OutputManifest = {
+  readonly files: ReadonlyMap<string, string>;
+};
+
+/**
+ * What a session knows about an output folder between builds, so a build
+ * that changes one document does not read the manifest and look at every
+ * generated file again.
+ */
+export type OutputState = {
+  manifest: OutputManifest | undefined;
+  manifestSignature: FileSignature | undefined;
+  /**
+   * mtime of every folder of the output after the last write. A folder
+   * whose mtime is the same has the same entries: no file was deleted.
+   */
+  folders: Map<string, number>;
+  /** Epoch milliseconds when `folders` was read. */
+  foldersAt: number;
+  /** The files on disk were compared with the manifest in this session. */
+  verified: boolean;
+  /** `OutputPlan.revision` of the plan written last. */
+  revision: PlanRevision | undefined;
+};
+
+export function createOutputState(): OutputState {
+  return {
+    manifest: undefined,
+    manifestSignature: undefined,
+    folders: new Map(),
+    foldersAt: 0,
+    verified: false,
+    revision: undefined,
+  };
+}
+
+/** A problem with the output folder, reported as a build failure. */
+export class OutputWriteError extends Schema.TaggedError<OutputWriteError>()(
+  "OutputWriteError",
+  { message: Schema.String },
+) {}
+
+function writeError(message: string): OutputWriteError {
+  return new OutputWriteError({ message });
+}
+
+function isSafeRelative(file: string): boolean {
+  return SAFE_PATH.test(file) && !file.split("/").includes("..");
+}
+
+function parseManifest(text: string): OutputManifest | undefined {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (
+    !Predicate.isObject(raw) ||
+    !("version" in raw) ||
+    raw.version !== MANIFEST_VERSION ||
+    !("files" in raw) ||
+    !Predicate.isObject(raw.files)
+  ) {
+    return undefined;
+  }
+  const files = new Map<string, string>();
+  for (const [file, hash] of Object.entries(raw.files)) {
+    if (Predicate.isString(hash) && isSafeRelative(file)) files.set(file, hash);
+  }
+  return { files };
+}
+
+/**
+ * The manifest of `outputDir`, read again only when the file on disk is
+ * not the one this session last read or wrote (another process may build
+ * into the same folder).
+ */
+export async function currentManifest(
+  outputDir: string,
+  state: OutputState,
+): Promise<OutputManifest | undefined> {
+  const file = path.join(outputDir, MANIFEST_FILE);
+  const signature = await readSignature(file);
+  if (!signature) {
+    state.manifest = undefined;
+    state.manifestSignature = undefined;
+    return undefined;
+  }
+  if (
+    state.manifest &&
+    state.manifestSignature &&
+    sameSignature(signature, state.manifestSignature)
+  ) {
+    return state.manifest;
+  }
+  let manifest: OutputManifest | undefined;
+  try {
+    manifest = parseManifest(await readFile(file, "utf8"));
+  } catch {
+    manifest = undefined;
+  }
+  state.manifest = manifest;
+  state.manifestSignature = manifest ? signature : undefined;
+  // Another writer was here: look at the files again.
+  state.verified = false;
+  return manifest;
+}
+
+async function listFiles(outputDir: string): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(outputDir, { recursive: true });
+  } catch {
+    return [];
+  }
+  const files: string[] = [];
+  for (const entry of entries) {
+    const info = await readSignature(path.join(outputDir, entry));
+    if (info?.isFile) files.push(entry.split(path.sep).join("/"));
+  }
+  return files;
+}
+
+/** Files of a folder written by an older Anhur (no manifest yet). */
+export async function adoptLegacy(
+  outputDir: string,
+): Promise<OutputManifest | undefined> {
+  let index: string;
+  try {
+    index = await readFile(path.join(outputDir, "index.js"), "utf8");
+  } catch {
+    return undefined;
+  }
+  if (!index.startsWith("// generated by @anhur/core")) return undefined;
+  const files = await listFiles(outputDir);
+  if (
+    !files.every(
+      (file) => /\.(?:js|d\.ts|json)$/.test(file) || file.endsWith(".keep"),
+    )
+  ) {
+    return undefined;
+  }
+  return { files: new Map(files.map((file) => [file, ""] as const)) };
+}
+
+/** Write a file next to its target, then move it into place. */
+async function writeAtomic(target: string, contents: string): Promise<void> {
+  const temporary = path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.${randomUUID().slice(0, 8)}.tmp`,
+  );
+  await writeFile(temporary, contents);
+  try {
+    await rename(temporary, target);
+  } catch (cause) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw cause;
+  }
+}
+
+async function removeEmptyParents(
+  outputDir: string,
+  file: string,
+): Promise<void> {
+  let dir = path.dirname(file);
+  while (dir.startsWith(outputDir + path.sep)) {
+    try {
+      // Fails (and ends the walk) when the folder still has entries.
+      await rmdir(dir);
+    } catch {
+      return;
+    }
+    dir = path.dirname(dir);
+  }
+}
+
+function sameFiles(
+  left: ReadonlyMap<string, string>,
+  right: ReadonlyMap<string, string>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [file, hash] of left) {
+    if (right.get(file) !== hash) return false;
+  }
+  return true;
+}
+
+/**
+ * What the folders say about the files since the last write:
+ * - `same`: no entry was added or removed;
+ * - `recent`: the folders look the same, but were changed so shortly
+ *   before they were looked at that a later change may not show in their
+ *   mtime (see `isSettled`): the entries have to be listed;
+ * - `changed`: an entry was added or removed, or nothing is known yet.
+ */
+async function folderState(
+  state: OutputState,
+): Promise<"same" | "recent" | "changed"> {
+  if (state.folders.size === 0) return "changed";
+  const now = await Promise.all(
+    [...state.folders.keys()].map((folder) => readSignature(folder)),
+  );
+  let settled = true;
+  let index = 0;
+  for (const mtimeMs of state.folders.values()) {
+    if (now[index]?.mtimeMs !== mtimeMs) return "changed";
+    if (!isSettled(mtimeMs, state.foldersAt)) settled = false;
+    index += 1;
+  }
+  return settled ? "same" : "recent";
+}
+
+/** Files (POSIX paths below `outputDir`) that are on disk now. */
+async function existingFiles(outputDir: string): Promise<ReadonlySet<string>> {
+  try {
+    const entries = await readdir(outputDir, { recursive: true });
+    return new Set(entries.map((entry) => entry.split(path.sep).join("/")));
+  } catch {
+    return new Set();
+  }
+}
+
+function rank(file: OutputFile): number {
+  return file.path === "index.js" ? 2 : file.path === "index.d.ts" ? 1 : 0;
+}
+
+/**
+ * Write changed files, delete stale ones and update the manifest. Files
+ * are moved into place one by one (never half written); `index.d.ts` and
+ * `index.js` go last, after the modules they point at. Only files listed
+ * in the manifest are ever deleted. Rejects with {@link OutputWriteError}.
+ */
+export async function writeOutputFiles(
+  outputDir: string,
+  files: readonly OutputFile[],
+  revision: PlanRevision,
+  state: OutputState,
+  now: number,
+): Promise<WriteResult> {
+  const manifest = await currentManifest(outputDir, state);
+  const folders = state.verified ? await folderState(state) : "changed";
+  // The plan written last, and nothing touched the folder since: done.
+  if (manifest && state.revision === revision && folders === "same") {
+    return { written: [], removed: [] };
+  }
+  state.revision = undefined;
+  const previous = manifest ?? (await adoptLegacy(outputDir));
+  const previousFiles = previous?.files ?? new Map<string, string>();
+  const next = new Map<string, string>();
+  for (const file of files) {
+    // Paths of the manifest were checked when it was read or written.
+    if (
+      !previousFiles.has(file.path) &&
+      (!isSafeRelative(file.path) || file.path === MANIFEST_FILE)
+    ) {
+      throw writeError(
+        `Refusing to write the unsafe output path "${file.path}".`,
+      );
+    }
+    next.set(file.path, file.hash);
+  }
+  const targetOf = (file: string) => path.join(outputDir, ...file.split("/"));
+  const manifestPath = path.join(outputDir, MANIFEST_FILE);
+  const writeManifest = async (entries: ReadonlyMap<string, string>) => {
+    try {
+      await mkdir(outputDir, { recursive: true });
+      await writeAtomic(
+        manifestPath,
+        `${JSON.stringify(
+          {
+            version: MANIFEST_VERSION,
+            generator: GENERATED_HEADER,
+            files: Object.fromEntries(
+              [...entries.entries()].sort(([a], [b]) => (a < b ? -1 : 1)),
+            ),
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    } catch (cause) {
+      throw writeError(
+        `Could not write the output manifest: ${messageOf(cause)}`,
+      );
+    }
+    state.manifest = { files: new Map(entries) };
+    state.manifestSignature = await readSignature(manifestPath);
+  };
+
+  // Record new files before creating them, so an interrupted build never
+  // leaves files that later builds would not clean up.
+  let recorded = previousFiles;
+  if ([...next.keys()].some((file) => !previousFiles.has(file))) {
+    recorded = new Map([...previousFiles, ...next]);
+    await writeManifest(recorded);
+  }
+
+  const removed: string[] = [];
+  const removeStale = async (file: string): Promise<void> => {
+    const target = targetOf(file);
+    await rm(target, { force: true }).catch(() => undefined);
+    removed.push(target);
+    await removeEmptyParents(outputDir, target);
+  };
+
+  // A case-only rename (getBlogPost.js → getBlogpost.js) is one file on
+  // case-insensitive file systems: remove the old name before writing
+  // the new one, never after.
+  const renamed = new Set<string>();
+  let nextByLowerCase: Map<string, string> | undefined;
+  for (const file of previousFiles.keys()) {
+    if (next.has(file)) continue;
+    nextByLowerCase ??= new Map(
+      [...next.keys()].map((name) => [name.toLowerCase(), name]),
+    );
+    if (nextByLowerCase.get(file.toLowerCase()) === undefined) continue;
+    renamed.add(file);
+    await removeStale(file);
+  }
+
+  // A planned file with the hash the manifest has is kept when it is still
+  // on disk with the written size (a size change means it was edited or
+  // truncated by hand). Every file is looked at in the first build of a
+  // session and whenever a folder lost or gained an entry; when the folders
+  // only changed a moment ago, their entries are listed instead.
+  const pending: OutputFile[] = [];
+  const kept: OutputFile[] = [];
+  for (const file of files) {
+    if (previousFiles.get(file.path) === file.hash) kept.push(file);
+    else pending.push(file);
+  }
+  if (folders === "recent") {
+    const onDisk = await existingFiles(outputDir);
+    for (const file of kept) {
+      if (!onDisk.has(file.path)) pending.push(file);
+    }
+  } else if (folders === "changed") {
+    const intact = await mapPool(kept, VERIFY_CONCURRENCY, async (file) => {
+      const info = await readSignature(targetOf(file.path));
+      return info !== undefined && info.isFile && info.size === file.size;
+    });
+    for (const [index, file] of kept.entries()) {
+      if (!intact[index]) pending.push(file);
+    }
+  }
+
+  let written: string[] = [];
+  const writeFileAt = async (file: OutputFile): Promise<void> => {
+    const target = targetOf(file.path);
+    try {
+      await writeAtomic(target, file.contents());
+    } catch (cause) {
+      throw writeError(`Could not write ${target}: ${messageOf(cause)}`);
+    }
+  };
+  if (pending.length > 0) {
+    const parents = new Set(
+      pending.map((file) => path.dirname(targetOf(file.path))),
+    );
+    try {
+      await Promise.all(
+        [...parents].map((folder) => mkdir(folder, { recursive: true })),
+      );
+    } catch (cause) {
+      throw writeError(
+        `Could not create the output folders: ${messageOf(cause)}`,
+      );
+    }
+    const ordered = [...pending].sort((a, b) => rank(a) - rank(b));
+    const modules = ordered.filter((file) => rank(file) === 0);
+    await mapPool(modules, WRITE_CONCURRENCY, writeFileAt);
+    for (const file of ordered) {
+      if (rank(file) !== 0) await writeFileAt(file);
+    }
+    written = ordered.map((file) => targetOf(file.path));
+  }
+  for (const file of previousFiles.keys()) {
+    if (next.has(file) || renamed.has(file)) continue;
+    await removeStale(file);
+  }
+  if (!sameFiles(recorded, next) || state.manifest === undefined) {
+    await writeManifest(next);
+  }
+
+  const watched = new Set<string>([outputDir]);
+  const subfolders = new Set<string>();
+  for (const file of next.keys()) {
+    const slash = file.lastIndexOf("/");
+    if (slash !== -1) subfolders.add(file.slice(0, slash));
+  }
+  for (const subfolder of subfolders) watched.add(targetOf(subfolder));
+  state.folders = new Map();
+  state.foldersAt = now;
+  await Promise.all(
+    [...watched].map(async (folder) => {
+      const info = await stat(folder).catch(() => undefined);
+      if (info) state.folders.set(folder, info.mtimeMs);
+    }),
+  );
+  state.verified = true;
+  state.revision = revision;
+  return { written, removed };
+}

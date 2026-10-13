@@ -40,11 +40,39 @@ export type DeriveOutcome = {
   readonly diagnostics: Diagnostic[];
 };
 
+/** A resolved view / index / group and the documents it was made from. */
+type DerivedRecord = {
+  readonly derived: ResolvedDerived;
+  /** Documents of every source it is `from` or read through `ctx.documents()`. */
+  readonly inputs: ReadonlyMap<string, readonly FinalDocument[]>;
+  readonly result: DerivedResult;
+};
+
+/**
+ * What a session remembers about views between builds: a view, index or
+ * group is resolved again only when a source it uses has other documents.
+ */
+export type DeriveMemory = {
+  readonly records: Map<string, DerivedRecord>;
+};
+
+export function createDeriveMemory(): DeriveMemory {
+  return { records: new Map() };
+}
+
 type Row = {
   readonly document: FinalDocument;
   readonly key: string | undefined;
   readonly row: DocumentFields;
 };
+
+function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
 
 function finalize(
   rows: DocumentFields[],
@@ -61,10 +89,14 @@ function finalize(
 /**
  * Resolve views, indexes and groups from final documents. User callbacks
  * that throw, invalid keys and duplicate index keys become diagnostics.
+ *
+ * With a `memory`, the result of an earlier build is returned as is (the
+ * same object) while every source the view uses has the same documents.
  */
 export function deriveAll(
   derivedList: readonly ResolvedDerived[],
   sources: readonly SourceDocuments<FinalDocument>[],
+  memory: DeriveMemory = createDeriveMemory(),
 ): DeriveOutcome {
   const diagnostics: Diagnostic[] = [];
   const byName = new Map(sources.map((group) => [group.source.name, group]));
@@ -77,20 +109,46 @@ export function deriveAll(
     }
     return list;
   };
-  const context: ViewContext = {
-    documents: (source: AnyContent | string) => {
-      const name = Predicate.isString(source) ? source : source.name;
-      if (!byName.has(name)) {
-        throw new Error(
-          `ctx.documents("${name}"): no such collection or singleton.`,
-        );
-      }
-      return [...documentsOf(name)];
-    },
-  };
+  const current = new Set(derivedList.map((derived) => derived.name));
+  for (const name of memory.records.keys()) {
+    if (!current.has(name)) memory.records.delete(name);
+  }
 
   const results: DerivedResult[] = [];
   for (const derived of derivedList) {
+    const known = memory.records.get(derived.name);
+    if (known && known.derived === derived) {
+      let unchanged = true;
+      for (const [name, documents] of known.inputs) {
+        const group = byName.get(name);
+        if (!group || !sameItems(group.documents, documents)) {
+          unchanged = false;
+          break;
+        }
+      }
+      if (unchanged) {
+        results.push(known.result);
+        continue;
+      }
+    }
+    const inputs = new Map<string, readonly FinalDocument[]>();
+    const use = (name: string): void => {
+      if (inputs.has(name)) return;
+      const group = byName.get(name);
+      if (group) inputs.set(name, [...group.documents]);
+    };
+    const context: ViewContext = {
+      documents: (source: AnyContent | string) => {
+        const name = Predicate.isString(source) ? source : source.name;
+        if (!byName.has(name)) {
+          throw new Error(
+            `ctx.documents("${name}"): no such collection or singleton.`,
+          );
+        }
+        use(name);
+        return [...documentsOf(name)];
+      },
+    };
     const definition = derived.definition;
     const label = `${derived.kind} "${derived.name}"`;
     const fail = (
@@ -112,6 +170,7 @@ export function deriveAll(
     for (const collection of derived.from) {
       const group = byName.get(collection.name);
       if (!group) continue;
+      use(collection.name);
       const omit = derived.listOmit ?? collection.generate.listOmit;
       for (const document of group.documents) {
         const full = toExport(document);
@@ -161,18 +220,17 @@ export function deriveAll(
     }
     if (failed) continue;
 
+    let result: DerivedResult;
     if (derived.kind === "view") {
-      results.push({
+      result = {
         kind: "view",
         derived,
         items: finalize(
           rows.map((entry) => entry.row),
           derived,
         ),
-      });
-      continue;
-    }
-    if (derived.kind === "index") {
+      };
+    } else if (derived.kind === "index") {
       const owners = new Map<string, FinalDocument>();
       const keyed = new Map<DocumentFields, string>();
       for (const entry of rows) {
@@ -197,24 +255,26 @@ export function deriveAll(
         return row;
       });
       const ordered = finalize(own, derived);
-      results.push({
+      result = {
         kind: "index",
         derived,
         entries: ordered.map((row) => [keyed.get(row)!, row] as const),
+      };
+    } else {
+      const buckets = new Map<string, DocumentFields[]>();
+      for (const entry of rows) {
+        const list = buckets.get(entry.key!);
+        if (list) list.push(entry.row);
+        else buckets.set(entry.key!, [entry.row]);
+      }
+      const groups = [...buckets.keys()].sort(compareKeys).map((key) => {
+        const bucket = buckets.get(key)!;
+        return { key, count: bucket.length, items: finalize(bucket, derived) };
       });
-      continue;
+      result = { kind: "group", derived, groups };
     }
-    const buckets = new Map<string, DocumentFields[]>();
-    for (const entry of rows) {
-      const list = buckets.get(entry.key!);
-      if (list) list.push(entry.row);
-      else buckets.set(entry.key!, [entry.row]);
-    }
-    const groups = [...buckets.keys()].sort(compareKeys).map((key) => {
-      const bucket = buckets.get(key)!;
-      return { key, count: bucket.length, items: finalize(bucket, derived) };
-    });
-    results.push({ kind: "group", derived, groups });
+    results.push(result);
+    memory.records.set(derived.name, { derived, inputs, result });
   }
   return { results, diagnostics };
 }

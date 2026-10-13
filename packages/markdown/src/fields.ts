@@ -5,39 +5,20 @@ import {
 } from "@anhur/core/plugin";
 import { z } from "zod";
 import { optionsCacheKey } from "./cache-key";
-import { COMPILER_VERSION, compileMarkdown } from "./compile";
+import {
+  COMPILER_VERSION,
+  compileMarkdown,
+  compileMarkdownWithHeadings,
+} from "./compile";
 import {
   MARKDOWN_PLUGIN,
-  isMarkdownPlugin,
+  bodyShareKey,
+  resolveOptions,
   type MarkdownOptions,
 } from "./plugin";
 
 function isString(value: FieldInput): value is string {
   return typeof value === "string";
-}
-
-/** Plugin options, then field options on top (plugin lists run first). */
-function resolveOptions(
-  context: FieldContext,
-  field: MarkdownOptions,
-): MarkdownOptions {
-  const plugin = context.getPlugin(MARKDOWN_PLUGIN);
-  const base = isMarkdownPlugin(plugin) ? plugin.markdownOptions : {};
-  return {
-    gfm: field.gfm ?? base.gfm,
-    allowDangerousHtml: field.allowDangerousHtml ?? base.allowDangerousHtml,
-    sanitizeSchema: field.sanitizeSchema ?? base.sanitizeSchema,
-    headingIds: field.headingIds ?? base.headingIds,
-    documentLink: field.documentLink ?? base.documentLink,
-    remarkPlugins: [
-      ...(base.remarkPlugins ?? []),
-      ...(field.remarkPlugins ?? []),
-    ],
-    rehypePlugins: [
-      ...(base.rehypePlugins ?? []),
-      ...(field.rehypePlugins ?? []),
-    ],
-  };
 }
 
 function cacheOf(field: MarkdownOptions) {
@@ -59,17 +40,23 @@ export function body(options: MarkdownOptions = {}): z.ZodString {
     requires: MARKDOWN_PLUGIN,
     whenAbsent: "compile",
     cache: cacheOf(options),
-    compile: (input: FieldInput, context: FieldContext) => {
+    shares: (context: FieldContext) => [
+      bodyShareKey(resolveOptions(context, options), context),
+    ],
+    compile: async (input: FieldInput, context: FieldContext) => {
       if (input !== undefined && input !== null) {
         throw new Error(
           "md.body() is compiled from the document body; remove this key from the file, or use md.markdown() for a Markdown field.",
         );
       }
-      return compileMarkdown(
-        context.body ?? "",
-        resolveOptions(context, options),
-        context,
+      const resolved = resolveOptions(context, options);
+      // Shared with `s.toc()`, which reads the headings of this compile.
+      const compiled = await context.share(
+        bodyShareKey(resolved, context),
+        (shared) =>
+          compileMarkdownWithHeadings(shared.body ?? "", resolved, shared),
       );
+      return compiled.html;
     },
   });
 }

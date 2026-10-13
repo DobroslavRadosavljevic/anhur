@@ -45,7 +45,7 @@ function fakeContext(): FieldContext & { readonly seen: string[] } {
       },
     };
   };
-  return {
+  const context: FieldContext & { readonly seen: string[] } = {
     seen,
     document: {
       id: "guides/intro",
@@ -70,7 +70,10 @@ function fakeContext(): FieldContext & { readonly seen: string[] } {
     emitAsset: () => Promise.reject(new Error("unused")),
     addDependency: () => undefined,
     warn: () => undefined,
+    share: async (_key, compute) => compute(context),
+    isShared: () => false,
   };
+  return context;
 }
 
 function element(

@@ -10,6 +10,8 @@ export default defineConfig({
     build: "./src/build/index.ts",
     plugin: "./src/plugin/index.ts",
     cli: "./src/cli/main.ts",
+    // Started by the engine as a worker thread (`worker.js` next to it).
+    worker: "./src/worker/validation.ts",
   },
   format: "esm",
   // No source maps: they would point at `src/`, which is not published.

@@ -67,6 +67,61 @@ export async function readAssetsManifest(
   return raw.files.filter((file) => isHashedAssetName(file));
 }
 
+/**
+ * What a session knows about an assets folder between builds: the assets
+ * that were in place after the last build and the folder's mtime then.
+ * While both are the same, every file is still there and nothing has to be
+ * copied, pruned or listed again.
+ */
+export type AssetsFolderState = {
+  assets: readonly AssetRef[] | undefined;
+  mtimeMs: number | undefined;
+  /** Epoch milliseconds when `mtimeMs` was read. */
+  readAt: number;
+};
+
+export function createAssetsFolderState(): AssetsFolderState {
+  return { assets: undefined, mtimeMs: undefined, readAt: 0 };
+}
+
+/**
+ * A folder changed twice within the time step of the file system keeps its
+ * mtime the second time. An mtime only proves "unchanged" when it was this
+ * much older than the moment it was read.
+ */
+const SETTLE_MS = 2500;
+
+function sameAssets(
+  left: readonly AssetRef[] | undefined,
+  right: readonly AssetRef[],
+): boolean {
+  if (!left || left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index]?.fileName !== right[index]?.fileName) return false;
+  }
+  return true;
+}
+
+async function folderMtime(dir: string): Promise<number | undefined> {
+  try {
+    return (await stat(dir)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when `dir` holds exactly `assets`, as the last build left it. */
+async function isSettled(
+  state: AssetsFolderState | undefined,
+  dir: string,
+  assets: readonly AssetRef[],
+): Promise<boolean> {
+  if (!state || state.mtimeMs === undefined) return false;
+  if (state.mtimeMs >= state.readAt - SETTLE_MS) return false;
+  if (!sameAssets(state.assets, assets)) return false;
+  return (await folderMtime(dir)) === state.mtimeMs;
+}
+
 async function listFiles(dir: string): Promise<string[] | undefined> {
   try {
     return await readdir(dir);
@@ -75,6 +130,12 @@ async function listFiles(dir: string): Promise<string[] | undefined> {
     throw cause;
   }
 }
+
+/** Files Anhur may delete in a folder, and whether a manifest lists them. */
+type OwnedFiles = {
+  readonly files: ReadonlySet<string>;
+  readonly listed: boolean;
+};
 
 /**
  * Files Anhur may delete in `dir`: those in its manifest. A folder without
@@ -85,15 +146,17 @@ async function listFiles(dir: string): Promise<string[] | undefined> {
 async function ownedFiles(
   dir: string,
   extensions: readonly string[] | undefined,
-): Promise<ReadonlySet<string>> {
+): Promise<OwnedFiles> {
   const manifest = await readAssetsManifest(dir);
-  if (manifest) return new Set(manifest);
+  if (manifest) return { files: new Set(manifest), listed: true };
   const entries = (await listFiles(dir))?.filter(
     (entry) => !entry.startsWith("."),
   );
-  if (!entries || entries.length === 0) return new Set();
+  if (!entries || entries.length === 0) {
+    return { files: new Set(), listed: false };
+  }
   if (entries.every((entry) => isHashedAssetName(entry, extensions))) {
-    return new Set(entries);
+    return { files: new Set(entries), listed: false };
   }
   throw new Error(
     `the assets folder "${dir}" has files Anhur did not create; refusing to manage it. Point assets({ dir }) at a dedicated folder.`,
@@ -154,16 +217,6 @@ export async function runPool<T>(
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
   if (failure) throw failure.cause;
-}
-
-async function exists(file: string): Promise<boolean> {
-  try {
-    await stat(file);
-    return true;
-  } catch (cause) {
-    if (hasCode(cause, "ENOENT")) return false;
-    throw cause;
-  }
 }
 
 function changedError(asset: AssetRef, actual: string): Error {
@@ -267,31 +320,50 @@ export async function copyAssets(
   dir: string,
   assets: readonly AssetRef[],
   options: CopyOptions,
+  state?: AssetsFolderState,
 ): Promise<CopyResult> {
-  const previous = await ownedFiles(dir, options.extensions);
+  if (await isSettled(state, dir, assets)) return { copied: 0 };
+  if (state) state.mtimeMs = undefined;
+  const owned = await ownedFiles(dir, options.extensions);
+  const previous = owned.files;
   const unique = uniqueByName(assets);
   await mkdir(dir, { recursive: true });
+  // One listing instead of a stat per asset.
+  const onDisk = new Set(await listFiles(dir));
+  const missing = unique.filter((asset) => !onDisk.has(asset.fileName));
   const present = new Set<string>();
+  for (const asset of unique) {
+    if (onDisk.has(asset.fileName)) present.add(asset.fileName);
+  }
+  const record = async (): Promise<void> => {
+    // Unchanged when every file in place was already listed.
+    let listed = true;
+    for (const file of present) {
+      if (!previous.has(file)) {
+        listed = false;
+        break;
+      }
+    }
+    if (listed && owned.listed) return;
+    await writeManifest(dir, [...previous, ...present]);
+  };
   let copied = 0;
   try {
     await runPool(
-      unique,
+      missing,
       checkConcurrency(options.concurrency),
       async (asset) => {
-        const target = path.join(dir, asset.fileName);
-        if (!(await exists(target))) {
-          await copyOne(asset, target, options.svg);
-          copied += 1;
-        }
+        await copyOne(asset, path.join(dir, asset.fileName), options.svg);
+        copied += 1;
         present.add(asset.fileName);
       },
     );
   } catch (cause) {
     // The copy failure is the error to report; the manifest is best effort.
-    await writeManifest(dir, [...previous, ...present]).catch(() => undefined);
+    await record().catch(() => undefined);
     throw cause;
   }
-  await writeManifest(dir, [...previous, ...present]);
+  await record();
   return { copied };
 }
 
@@ -304,8 +376,12 @@ export async function pruneAssets(
   dir: string,
   assets: readonly AssetRef[],
   options: { readonly extensions?: readonly string[] } = {},
+  state?: AssetsFolderState,
 ): Promise<PruneResult> {
-  const previous = await ownedFiles(dir, options.extensions);
+  if (await isSettled(state, dir, assets)) return { removed: 0 };
+  if (state) state.mtimeMs = undefined;
+  const owned = await ownedFiles(dir, options.extensions);
+  const previous = owned.files;
   const current = new Set(uniqueByName(assets).map((asset) => asset.fileName));
   let removed = 0;
   const kept = new Set([...previous, ...current]);
@@ -322,6 +398,13 @@ export async function pruneAssets(
     throw cause;
   }
   await mkdir(dir, { recursive: true });
-  await writeManifest(dir, kept);
+  const unchanged =
+    removed === 0 && kept.size === previous.size && owned.listed;
+  if (!unchanged) await writeManifest(dir, kept);
+  if (state) {
+    state.assets = [...assets];
+    state.readAt = Date.now();
+    state.mtimeMs = await folderMtime(dir);
+  }
   return { removed };
 }

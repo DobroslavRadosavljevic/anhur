@@ -1430,6 +1430,20 @@ export function resolveProject(
     loaders.push(loader);
   }
 
+  const workers = config.workers;
+  if (
+    workers !== undefined &&
+    !Predicate.isBoolean(workers) &&
+    !(Number.isInteger(workers) && workers >= 1)
+  ) {
+    diagnostics.push(
+      errorDiagnostic(
+        "config-invalid",
+        "workers must be true, false or a whole number of at least 1.",
+      ),
+    );
+  }
+
   for (const hook of ["prepare", "complete"] as const) {
     const value = config[hook];
     if (value !== undefined && !Predicate.isFunction(value)) {

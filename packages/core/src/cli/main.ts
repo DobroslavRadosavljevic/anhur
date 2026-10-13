@@ -33,6 +33,10 @@ const flags = {
     Flag.withDescription("Print a JSON report"),
     Flag.withDefault(false),
   ),
+  timings: Flag.Boolean("timings").pipe(
+    Flag.withDescription("Print how long each stage of the build took"),
+    Flag.withDefault(false),
+  ),
 };
 
 type CliFlags = {
@@ -41,19 +45,25 @@ type CliFlags = {
     | { readonly _tag: "Some"; readonly value: string }
     | { readonly _tag: "None" };
   readonly json: boolean;
+  readonly timings: boolean;
 };
 
 function configOf(options: CliFlags): string | undefined {
   return options.config._tag === "Some" ? options.config.value : undefined;
 }
 
-function report(kind: string, result: BuildResult): string {
+function report(kind: string, result: BuildResult, timings: boolean): string {
   const relative =
     path.relative(process.cwd(), result.outputDir) || result.outputDir;
   const lines = [
     `anhur: ${kind} ${result.documentCount} document(s) → ${relative}${result.dryRun ? " (dry run, nothing written)" : ` (${result.written.length} written, ${result.removed.length} removed)`}`,
     ...result.messages.map((message) => `anhur:   ${message}`),
   ];
+  if (timings) {
+    lines.push(
+      `anhur:   ${result.timings.map((timing) => `${timing.stage} ${Math.round(timing.ms)} ms`).join(" · ")}`,
+    );
+  }
   if (result.warnings.length > 0) {
     lines.push(
       formatDiagnostics(result.warnings, { relativeTo: result.projectDir }),
@@ -73,6 +83,7 @@ function jsonReport(
       documents: result?.documentCount,
       written: result?.written,
       removed: result?.removed,
+      timings: result?.timings,
       diagnostics: diagnostics.map(({ cause: _cause, ...rest }) => rest),
     },
     null,
@@ -98,7 +109,7 @@ const runOnce = Effect.fn("cli.runOnce")(function* (
     yield* Console.log(
       options.json
         ? jsonReport(exit.success, exit.success.warnings)
-        : report(kind, exit.success),
+        : report(kind, exit.success, options.timings),
     );
     return;
   }
@@ -149,7 +160,7 @@ const watchCommand = Command.make(
             { rootDir, configPath: configOf(options), mode: "dev" },
             {
               onBuild: (result) => {
-                console.log(report("rebuilt", result));
+                console.log(report("rebuilt", result, options.timings));
               },
               onError: (error) => {
                 console.error(error.message);

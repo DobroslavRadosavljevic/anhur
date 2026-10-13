@@ -23,6 +23,10 @@ function tagged(kind: string, payload: Encoded): Encoded {
 
 /** Set an own property, also for `__proto__` (plain assignment would change the prototype). */
 function setOwn<T>(target: { [key: string]: T }, key: string, item: T): void {
+  if (key !== "__proto__") {
+    target[key] = item;
+    return;
+  }
   Object.defineProperty(target, key, {
     value: item,
     enumerable: true,

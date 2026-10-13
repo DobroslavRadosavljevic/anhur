@@ -47,6 +47,18 @@ export type BuildAssets = {
   readonly count: number;
 };
 
+/** Time one stage of a build took. */
+export type StageTiming = {
+  /**
+   * `config`, `discover`, `validate` (load, compile fields, schema),
+   * `transform`, `relations` (prepare, references, uniqueness), `views`,
+   * `plugins` (generate hooks), `plan` (generated modules), `publish`
+   * (write, publish hooks) or `cleanup` (unused cache entries).
+   */
+  readonly stage: string;
+  readonly ms: number;
+};
+
 /** Outcome of a successful build. */
 export type BuildResult = {
   readonly configPath: string;
@@ -65,4 +77,6 @@ export type BuildResult = {
   /** Log lines from plugins (for example storage upload counts). */
   readonly messages: readonly string[];
   readonly dryRun: boolean;
+  /** Where the time went, in the order the stages ran. */
+  readonly timings: readonly StageTiming[];
 };

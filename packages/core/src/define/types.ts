@@ -146,6 +146,16 @@ export type SingletonOnSuccess = (
   documents: readonly TransformDocument[],
 ) => void | Promise<void>;
 
+/**
+ * `transformCache` of a collection / singleton. In a build session (dev
+ * server, `anhur watch`) a transform runs again only when its document
+ * changed, or a source it read through `ctx.documents()` changed. Set
+ * `false` when the transform reads something Anhur cannot see (other
+ * files, environment variables, the network): it then runs on every build.
+ * Default `true`.
+ */
+export type TransformCacheOption = boolean;
+
 /** Transform function as stored on a definition. */
 export type DocumentTransform = (
   document: TransformDocument,
@@ -167,6 +177,8 @@ export type CollectionDefinition<
   /** `false` keeps this collection monolingual when the project is localized. */
   readonly localized?: boolean;
   readonly transform?: DocumentTransform;
+  /** See {@link TransformCacheOption}. */
+  readonly transformCache?: boolean;
   readonly onSuccess?: CollectionOnSuccess;
   readonly generate?: CollectionGenerateOptions;
   /** Phantom: document data after schema + transform. */
@@ -192,6 +204,8 @@ export type SingletonDefinition<
   /** Allow the file (or default-locale file) to be missing. */
   readonly optional?: boolean;
   readonly transform?: DocumentTransform;
+  /** See {@link TransformCacheOption}. */
+  readonly transformCache?: boolean;
   readonly onSuccess?: SingletonOnSuccess;
   readonly generate?: SingletonGenerateOptions;
   readonly _data?: TData;
@@ -293,6 +307,20 @@ export type AnhurConfig = {
   readonly outputDir?: string;
   /** Field cache, relative to the config file. Default `.anhur/cache`; `false` disables. */
   readonly cacheDir?: string | false;
+  /**
+   * Worker threads for loading, compiling and validating documents.
+   * Default (`true`): up to 6 (one less than the CPU cores) when 128 or
+   * more documents with compiled fields (Markdown, MDX, images) wait, as in
+   * a first build. A number sets the most to use; `false` keeps everything in
+   * the main thread. Every worker loads the compilers again: more workers
+   * need more memory.
+   *
+   * Each worker loads the config file itself. Turn workers off when a
+   * custom field or loader keeps state in memory that another part of the
+   * config reads (a list filled by `compile`, read by a plugin hook): a
+   * worker's memory is its own.
+   */
+  readonly workers?: boolean | number;
   /** Extra loaders, tried before plugin loaders and built-ins. */
   readonly loaders?: readonly Loader[];
   /** Build plugins (`markdown()`, `mdx()`, `assets()`, `orama()`, …). */

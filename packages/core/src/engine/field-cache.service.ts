@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   Context,
   Effect,
@@ -90,7 +91,8 @@ function parseEntry(text: string): CachedField | undefined {
 
 const KEY = /^[0-9a-f]{64}$/;
 /** Files this cache writes: entries and interrupted temporary writes. Nothing else is ever deleted. */
-const OWNED_FILE = /^(?:[0-9a-f]{64}\.json|\.[0-9a-f]{64}\.\d+\.tmp)$/;
+const OWNED_FILE =
+  /^(?:[0-9a-f]{64}\.json|\.[0-9a-f]{64}\.\d+(?:\.[0-9a-f]{8})?\.tmp)$/;
 
 /**
  * On-disk cache of compiled fields (`<cacheDir>/fields/<key>.json`). Writes
@@ -153,7 +155,12 @@ export class FieldCache extends Context.Service<
         if (!KEY.test(key)) return;
         const dir = folder(cacheDir);
         const target = path.join(dir, `${key}.json`);
-        const temporary = path.join(dir, `.${key}.${process.pid}.tmp`);
+        // Two documents with the same field value write the same key at
+        // once: each write needs its own temporary file.
+        const temporary = path.join(
+          dir,
+          `.${key}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`,
+        );
         const body = JSON.stringify({
           version: FORMAT_VERSION,
           value: encodeCacheValue(entry.value),

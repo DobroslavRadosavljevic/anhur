@@ -60,6 +60,7 @@ export function raw(): z.ZodString {
   return defineField(z.string(), {
     kind: "raw",
     whenAbsent: "compile",
+    pure: true,
     compile: (input, context) =>
       stringInput(input, context) ?? context.body ?? "",
   });
@@ -84,6 +85,7 @@ export function excerpt(options: ExcerptOptions = {}): z.ZodString {
   return defineField(z.string(), {
     kind: "excerpt",
     whenAbsent: "compile",
+    pure: true,
     compile: (input, context) => {
       const source = stringInput(input, context) ?? context.body ?? "";
       return truncateText(toPlainText(source, { mdx: isMdx(context) }), length);
@@ -111,6 +113,7 @@ export function metadata(
   return defineField(DocumentMetadataSchema, {
     kind: "metadata",
     whenAbsent: "compile",
+    pure: true,
     compile: (input, context): DocumentMetadata => {
       assertAbsent(input, context);
       const text = toPlainText(context.body ?? "", { mdx: isMdx(context) });
@@ -162,12 +165,15 @@ export function toc(options: TocOptions = {}): z.ZodType<TocEntry[]> {
     kind: "toc",
     whenAbsent: "compile",
     cache: {
-      version: `toc-2;${BODY_PARSER_VERSION}`,
+      version: `toc-3;${BODY_PARSER_VERSION}`,
       key: (context) => {
         const plugin = headingsPlugin(context);
-        return plugin
+        const source = plugin
           ? `${plugin.name}@${plugin.version ?? ""};${plugin.headings.key(context)}`
           : "builtin";
+        // The options shape the value: `maxDepth: 2` must not read an
+        // entry cached for `maxDepth: 3`.
+        return `${JSON.stringify(options)};${source}`;
       },
     },
     compile: async (input, context) => {
@@ -268,6 +274,7 @@ export function slug(options: SlugOptions = {}): z.ZodString {
   const spec = {
     kind: "slug",
     whenAbsent: "compile" as const,
+    pure: true,
     compile: (input: DocumentValue, context: FieldContext) => {
       const explicit = stringInput(input, context);
       const derived = explicit === undefined || explicit.length === 0;

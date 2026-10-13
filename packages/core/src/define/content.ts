@@ -12,6 +12,7 @@ import type {
   SingletonGenerateOptions,
   SingletonOnSuccess,
   SkippedSignal,
+  TransformCacheOption,
   TransformContext,
 } from "./types";
 import { skippedKey } from "./types";
@@ -64,6 +65,13 @@ export type DefineCollectionInput<
    * here; they are resolved after every transform ran.
    */
   readonly transform?: TransformInput<TSchema, TOut>;
+  /**
+   * Keep transform results between the builds of one session (default
+   * `true`): the transform runs again only when its document changed or a
+   * source it read through `ctx.documents()` changed. Set `false` when it
+   * reads something Anhur cannot see (files, environment, the network).
+   */
+  readonly transformCache?: TransformCacheOption;
   /** Called after the output is published, with the final documents. */
   readonly onSuccess?: CollectionOnSuccess;
   readonly generate?: CollectionGenerateOptions;
@@ -103,6 +111,7 @@ export function defineCollection<
     localized: input.localized,
     // SAFETY: the engine passes `{ ...data, _meta }` documents and checks the result is a plain object.
     transform: input.transform as DocumentTransform | undefined,
+    transformCache: input.transformCache,
     onSuccess: input.onSuccess,
     generate: input.generate,
   };
@@ -145,6 +154,8 @@ export type DefineSingletonInput<
   /** Allow the file (or the default-locale file) to be missing. */
   readonly optional?: boolean;
   readonly transform?: TransformInput<TSchema, TOut>;
+  /** Keep transform results between the builds of one session. Default `true`. */
+  readonly transformCache?: TransformCacheOption;
   /** Called after publish with every locale variant. */
   readonly onSuccess?: SingletonOnSuccess;
   readonly generate?: SingletonGenerateOptions;
@@ -183,6 +194,7 @@ export function defineSingleton<
     optional: input.optional,
     // SAFETY: the engine passes `{ ...data, _meta }` documents and checks the result is a plain object.
     transform: input.transform as DocumentTransform | undefined,
+    transformCache: input.transformCache,
     onSuccess: input.onSuccess,
     generate: input.generate,
   };
