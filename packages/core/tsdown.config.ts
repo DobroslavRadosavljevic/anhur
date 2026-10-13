@@ -16,7 +16,17 @@ export default defineConfig({
   format: "esm",
   // No source maps: they would point at `src/`, which is not published.
   sourcemap: false,
-  dts: { sourcemap: false },
+  dts: {
+    sourcemap: false,
+    // Every entry but the worker, which nothing imports. An entry that is
+    // not listed here gets no declarations: add new ones.
+    entry: [
+      "src/index.ts",
+      "src/build/index.ts",
+      "src/plugin/index.ts",
+      "src/cli/main.ts",
+    ],
+  },
   platform: "node",
   fixedExtension: false,
   clean: true,

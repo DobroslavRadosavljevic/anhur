@@ -332,16 +332,27 @@ export type AnhurConfig = {
   readonly cacheDir?: string | false;
   /**
    * Worker threads for loading, compiling and validating documents.
-   * Default (`true`): up to 6 (one less than the CPU cores) when 128 or
-   * more documents with compiled fields (Markdown, MDX, images) wait, as in
-   * a first build. A number sets the most to use; `false` keeps everything in
-   * the main thread. Every worker loads the compilers again: more workers
-   * need more memory.
    *
-   * Each worker loads the config file itself. Turn workers off when a
-   * custom field or loader keeps state in memory that another part of the
-   * config reads (a list filled by `compile`, read by a plugin hook): a
-   * worker's memory is its own.
+   * - `true` (default): the engine decides. When 128 or more documents
+   *   with cached compiled fields (Markdown, MDX, images) wait, as in a
+   *   first build, it validates some of them in the main thread to learn
+   *   what one costs. It starts 2 to 6 workers (one less than the CPU
+   *   cores at most) when the rest would take longer than about a second.
+   * - A number: start that many when 128 or more such documents wait,
+   *   without measuring.
+   * - `false`: keep everything in the main thread.
+   *
+   * Every worker loads the config file and the compilers again, so workers
+   * need more memory. A worker's memory is its own. Turn workers off when:
+   * - a custom field or loader keeps state in memory that another part of
+   *   the config reads (a list filled by `compile`, read by a plugin hook;
+   *   a counter or slug list shared between documents);
+   * - the config computes a value when it loads that documents use through
+   *   a function (a build id from the clock or a random number): each
+   *   worker computes its own.
+   *
+   * Sources that set `documentCache: false`, and sources whose schema is
+   * new on every read, are always validated in the main thread.
    */
   readonly workers?: boolean | number;
   /** Extra loaders, tried before plugin loaders and built-ins. */

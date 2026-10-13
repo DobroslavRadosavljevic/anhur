@@ -10,9 +10,10 @@ import {
 } from "../document";
 import type { ReferenceFieldSpec } from "../plugin/types";
 import { walkData } from "../schema/walk";
-import { deepFreeze } from "./freeze";
+import { deepFreeze, isDeepFrozen } from "./freeze";
 import { toExport } from "./list-rows";
 import type { ResolvedProject, ResolvedSource } from "./resolve";
+import { sameItems } from "./same-items";
 import type { FinalDocument, SourceDocuments } from "./types";
 
 type LookupIndex = Map<string, Map<string, FinalDocument[]>>;
@@ -61,8 +62,8 @@ function referencesIn(
     }
   }
   const result: ReferenceWalk = { schema, occurrences, tooDeep: walk.tooDeep };
-  // Only frozen data is known to stay as it is.
-  if (Object.isFrozen(data)) referenceWalks.set(data, result);
+  // Only deep-frozen data is known to stay as it is.
+  if (isDeepFrozen(data)) referenceWalks.set(data, result);
   return result;
 }
 
@@ -130,14 +131,6 @@ function buildIndex(
 
 function pathKey(path: FieldPath): string {
   return JSON.stringify(path);
-}
-
-function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
-  if (left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return false;
-  }
-  return true;
 }
 
 /**
@@ -398,10 +391,10 @@ export function resolveRelations(
         continue;
       }
       replaced = true;
-      const targets = embeds.map((embed) => embed.target);
-      const known = memory.embeds.get(document);
-      if (known && sameItems(known.targets, targets)) {
-        next.push(known.result);
+      const embedded = embeds.map((embed) => embed.target);
+      const record = memory.embeds.get(document);
+      if (record && sameItems(record.targets, embedded)) {
+        next.push(record.result);
         continue;
       }
       const fresh = new Set<object>();
@@ -415,7 +408,7 @@ export function resolveRelations(
         effects: document.effects,
         origin: document.origin,
       };
-      memory.embeds.set(document, { targets, result });
+      memory.embeds.set(document, { targets: embedded, result });
       next.push(result);
     }
     if (replaced) replace(group, next);

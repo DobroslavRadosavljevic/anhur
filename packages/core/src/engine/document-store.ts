@@ -14,14 +14,18 @@ import {
   type DocumentFields,
   type DocumentValue,
 } from "../document";
-import type { AssetRef } from "../plugin/types";
+import type { AssetRef, BuildMode } from "../plugin/types";
 import { decodeCacheValue, encodeCacheValue } from "./cache-codec";
-import type { CachedDependency } from "./field-cache.service";
+import {
+  isCachedDependency,
+  type CachedDependency,
+} from "./field-cache.service";
 import { mapPool, type FileSignature } from "./file-signature";
 
 /**
  * A validated document kept on disk between runs
- * (`<cacheDir>/documents/<key>.json`), so a later session does not load,
+ * (`<cacheDir>/documents/<mode>/<key>.json`, see {@link documentStoreDir};
+ * the functions below take that folder), so a later session does not load,
  * compile and validate files that did not change.
  */
 export type StoredDocument = {
@@ -38,24 +42,30 @@ export type StoredDocument = {
   readonly assets: readonly AssetRef[];
   /** Files reported through `addDependency`. */
   readonly dependencies: readonly string[];
-  /** Size and mtime of `dependencies` and of the asset sources. */
+  /** State of `dependencies` and of the asset sources when the document was made. */
   readonly watched: readonly CachedDependency[];
+  /** Epoch milliseconds, taken before `watched` was looked at. */
+  readonly watchedAt: number;
   /** Field cache entries the document used. */
   readonly cacheKeys: readonly string[];
   /** `context.warn()` messages. */
   readonly warnings: readonly string[];
 };
 
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;
 const KEY = /^[0-9a-f]{40}$/;
 /** Files this store writes: entries and interrupted temporary writes. */
 const OWNED_FILE =
   /^(?:[0-9a-f]{40}\.json|\.[0-9a-f]{40}\.\d+\.[0-9a-f]{8}\.tmp)$/;
 const REMOVE_CONCURRENCY = 16;
 
-/** Folder of the store inside the cache directory. */
-export function documentStoreDir(cacheDir: string): string {
-  return path.join(cacheDir, "documents");
+/**
+ * Folder of the stored documents of one build mode. A document of `dev`
+ * is not valid for `build`, so each mode has a folder: a build after a dev
+ * session does not replace what the next dev session needs.
+ */
+export function documentStoreDir(cacheDir: string, mode: BuildMode): string {
+  return path.join(cacheDir, "documents", mode);
 }
 
 /** Key of a document: its source and its path in the project. */
@@ -100,18 +110,6 @@ function isAssetRef(value: unknown): value is AssetRef {
   );
 }
 
-function isWatched(value: unknown): value is CachedDependency {
-  return (
-    Predicate.isObject(value) &&
-    "path" in value &&
-    Predicate.isString(value.path) &&
-    "mtimeMs" in value &&
-    Predicate.isNumber(value.mtimeMs) &&
-    "size" in value &&
-    Predicate.isNumber(value.size)
-  );
-}
-
 function isStringList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(Predicate.isString);
 }
@@ -144,7 +142,9 @@ function parseStored(text: string): StoredDocument | undefined {
     !isStringList(raw.dependencies) ||
     !("watched" in raw) ||
     !Array.isArray(raw.watched) ||
-    !raw.watched.every(isWatched) ||
+    !raw.watched.every(isCachedDependency) ||
+    !("watchedAt" in raw) ||
+    !Predicate.isNumber(raw.watchedAt) ||
     !("cacheKeys" in raw) ||
     !isStringList(raw.cacheKeys) ||
     !("warnings" in raw) ||
@@ -171,6 +171,7 @@ function parseStored(text: string): StoredDocument | undefined {
     assets: raw.assets,
     dependencies: raw.dependencies,
     watched: raw.watched,
+    watchedAt: raw.watchedAt,
     cacheKeys: raw.cacheKeys,
     warnings: raw.warnings,
   };
@@ -178,16 +179,13 @@ function parseStored(text: string): StoredDocument | undefined {
 
 /** The stored document of `key`, or `undefined` when there is none (or it is unreadable). */
 export async function readStoredDocument(
-  cacheDir: string,
+  dir: string,
   key: string,
 ): Promise<StoredDocument | undefined> {
   if (!KEY.test(key)) return undefined;
   let text: string;
   try {
-    text = await readFile(
-      path.join(documentStoreDir(cacheDir), `${key}.json`),
-      "utf8",
-    );
+    text = await readFile(path.join(dir, `${key}.json`), "utf8");
   } catch {
     return undefined;
   }
@@ -199,31 +197,31 @@ export async function readStoredDocument(
  * costs the next session a rebuild of the document, so it is not an error.
  */
 export async function writeStoredDocument(
-  cacheDir: string,
+  dir: string,
   key: string,
   entry: StoredDocument,
 ): Promise<void> {
   if (!KEY.test(key)) return;
-  const dir = documentStoreDir(cacheDir);
   const temporary = path.join(
     dir,
     `.${key}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`,
   );
-  const body = JSON.stringify({
-    version: FORMAT_VERSION,
-    stamp: entry.stamp,
-    hash: entry.hash,
-    signature: entry.signature,
-    readAt: entry.readAt,
-    draft: entry.draft,
-    data: encodeCacheValue(entry.data),
-    assets: entry.assets,
-    dependencies: entry.dependencies,
-    watched: entry.watched,
-    cacheKeys: entry.cacheKeys,
-    warnings: entry.warnings,
-  });
   try {
+    const body = JSON.stringify({
+      version: FORMAT_VERSION,
+      stamp: entry.stamp,
+      hash: entry.hash,
+      signature: entry.signature,
+      readAt: entry.readAt,
+      draft: entry.draft,
+      data: encodeCacheValue(entry.data),
+      assets: entry.assets,
+      dependencies: entry.dependencies,
+      watched: entry.watched,
+      watchedAt: entry.watchedAt,
+      cacheKeys: entry.cacheKeys,
+      warnings: entry.warnings,
+    });
     await writeFile(temporary, body);
     await rename(temporary, path.join(dir, `${key}.json`));
   } catch {
@@ -232,16 +230,12 @@ export async function writeStoredDocument(
 }
 
 /** Create the store folder (before the first write of a build). */
-export async function prepareDocumentStore(cacheDir: string): Promise<void> {
-  await mkdir(documentStoreDir(cacheDir), { recursive: true });
+export async function prepareDocumentStore(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true });
 }
 
-/** Delete stored documents whose key is not in `keep`. Only files this store wrote are removed. */
-export async function collectStoredDocuments(
-  cacheDir: string,
-  keep: ReadonlySet<string>,
-): Promise<void> {
-  const dir = documentStoreDir(cacheDir);
+/** Delete the files of this store in `dir` whose key is not in `keep`. */
+async function sweep(dir: string, keep: ReadonlySet<string>): Promise<void> {
   let names: string[];
   try {
     names = await readdir(dir);
@@ -255,4 +249,17 @@ export async function collectStoredDocuments(
   await mapPool(stale, REMOVE_CONCURRENCY, async (name) => {
     await rm(path.join(dir, name), { force: true }).catch(() => undefined);
   });
+}
+
+/**
+ * Delete stored documents whose key is not in `keep`, and the documents
+ * an older version left in the parent folder (it had one folder for every
+ * mode). Only files this store wrote are removed.
+ */
+export async function collectStoredDocuments(
+  dir: string,
+  keep: ReadonlySet<string>,
+): Promise<void> {
+  await sweep(dir, keep);
+  await sweep(path.dirname(dir), new Set());
 }

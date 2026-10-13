@@ -27,6 +27,13 @@ export type Loader = {
     readonly path: string;
     readonly raw: string;
   }) => LoadedFile | Promise<LoadedFile>;
+  /**
+   * The result depends only on `raw` (and `path`). Validated documents of
+   * the files a pure loader reads may be kept on disk and reused by a later
+   * run. Leave it out for a loader that reads anything else: another file,
+   * `git`, the clock, the network. The built-in loaders are pure.
+   */
+  readonly pure?: boolean;
 };
 
 /** How a body / field URL is used. `link` targets may point at other documents. */
@@ -107,15 +114,20 @@ export type FieldContext = {
    * that asks for `key` starts `compute`; the others wait for the same
    * value. `compute` gets a context of its own: the assets, dependencies
    * and warnings it reports count for every field that asked.
+   *
+   * Keys are shared by all fields of the document, whatever plugin made
+   * them: start a key with the name of your plugin. `compute` must not
+   * ask for its own key.
    */
   readonly share: <TValue>(
     key: string,
     compute: (context: FieldContext) => TValue | Promise<TValue>,
   ) => Promise<TValue>;
   /**
-   * True when a field of this document announced `key` in
-   * {@link CompileFieldSpec.shares}: asking for it through `share` joins
-   * work that is done anyway.
+   * True when a field of this document that compiles in this build
+   * announced `key` in {@link CompileFieldSpec.shares}: asking for it
+   * through `share` joins work that is done anyway. False when that field
+   * takes its value from the field cache: nothing is computed to join.
    */
   readonly isShared: (key: string) => boolean;
 };
@@ -182,8 +194,13 @@ export type CompileFieldSpec = {
    * later run reuses them without reading the unchanged files. Leave it
    * out for fields that read anything else: the network, the clock,
    * environment variables.
+   *
+   * A field made with options passes `{ key }`: a fingerprint (see
+   * `fingerprint()`) of the options. The engine knows `compile` by its
+   * source only, so without the key a changed option gives the stored
+   * document of the old one.
    */
-  readonly pure?: boolean;
+  readonly pure?: boolean | { readonly key: string };
 };
 
 /** `s.reference()` marker: the value stays a string id / slug until the relations pass. */

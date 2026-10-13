@@ -60,20 +60,51 @@ type LocaleRecord = {
   readonly code: string;
 };
 
+declare const searchMemoryBrand: unique symbol;
+
 /**
- * What the plugin remembers between the builds of one session. Documents
- * are frozen and an unchanged document is the same object in every build,
- * so an index is built again only when a document of its locale changed,
- * and text indexed before is not split into words again.
+ * What the plugin remembers between the builds of one session. Make it
+ * with {@link createSearchMemory}, keep it for the session, and give it to
+ * each {@link generateSearchModules} call. Documents are frozen and an
+ * unchanged document is the same object in every build, so an index is
+ * built again only when a document of its locale changed. In `dev` mode,
+ * text indexed before is not split into words again.
+ *
+ * The value is opaque: it has no fields to read or to set.
  */
-export type SearchMemory = {
+export type SearchMemory = { readonly [searchMemoryBrand]: true };
+
+/** What a memory holds. */
+type SearchRecord = {
   readonly locales: Map<string, LocaleRecord>;
-  /** Tokens of indexed text by locale: the last build's, and this build's. */
+  /**
+   * Tokens of indexed text by locale, kept in `dev` mode only (a `build`
+   * run never reads them again). Each build of an index makes the map of
+   * its locale new, from the text it indexed: text that left the index
+   * does not stay.
+   */
   readonly tokens: Map<string, Map<string, string[]>>;
 };
 
+/** The record of each memory. A memory is only the key of its record. */
+const searchRecords = new WeakMap<SearchMemory, SearchRecord>();
+
+/** A new memory that knows nothing: the next build makes every index. */
 export function createSearchMemory(): SearchMemory {
-  return { locales: new Map(), tokens: new Map() };
+  // SAFETY: the brand is a type-only mark; the object has no fields and is only a key of `searchRecords`.
+  const memory = Object.freeze({}) as SearchMemory;
+  searchRecords.set(memory, { locales: new Map(), tokens: new Map() });
+  return memory;
+}
+
+/** The record of a memory (a new one for a value this module did not make). */
+function recordOf(memory: SearchMemory): SearchRecord {
+  let record = searchRecords.get(memory);
+  if (!record) {
+    record = { locales: new Map(), tokens: new Map() };
+    searchRecords.set(memory, record);
+  }
+  return record;
 }
 
 function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
@@ -378,11 +409,16 @@ export async function generateSearchModules(
   const stemmers = stemmersByLocale(options.languages, keys);
   const loaders: string[] = [];
 
-  for (const key of memory.locales.keys()) {
-    if (!keys.includes(key)) memory.locales.delete(key);
+  const record = recordOf(memory);
+  for (const key of record.locales.keys()) {
+    if (!keys.includes(key)) record.locales.delete(key);
   }
-  for (const key of memory.tokens.keys()) {
-    if (!keys.includes(key)) memory.tokens.delete(key);
+  // Only a session that builds again can use the tokens: a `build` run
+  // keeps none, so they do not add to its memory.
+  const remember = context.mode === "dev";
+  if (!remember) record.tokens.clear();
+  for (const key of record.tokens.keys()) {
+    if (!keys.includes(key)) record.tokens.delete(key);
   }
   for (const locale of locales) {
     const key = locale ?? DEFAULT_KEY;
@@ -396,7 +432,7 @@ export async function generateSearchModules(
       };
     });
     const indexed = rows.flatMap((row) => row.documents);
-    const known = memory.locales.get(key);
+    const known = record.locales.get(key);
     if (known && sameItems(known.documents, indexed)) {
       context.emitModule({ path: file, code: known.code });
     } else {
@@ -405,16 +441,19 @@ export async function generateSearchModules(
         locale: locale ?? context.defaultLocale ?? "en",
         ...(stemmer === undefined ? {} : { stemmer }),
       };
+      const plain = await tokenizerFor(tokenizer);
       const tokens = new Map<string, string[]>();
       const db = create({
         schema,
         sort: { enabled: false },
         components: {
-          tokenizer: rememberingTokenizer(
-            await tokenizerFor(tokenizer),
-            memory.tokens.get(key) ?? new Map(),
-            tokens,
-          ),
+          tokenizer: remember
+            ? rememberingTokenizer(
+                plain,
+                record.tokens.get(key) ?? new Map(),
+                tokens,
+              )
+            : plain,
         },
       });
       for (const { name, config, documents } of rows) {
@@ -439,8 +478,8 @@ export async function generateSearchModules(
         data: save(db),
       };
       const code = `${HEADER}\nexport default JSON.parse(${jsonStringLiteral(JSON.stringify(snapshot))});\n`;
-      memory.locales.set(key, { documents: indexed, code });
-      memory.tokens.set(key, tokens);
+      record.locales.set(key, { documents: indexed, code });
+      if (remember) record.tokens.set(key, tokens);
       context.emitModule({ path: file, code });
     }
     loaders.push(

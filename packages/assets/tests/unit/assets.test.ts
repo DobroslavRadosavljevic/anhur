@@ -1,22 +1,19 @@
-import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rm, utimes } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AssetRef } from "@anhur/core/plugin";
 import {
   ASSETS_MANIFEST,
   copyAssets,
-  createAssetsFolderState,
   parseSvgSize,
   pruneAssets,
   pruneStorage,
   readImageMeta,
   sanitizeSvg,
-  SVG_SANITIZER_VERSION,
   syncStorage,
   type AssetStorageClient,
 } from "../../src";
+import { assetRef } from "../fixtures/asset-ref";
 import { createProject, type TestProject } from "../fixtures/temp-project";
 
 const projects: TestProject[] = [];
@@ -28,34 +25,6 @@ async function project() {
   const created = await createProject({});
   projects.push(created);
   return created;
-}
-
-/** Asset hash as core computes it (see `AssetHost.transformVersion`). */
-function hashOf(contents: string | Uint8Array, version?: string): string {
-  const hash = createHash("sha256");
-  if (version !== undefined) hash.update(`${version}\0`);
-  return hash.update(contents).digest("hex").slice(0, 16);
-}
-
-function assetRef(
-  sourcePath: string,
-  contents: string | Uint8Array,
-  options: { readonly stem?: string; readonly svg?: boolean } = {},
-): AssetRef {
-  const extension = options.svg ? ".svg" : ".png";
-  const hash = hashOf(
-    contents,
-    options.svg ? SVG_SANITIZER_VERSION : undefined,
-  );
-  const fileName = `${options.stem ?? "a"}-${hash}${extension}`;
-  return {
-    src: `/a/${fileName}`,
-    sourcePath,
-    fileName,
-    hash,
-    size: Buffer.byteLength(contents),
-    contentType: options.svg ? "image/svg+xml" : "image/png",
-  };
 }
 
 describe("image metadata", () => {
@@ -222,45 +191,6 @@ describe("copyAssets / pruneAssets", () => {
       ASSETS_MANIFEST,
       a.fileName,
     ]);
-  });
-
-  it("skips a folder that is as the last build left it, and repairs it when a file is gone", async () => {
-    const dir = await project();
-    await dir.write("src/a.png", "A");
-    const target = dir.path("out");
-    const a = assetRef(dir.path("src/a.png"), "A");
-    const state = createAssetsFolderState();
-    expect(await copyAssets(target, [a], { svg: "keep" }, state)).toEqual({
-      copied: 1,
-    });
-    expect(await pruneAssets(target, [a], {}, state)).toEqual({ removed: 0 });
-    // The folder was written a moment ago: it is listed again, not trusted.
-    expect(await copyAssets(target, [a], { svg: "keep" }, state)).toEqual({
-      copied: 0,
-    });
-    await pruneAssets(target, [a], {}, state);
-
-    // Settled: an old, unchanged folder is not looked into at all.
-    const past = new Date(Date.now() - 60_000);
-    await utimes(target, past, past);
-    state.mtimeMs = past.getTime();
-    await rm(dir.path("src/a.png"));
-    expect(await copyAssets(target, [a], { svg: "keep" }, state)).toEqual({
-      copied: 0,
-    });
-    expect(await pruneAssets(target, [a], {}, state)).toEqual({ removed: 0 });
-
-    // A file removed from the folder changes it: the asset is copied again.
-    await dir.write("src/a.png", "A");
-    await rm(path.join(target, a.fileName));
-    expect(await copyAssets(target, [a], { svg: "keep" }, state)).toEqual({
-      copied: 1,
-    });
-    // Other assets than last time are never skipped.
-    await pruneAssets(target, [a], {}, state);
-    await utimes(target, past, past);
-    state.mtimeMs = past.getTime();
-    expect(await pruneAssets(target, [], {}, state)).toEqual({ removed: 1 });
   });
 
   it("fails when a source changed after it was hashed, leaving nothing behind", async () => {

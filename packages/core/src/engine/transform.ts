@@ -12,6 +12,8 @@ import { deepFreeze } from "./freeze";
 import { toSnapshot } from "./list-rows";
 import { findNonPlainData } from "./plain-data";
 import type { ResolvedProject, ResolvedSource } from "./resolve";
+import { sameData } from "./same-data";
+import { sameItems } from "./same-items";
 import type {
   FinalDocument,
   SourceDocuments,
@@ -51,6 +53,11 @@ type SnapshotRecord = {
 export type TransformMemory = {
   /** Sources without a transform: the document as validated. */
   readonly unchanged: WeakMap<ValidatedDocument, FinalDocument>;
+  /**
+   * The last run of every transform, also with `transformCache: false`:
+   * a run that gives the same data again keeps the final document of the
+   * run before.
+   */
   readonly records: WeakMap<ValidatedDocument, TransformRecord>;
   readonly snapshots: Map<string, SnapshotRecord>;
 };
@@ -76,14 +83,6 @@ function describeValue(value: unknown): string {
 
 function isDraft(data: DocumentFields): boolean {
   return data.draft === true;
-}
-
-function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
-  if (left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return false;
-  }
-  return true;
 }
 
 /** Group validated documents by source, in config order, drafts removed. Documents are ordered by configured locale order, then path. */
@@ -141,8 +140,11 @@ function unchangedDocument(
  *
  * With a `memory`, a transform only runs again when its document changed
  * or a source it read through `ctx.documents()` has other documents now
- * (unless the source sets `transformCache: false`). Documents of sources
- * without a transform keep their validated data as is.
+ * (unless the source sets `transformCache: false`). A transform that runs
+ * again for the same validated document and returns the same data
+ * ({@link sameData}) keeps the final document it had: the later stages
+ * know a document by its identity. Documents of sources without a
+ * transform keep their validated data as is.
  */
 export const runTransforms = Effect.fn("runTransforms")(function* (
   project: ResolvedProject,
@@ -194,9 +196,10 @@ export const runTransforms = Effect.fn("runTransforms")(function* (
     const results = new Map<ValidatedDocument, FinalDocument | undefined>();
     const pending: ValidatedDocument[] = [];
     for (const document of group.documents) {
-      const record = remember ? memory.records.get(document) : undefined;
-      if (record && isCurrent(record)) results.set(document, record.final);
-      else pending.push(document);
+      const record = memory.records.get(document);
+      if (remember && record && isCurrent(record)) {
+        results.set(document, record.final);
+      } else pending.push(document);
     }
     yield* Effect.forEach(
       pending,
@@ -259,6 +262,10 @@ export const runTransforms = Effect.fn("runTransforms")(function* (
                   fieldPath: problem.fieldPath,
                 });
               }
+              const previous = memory.records.get(document)?.final;
+              if (previous && sameData(previous.data, data)) {
+                return Effect.succeed(previous);
+              }
               return Effect.succeed({
                 file: document.file,
                 data: deepFreeze(data),
@@ -269,7 +276,7 @@ export const runTransforms = Effect.fn("runTransforms")(function* (
           ),
           Effect.map((final) => {
             results.set(document, final);
-            if (remember) memory.records.set(document, { final, reads });
+            memory.records.set(document, { final, reads });
           }),
           Effect.catch((diagnostic: Diagnostic) =>
             Effect.sync(() => {

@@ -2,16 +2,38 @@ import { createHash } from "node:crypto";
 import { Predicate } from "effect";
 import { constructorName, fingerprint } from "./fingerprint";
 
-/** Nesting at which the walk of a schema stops (a getter that makes a new schema on every read). */
-const MAX_DEPTH = 64;
+/**
+ * Nesting at which the walk of a schema stops. Each schema level takes two
+ * or three steps (schema, definition, shape), so this is far above any real
+ * schema; only a getter that makes a new schema on every read gets here.
+ */
+const MAX_DEPTH = 600;
 /** Most values the walk of one schema visits. */
-const MAX_VALUES = 50_000;
+const MAX_VALUES = 500_000;
+/** Zod marks the function it makes for `.catch(value)` with this key. */
+const CONSTANT_CATCH = "~constantCatch";
 
 type State = {
   /** Values seen so far: a second visit is a reference to the first. */
   readonly seen: Map<object, number>;
   left: number;
+  /** True when the walk stopped early: the text does not hold the whole schema. */
+  cut: boolean;
 };
+
+/** What a function of a schema does, as far as it can be read from outside. */
+function functionText(value: Function, state: State, depth: number): string {
+  // `.catch("a")`: Zod wraps the value in a function. Read the value.
+  if (Reflect.get(value, CONSTANT_CATCH) === true) {
+    try {
+      const constant: unknown = Reflect.apply(value, undefined, []);
+      return `constant(${canonical(constant, state, depth + 1)})`;
+    } catch {
+      return "constant(throws)";
+    }
+  }
+  return fingerprint(value);
+}
 
 /**
  * Text that says what a schema does: the definitions of the schema and of
@@ -21,12 +43,14 @@ type State = {
  * containers (and functions, by their source) go to `fingerprint`.
  */
 function canonical(value: unknown, state: State, depth: number): string {
-  if (Predicate.isFunction(value) || !Predicate.isObjectOrArray(value)) {
-    return fingerprint(value);
-  }
+  if (Predicate.isFunction(value)) return functionText(value, state, depth);
+  if (!Predicate.isObjectOrArray(value)) return fingerprint(value);
   const known = state.seen.get(value);
   if (known !== undefined) return `seen:${known}`;
-  if (depth > MAX_DEPTH || state.left <= 0) return "cut";
+  if (depth > MAX_DEPTH || state.left <= 0) {
+    state.cut = true;
+    return "cut";
+  }
   state.left -= 1;
   state.seen.set(value, state.seen.size);
   if (Array.isArray(value)) {
@@ -46,9 +70,10 @@ function canonical(value: unknown, state: State, depth: number): string {
     );
     return `Set{${items.join(",")}}`;
   }
+  // A check keeps the place it stopped at (`lastIndex`): not part of the schema.
+  if (value instanceof RegExp) return `r:/${value.source}/${value.flags}`;
   if (
     value instanceof Date ||
-    value instanceof RegExp ||
     value instanceof URL ||
     ArrayBuffer.isView(value) ||
     value instanceof ArrayBuffer ||
@@ -59,7 +84,12 @@ function canonical(value: unknown, state: State, depth: number): string {
   if ("_zod" in value) {
     const internals: unknown = value._zod;
     if (Predicate.isObject(internals) && "def" in internals) {
-      return `zod(${canonical(internals.def, state, depth + 1)})`;
+      const definition = canonical(internals.def, state, depth + 1);
+      // `.check(fn)` keeps the function beside the definition, not in it.
+      const check: unknown = "check" in internals ? internals.check : undefined;
+      return Predicate.isFunction(check)
+        ? `zod(${definition};${fingerprint(check)})`
+        : `zod(${definition})`;
     }
   }
   if (
@@ -94,19 +124,45 @@ function canonical(value: unknown, state: State, depth: number): string {
   return `${constructorName(value)}{${fields.join(",")}}`;
 }
 
+/** One walk of a schema: its text as a hash, or `undefined` when the walk was cut. */
+function walkOnce(value: unknown): string | undefined {
+  const state: State = { seen: new Map(), left: MAX_VALUES, cut: false };
+  const text = canonical(value, state, 0);
+  return state.cut
+    ? undefined
+    : createHash("sha256").update(text).digest("hex");
+}
+
+/** The fingerprint of a schema, or why it has none. */
+export type SchemaFingerprint =
+  | { readonly value: string; readonly problem?: undefined }
+  | { readonly value?: undefined; readonly problem: string };
+
 /**
  * Fingerprint of a Zod schema: its shape, its checks with their values,
- * its defaults and the source of its functions. Two schemas with the same
- * fingerprint validate the same input to the same output, as far as code
- * can tell from outside: a function that reads a variable has the same
- * source whatever the variable holds.
+ * its defaults and catch values, and the source of its functions.
  *
- * A default given as a function is called. One that returns something new
- * on every call (the time, a random id) gives a new fingerprint in every
- * process, so documents of such a schema are never reused from disk.
+ * What it cannot see: a function is known by its source only. Two
+ * functions with the same source that read different variables (the
+ * function of `.superRefine()`, a transform that calls a helper) look the
+ * same. The modules such a function comes from are part of the config
+ * fingerprint instead.
+ *
+ * A default given as a function is called (twice). A schema whose text is
+ * new on every read (`.default(() => new Date())`, a random id) or that is
+ * too large to walk has no fingerprint: `problem` says why, and documents
+ * of such a schema are not kept on disk.
  */
-export function schemaFingerprint(value: unknown): string {
-  return createHash("sha256")
-    .update(canonical(value, { seen: new Map(), left: MAX_VALUES }, 0))
-    .digest("hex");
+export function schemaFingerprint(value: unknown): SchemaFingerprint {
+  const first = walkOnce(value);
+  if (first === undefined) {
+    return { problem: "the schema is too large to fingerprint" };
+  }
+  if (walkOnce(value) !== first) {
+    return {
+      problem:
+        "the schema gives a new value on every read (a default such as () => new Date())",
+    };
+  }
+  return { value: first };
 }

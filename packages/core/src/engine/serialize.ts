@@ -1,5 +1,6 @@
 import { Predicate } from "effect";
 import { isPlainObject, type FieldPath } from "../document";
+import { isDeepFrozen } from "./freeze";
 
 /** Why a value cannot be written into a generated module. */
 export type SerializeFailure = {
@@ -47,18 +48,36 @@ function propertyKey(key: string): string {
   return JSON.stringify(key);
 }
 
+/** The text of a value, and how deep the value nests. */
+type Literal = {
+  readonly code: string;
+  /** Levels from the value down to the deepest container in it. */
+  readonly depth: number;
+};
+
 /**
  * Literals of frozen documents (objects with `_meta`: exported documents,
  * list rows, embedded documents). The engine deep-freezes document data, so
  * such an object always gives the same text; a document that is part of
  * several builds, lists and views is written once.
  */
-const literals = new WeakMap<object, string>();
+const literals = new WeakMap<object, Literal>();
+
+/** State of one {@link toJsLiteral} call. */
+type Walk = {
+  /** The containers around the value that is written now (cycle check). */
+  readonly active: Set<object>;
+  /**
+   * Longest path of a container found so far below the container that is
+   * written now.
+   */
+  deepest: number;
+};
 
 function serialize(
   value: unknown,
   path: (string | number)[],
-  active: Set<object>,
+  walk: Walk,
   remember = true,
 ): string {
   if (value === null) return "null";
@@ -80,6 +99,7 @@ function serialize(
   if (!Predicate.isObject(value) && !Array.isArray(value)) {
     throw fail(`cannot write ${describe(value)} into a generated module`, path);
   }
+  const { active } = walk;
   if (active.has(value)) {
     throw fail("value contains a circular reference", path);
   }
@@ -87,15 +107,20 @@ function serialize(
   const memoized =
     isPlainObject(value) &&
     Object.hasOwn(value, "_meta") &&
-    Object.isFrozen(value);
+    isDeepFrozen(value);
   if (memoized) {
     const known = literals.get(value);
-    if (known !== undefined) return known;
+    // A literal made nearer to the root can be too deep here. It is then
+    // written again, and fails at the same path as without this memory.
+    if (known !== undefined && path.length + known.depth < MAX_DEPTH) {
+      walk.deepest = Math.max(walk.deepest, path.length + known.depth);
+      return known.code;
+    }
   }
   // `path` is one stack for the whole walk: a failure copies it.
   const at = (segment: string | number, input: unknown): string => {
     path.push(segment);
-    const code = serialize(input, path, active);
+    const code = serialize(input, path, walk);
     path.pop();
     return code;
   };
@@ -139,6 +164,8 @@ function serialize(
     }
     return `{${parts.join(",")}}`;
   };
+  const around = walk.deepest;
+  walk.deepest = path.length;
   active.add(value);
   let code: string;
   try {
@@ -146,7 +173,10 @@ function serialize(
   } finally {
     active.delete(value);
   }
-  if (memoized && remember) literals.set(value, code);
+  if (memoized && remember) {
+    literals.set(value, { code, depth: walk.deepest - path.length });
+  }
+  walk.deepest = Math.max(around, walk.deepest);
   return code;
 }
 
@@ -177,7 +207,12 @@ export function toJsLiteral(
   try {
     return {
       ok: true,
-      code: serialize(value, [], new Set(), options.remember !== false),
+      code: serialize(
+        value,
+        [],
+        { active: new Set(), deepest: 0 },
+        options.remember !== false,
+      ),
     };
   } catch (cause) {
     if (isThrownFailure(cause)) {

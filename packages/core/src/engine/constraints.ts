@@ -9,6 +9,8 @@ import {
 } from "../document";
 import type { FieldSpec, UniqueOptions } from "../plugin/types";
 import { walkData } from "../schema/walk";
+import { isDeepFrozen } from "./freeze";
+import { sameItems } from "./same-items";
 import type { FinalDocument, SourceDocuments } from "./types";
 
 type Owner = {
@@ -70,8 +72,8 @@ function uniquesIn(schema: z.core.$ZodType, data: DocumentFields): UniqueWalk {
     });
   }
   const result: UniqueWalk = { schema, occurrences, tooDeep: walk.tooDeep };
-  // Only frozen data is known to stay as it is.
-  if (Object.isFrozen(data)) uniqueWalks.set(data, result);
+  // Only deep-frozen data is known to stay as it is.
+  if (isDeepFrozen(data)) uniqueWalks.set(data, result);
   return result;
 }
 
@@ -86,14 +88,6 @@ export type UniqueMemory = {
 
 export function createUniqueMemory(): UniqueMemory {
   return { passed: undefined };
-}
-
-function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
-  if (left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return false;
-  }
-  return true;
 }
 
 /**

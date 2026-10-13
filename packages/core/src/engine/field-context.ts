@@ -158,6 +158,83 @@ function hasNodeModulesSegment(relativePath: string): boolean {
   return relativePath.split(/[\\/]/).includes("node_modules");
 }
 
+/**
+ * Why the file at the real path `real` may not be an asset, by its path
+ * alone (no file is read); `undefined` when the path rules allow it.
+ * `shown` names the file in the message.
+ */
+function assetPathProblem(
+  session: FieldSession,
+  real: string,
+  shown: string,
+): string | undefined {
+  const host = session.project.assetHost;
+  if (!host || session.publicBase === undefined) {
+    return `"${shown}" is a local file, but no plugin handles assets. Add assets() from @anhur/assets to defineConfig({ plugins }).`;
+  }
+  const root = matchingRoot(session, real);
+  if (!root) {
+    return `"${shown}" is outside the folders assets may be read from (the project directory and assets({ roots })).`;
+  }
+  const inRoot = path.relative(root, real);
+  if (hasDotSegment(inRoot)) {
+    return `"${shown}" is a dotfile or inside a dot-folder; such files are never copied.`;
+  }
+  if (hasNodeModulesSegment(inRoot)) {
+    return `"${shown}" is inside node_modules; add the package folder to assets({ roots }) to copy files from it.`;
+  }
+  const extension = path.extname(real).toLowerCase();
+  const allowed = host.host.extensions;
+  if (allowed && !allowed.includes(extension)) {
+    return `"${shown}" has extension "${extension || "(none)"}", which assets({ extensions }) does not allow.`;
+  }
+  return undefined;
+}
+
+/** Real paths looked up for stored assets, per build. */
+const storedRealPaths = new WeakMap<
+  FieldSession,
+  Map<string, Promise<boolean>>
+>();
+
+/**
+ * True when an asset read from a cache file may be used as it is: its path
+ * is a real path the asset rules allow, and its name, URL and type are the
+ * ones this build gives a file with that path and hash. No content is
+ * read: the caller has proved the file unchanged. A cache file is not
+ * trusted to name a file the rules refuse.
+ */
+export async function storedAssetAllowed(
+  session: FieldSession,
+  asset: AssetRef,
+): Promise<boolean> {
+  const real = asset.sourcePath;
+  if (assetPathProblem(session, real, real) !== undefined) return false;
+  const fileName = assetFileName(path.basename(real), asset.hash);
+  if (
+    asset.fileName !== fileName ||
+    asset.src !==
+      `${session.publicBase ?? ""}${encodeURIComponent(fileName)}` ||
+    asset.contentType !== contentTypeForPath(real)
+  ) {
+    return false;
+  }
+  let known = storedRealPaths.get(session);
+  if (!known) {
+    known = new Map();
+    storedRealPaths.set(session, known);
+  }
+  let pending = known.get(real);
+  if (!pending) {
+    pending = realpath(real).then(
+      (resolved) => resolved === real,
+      () => false,
+    );
+    known.set(real, pending);
+  }
+  return pending;
+}
+
 /** Check a file against the asset rules and describe it. */
 async function checkAssetFile(
   session: FieldSession,
@@ -177,23 +254,8 @@ async function checkAssetFile(
   } catch {
     throw new Error(`File not found: ${shown}`);
   }
-  const root = matchingRoot(session, real);
-  if (!root) {
-    throw new Error(
-      `"${shown}" is outside the folders assets may be read from (the project directory and assets({ roots })).`,
-    );
-  }
-  const inRoot = path.relative(root, real);
-  if (hasDotSegment(inRoot)) {
-    throw new Error(
-      `"${shown}" is a dotfile or inside a dot-folder; such files are never copied.`,
-    );
-  }
-  if (hasNodeModulesSegment(inRoot)) {
-    throw new Error(
-      `"${shown}" is inside node_modules; add the package folder to assets({ roots }) to copy files from it.`,
-    );
-  }
+  const problem = assetPathProblem(session, real, shown);
+  if (problem !== undefined) throw new Error(problem);
   const info = await stat(real);
   if (!info.isFile()) {
     throw new Error(`"${shown}" is not a file.`);
@@ -206,12 +268,6 @@ async function checkAssetFile(
     isFile: true,
   });
   const extension = path.extname(real).toLowerCase();
-  const allowed = host.host.extensions;
-  if (allowed && !allowed.includes(extension)) {
-    throw new Error(
-      `"${shown}" has extension "${extension || "(none)"}", which assets({ extensions }) does not allow.`,
-    );
-  }
   const version = host.host.transformVersion?.(extension);
   const hash = await hashFile(session, real, info, version);
   const fileName = assetFileName(path.basename(real), hash);

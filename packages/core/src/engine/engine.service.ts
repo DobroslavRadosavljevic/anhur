@@ -50,13 +50,13 @@ import {
   type UniqueMemory,
 } from "./constraints";
 import { createDeriveMemory, deriveAll, type DeriveMemory } from "./derive";
-import { collectStoredDocuments } from "./document-store";
-import { FieldCache } from "./field-cache.service";
+import { collectStoredDocuments, documentStoreDir } from "./document-store";
+import { FieldCache, fieldCacheDir } from "./field-cache.service";
 import type { AssetHashEntry, FieldSession } from "./field-context";
 import { copyData } from "./copy-data";
 import { createSignatureMemo } from "./file-signature";
 import { fileWork } from "./file-work";
-import { deepFreeze } from "./freeze";
+import { deepFreeze, frozenWriteHint } from "./freeze";
 import { toExport } from "./list-rows";
 import { OutputWriter } from "./output.service";
 import {
@@ -65,13 +65,17 @@ import {
   type RelationMemory,
 } from "./relations";
 import type { ResolvedProject } from "./resolve";
-import type {
-  BuildOptions,
-  BuildResult,
-  SourceSummary,
-  StageTiming,
-  WatchTargets,
+import {
+  recordFailedTimings,
+  type BuildOptions,
+  type BuildResult,
+  type BuildStage,
+  type SourceSummary,
+  type StageTiming,
+  type WatchTargets,
 } from "./result";
+import { sameData } from "./same-data";
+import { sameItems } from "./same-items";
 import {
   createTransformMemory,
   runTransforms,
@@ -89,11 +93,22 @@ type EngineState = {
   readonly watch: WatchTargets | undefined;
 };
 
-/** Summary and plugin snapshot of a source, kept while its documents stay the same. */
+/**
+ * Summary and plugin snapshot of a source, kept while its documents stay
+ * the same. Both go to user code in every build, so they are frozen.
+ */
 type SourceRecord = {
   readonly documents: readonly FinalDocument[];
   readonly summary: SourceSummary;
   readonly snapshot: SourceSnapshot;
+};
+
+/** Watch targets, and what they were made from. */
+type WatchRecord = {
+  readonly configFiles: readonly string[];
+  /** Final documents of every source, in config order. */
+  readonly documents: readonly (readonly FinalDocument[])[];
+  readonly targets: WatchTargets;
 };
 
 /**
@@ -110,8 +125,13 @@ type BuildMemory = {
   readonly derived: DeriveMemory;
   readonly plan: PlanMemory;
   readonly sources: Map<string, SourceRecord>;
-  /** Watch targets of the documents as they are now (`undefined`: not found yet). */
-  watch: WatchTargets | undefined;
+  /**
+   * What `prepare` made of a document the last time it changed it, by the
+   * document it was given.
+   */
+  readonly prepared: WeakMap<FinalDocument, FinalDocument>;
+  /** Watch targets of the last build that got that far. */
+  watch: WatchRecord | undefined;
 };
 
 function createBuildMemory(project: ResolvedProject): BuildMemory {
@@ -123,16 +143,81 @@ function createBuildMemory(project: ResolvedProject): BuildMemory {
     derived: createDeriveMemory(),
     plan: createPlanMemory(),
     sources: new Map(),
+    prepared: new WeakMap(),
     watch: undefined,
   };
 }
 
-function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
-  if (left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return false;
-  }
-  return true;
+/** Measures the stages of one build. */
+type StageClock = {
+  /** Every stage that ended, in the order the stages ran. */
+  readonly timings: StageTiming[];
+  /** The stage that runs now ends here, and `stage` starts. */
+  readonly enter: (stage: BuildStage) => void;
+  /** The stage that runs now ends here (also when it failed). */
+  readonly stop: () => void;
+};
+
+function createStageClock(): StageClock {
+  const timings: StageTiming[] = [];
+  let running: BuildStage | undefined;
+  let since = 0;
+  const stop = (): void => {
+    if (running === undefined) return;
+    timings.push({ stage: running, ms: performance.now() - since });
+    running = undefined;
+  };
+  return {
+    timings,
+    enter: (stage) => {
+      stop();
+      running = stage;
+      since = performance.now();
+    },
+    stop,
+  };
+}
+
+/**
+ * A failed build has no result: the times of its stages (the stage that
+ * failed is the last one) are kept with its error.
+ */
+function keepFailedTimings<A, R>(
+  effect: Effect.Effect<A, BuildFailedError, R>,
+  _options: BuildOptions,
+  clock: StageClock,
+): Effect.Effect<A, BuildFailedError, R> {
+  return Effect.tapError(effect, (error) =>
+    Effect.sync(() => {
+      clock.stop();
+      recordFailedTimings(error, clock.timings);
+    }),
+  );
+}
+
+/**
+ * The document `prepare` left for `original`, given the `data` it has
+ * after the hook. A new document only when the data is new: `original`
+ * itself when the hook did not change it, and the document of the last
+ * build when the hook made the same data again. The later stages know a
+ * document by its identity, so they do nothing for it then.
+ */
+function preparedDocument(
+  memory: BuildMemory,
+  original: FinalDocument,
+  data: DocumentFields,
+): FinalDocument {
+  const known = memory.prepared.get(original);
+  if (known && sameData(known.data, data)) return known;
+  if (sameData(original.data, data)) return original;
+  const next: FinalDocument = {
+    file: original.file,
+    data: deepFreeze(data),
+    effects: original.effects,
+    origin: original.origin,
+  };
+  memory.prepared.set(original, next);
+  return next;
 }
 
 /** Hook failure as a build failure. */
@@ -146,7 +231,7 @@ function hookFailed(
       cause,
       hint: published
         ? "The output was already published; fix the hook and rebuild."
-        : undefined,
+        : frozenWriteHint(cause),
     }),
   ]);
 }
@@ -174,21 +259,23 @@ function sourceRecords(
     if (known && sameItems(known.documents, group.documents)) return known;
     const record: SourceRecord = {
       documents: [...group.documents],
-      summary: {
+      summary: Object.freeze({
         name: group.source.name,
         kind: group.source.kind,
-        documents: group.documents.map((document) =>
-          document.file.locale
-            ? `${document.file.locale}/${document.file.id}`
-            : document.file.id,
+        documents: Object.freeze(
+          group.documents.map((document) =>
+            document.file.locale
+              ? `${document.file.locale}/${document.file.id}`
+              : document.file.id,
+          ),
         ),
-      },
-      snapshot: {
+      }),
+      snapshot: Object.freeze({
         name: group.source.name,
         type: group.source.kind,
         localized: group.source.localized,
-        documents: group.documents.map(toExport),
-      },
+        documents: Object.freeze(group.documents.map(toExport)),
+      }),
     };
     memory.sources.set(group.source.name, record);
     return record;
@@ -248,6 +335,43 @@ function watchTargetsOf(
     files: [...files].sort(),
     ignore,
   };
+}
+
+/**
+ * Watch targets of a build. They are made from the final documents (their
+ * assets and dependencies) and the config files, so the targets of the
+ * last build are kept, frozen, exactly while those are the same.
+ */
+function rememberedWatchTargets(
+  memory: BuildMemory,
+  configFiles: readonly string[],
+  sources: readonly SourceDocuments<FinalDocument>[],
+  assetsDir: string | undefined,
+): WatchTargets {
+  const known = memory.watch;
+  if (
+    known &&
+    sameItems(known.configFiles, configFiles) &&
+    known.documents.length === sources.length &&
+    sources.every((group, index) =>
+      sameItems(group.documents, known.documents[index] ?? []),
+    )
+  ) {
+    return known.targets;
+  }
+  const made = watchTargetsOf(memory.project, configFiles, sources, assetsDir);
+  // A host gets this object in every build until the documents change.
+  const targets: WatchTargets = Object.freeze({
+    directories: Object.freeze(made.directories),
+    files: Object.freeze(made.files),
+    ignore: Object.freeze(made.ignore),
+  });
+  memory.watch = {
+    configFiles: [...configFiles],
+    documents: sources.map((group) => [...group.documents]),
+    targets,
+  };
+  return targets;
 }
 
 /**
@@ -353,10 +477,10 @@ export class Engine extends Context.Service<
       });
 
       const prepare = Effect.fn("Engine.prepare")(function* (
-        project: ResolvedProject,
+        remembered: BuildMemory,
         sources: SourceDocuments<FinalDocument>[],
       ) {
-        const hook = project.config.prepare;
+        const hook = remembered.project.config.prepare;
         if (!hook) return;
         // The hook may edit documents: it gets its own copies.
         const snapshots = snapshotsOf(sources).map((snapshot) => ({
@@ -399,12 +523,7 @@ export class Engine extends Context.Service<
               continue;
             }
             const { _meta: _ignored, ...data } = document;
-            next.push({
-              file: original.file,
-              data: deepFreeze(data),
-              effects: original.effects,
-              origin: original.origin,
-            });
+            next.push(preparedDocument(remembered, original, data));
           }
           group.documents = next;
         }
@@ -568,17 +687,11 @@ export class Engine extends Context.Service<
 
       const runBuild = Effect.fn("Engine.runBuild")(function* (
         options: BuildOptions,
+        clock: StageClock,
       ) {
         const rootDir = path.resolve(options.rootDir ?? process.cwd());
         const mode = options.mode ?? "build";
-        const timings: StageTiming[] = [];
-        let mark = performance.now();
-        /** The time since the last call belongs to `stage`. */
-        const timed = (stage: string): void => {
-          const now = performance.now();
-          timings.push({ stage, ms: now - mark });
-          mark = now;
-        };
+        clock.enter("config");
         const current = yield* Ref.get(state);
         const loaded = yield* configLoader.load({
           rootDir,
@@ -586,7 +699,7 @@ export class Engine extends Context.Service<
           mode,
           previous: current.loaded,
         });
-        timed("config");
+        clock.enter("discover");
         yield* Ref.update(state, (value) => ({
           ...value,
           loaded,
@@ -625,7 +738,7 @@ export class Engine extends Context.Service<
         const remembered = memory;
 
         const discovered = yield* collector.discover(project);
-        timed("discover");
+        clock.enter("validate");
         const session = yield* fieldSession(project, options);
         const validated = yield* collector.validate(
           project,
@@ -634,13 +747,7 @@ export class Engine extends Context.Service<
           documentCache,
           { dryRun: options.dryRun === true },
         );
-        timed("validate");
-        if (validated.changed) {
-          cachesDirty = true;
-          // The watch targets come from the documents: find them again,
-          // also when this build fails before it gets there.
-          remembered.watch = undefined;
-        }
+        if (validated.changed) cachesDirty = true;
         const collectDiagnostics = [
           ...discovered.diagnostics,
           ...validated.diagnostics,
@@ -653,39 +760,42 @@ export class Engine extends Context.Service<
         if (hasErrors(collectDiagnostics))
           return yield* Effect.fail(buildFailed(collectDiagnostics));
 
+        clock.enter("transform");
         const transformed = yield* runTransforms(
           project,
           validated.documents,
           remembered.transforms,
         );
-        timed("transform");
         if (hasErrors(transformed.diagnostics))
           return yield* Effect.fail(buildFailed(transformed.diagnostics));
         const sources = transformed.sources;
 
+        clock.enter("relations");
         // `prepare` may still edit or drop documents, so references and
         // uniqueness are checked on what it leaves.
-        yield* prepare(project, sources);
+        yield* prepare(remembered, sources);
         const linkDiagnostics = [
           ...resolveRelations(project, sources, remembered.relations),
           ...checkUniqueness(sources, remembered.uniques),
         ];
-        timed("relations");
         if (hasErrors(linkDiagnostics))
           return yield* Effect.fail(buildFailed(linkDiagnostics));
 
+        clock.enter("views");
         const derived = deriveAll(project.derived, sources, remembered.derived);
-        timed("views");
         if (hasErrors(derived.diagnostics))
           return yield* Effect.fail(buildFailed(derived.diagnostics));
 
+        clock.enter("plugins");
         const records = sourceRecords(remembered, sources);
         const generated = yield* generateFromPlugins(
           project,
-          records.map((record) => record.snapshot),
+          // One list for every plugin of this build: a plugin cannot change
+          // what the next one gets.
+          Object.freeze(records.map((record) => record.snapshot)),
         );
         warnings.push(...generated.warnings);
-        timed("plugins");
+        clock.enter("plan");
         const plan = planOutput(
           {
             project,
@@ -696,7 +806,6 @@ export class Engine extends Context.Service<
           },
           remembered.plan,
         );
-        timed("plan");
         if (hasErrors(plan.diagnostics))
           return yield* Effect.fail(buildFailed(plan.diagnostics));
         warnings.push(
@@ -704,6 +813,9 @@ export class Engine extends Context.Service<
             (diagnostic) => diagnostic.severity === "warning",
           ),
         );
+        // A dry run publishes nothing.
+        if (options.dryRun) clock.stop();
+        else clock.enter("publish");
 
         const bases = host
           ? resolveAssetBases(
@@ -714,11 +826,12 @@ export class Engine extends Context.Service<
         const assetsInfo: AssetsInfo | undefined = bases
           ? { publicBase: bases.publicBase, localBase: bases.localBase }
           : undefined;
-        // The same documents as in the build that found them: the same targets.
-        const watch =
-          remembered.watch ??
-          watchTargetsOf(project, loaded.configFiles, sources, assetsDir);
-        remembered.watch = watch;
+        const watch = rememberedWatchTargets(
+          remembered,
+          loaded.configFiles,
+          sources,
+          assetsDir,
+        );
         yield* Ref.update(state, (value) => ({ ...value, watch }));
         const assets = uniqueAssets(sources);
 
@@ -741,7 +854,7 @@ export class Engine extends Context.Service<
           );
           written = result.written;
           removed = result.removed;
-          timed("publish");
+          clock.stop();
           const cacheDir = project.cacheDir;
           const now = yield* Clock.currentTimeMillis;
           // Entries only become unused when a document changed or went
@@ -753,6 +866,7 @@ export class Engine extends Context.Service<
             cachesDirty &&
             (cleanedAt === undefined || now - cleanedAt >= CLEANUP_INTERVAL_MS)
           ) {
+            clock.enter("cleanup");
             const fields = new Set<string>();
             const stored = new Set<string>();
             for (const cached of documentCache.values()) {
@@ -760,11 +874,13 @@ export class Engine extends Context.Service<
                 fields.add(key);
               if (cached.storeKey !== undefined) stored.add(cached.storeKey);
             }
-            yield* fieldCache.collect(cacheDir, fields);
-            yield* fileWork(() => collectStoredDocuments(cacheDir, stored));
+            yield* fieldCache.collect(fieldCacheDir(cacheDir, mode), fields);
+            yield* fileWork(() =>
+              collectStoredDocuments(documentStoreDir(cacheDir, mode), stored),
+            );
             cachesDirty = false;
             cleanedAt = now;
-            timed("cleanup");
+            clock.stop();
           }
         }
 
@@ -794,13 +910,15 @@ export class Engine extends Context.Service<
           warnings,
           messages,
           dryRun: options.dryRun === true,
-          timings,
+          timings: clock.timings,
+          reuse: validated.reuse,
+          notStored: validated.notStored,
         };
         return result;
-      });
+      }, keepFailedTimings);
 
       const build = (options: BuildOptions) =>
-        buildPermit.withPermits(1)(runBuild(options));
+        buildPermit.withPermits(1)(runBuild(options, createStageClock()));
 
       const watchTargets = Effect.fn("Engine.watchTargets")(function* (
         options: BuildOptions,

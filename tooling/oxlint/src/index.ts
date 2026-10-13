@@ -137,7 +137,7 @@ export default defineConfig({
     "bl-effect/no-return-effect-in-gen": "error",
     "bl-effect/no-run-promise-in-modules": [
       "error",
-      { allow: ["/scripts/", "/cli/", "/worker/"] },
+      { allow: ["/scripts/", "/cli/", "packages/core/src/worker/"] },
     ],
     "bl-effect/no-service-make-factory": "error",
     "bl-effect/no-silent-catch-cause": "error",

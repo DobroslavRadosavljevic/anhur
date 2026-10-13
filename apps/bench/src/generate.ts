@@ -12,6 +12,12 @@ export type FixtureSummary = {
   readonly images: number;
 };
 
+/**
+ * Version of the generated content. Raise it with every change that gives
+ * other files for the same size: `run.ts` then generates the project again.
+ */
+export const GENERATOR_VERSION = 1;
+
 const LOCALES = ["en", "de"] as const;
 
 const WORDS = [

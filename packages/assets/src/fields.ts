@@ -2,6 +2,7 @@ import path from "node:path";
 import {
   classifyUrl,
   defineField,
+  fingerprint,
   installedVersion,
   type FieldContext,
   type FieldInput,
@@ -212,7 +213,7 @@ export function file(
     kind: "file",
     requires: ASSETS_PLUGIN,
     whenAbsent: "skip",
-    pure: true,
+    pure: { key: fingerprint({ allowRemote }) },
     compile: async (input, context) => {
       const link = await resolveLocal(
         input,

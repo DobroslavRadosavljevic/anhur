@@ -15,7 +15,7 @@ import {
   type Diagnostic,
 } from "../diagnostics";
 import { check, build, watch } from "../build/runtime";
-import type { BuildResult } from "../engine/result";
+import type { BuildResult, StageTiming } from "../engine/result";
 import { packageVersion } from "./package-version";
 
 const flags = {
@@ -30,7 +30,9 @@ const flags = {
     Flag.optional,
   ),
   json: Flag.Boolean("json").pipe(
-    Flag.withDescription("Print a JSON report"),
+    Flag.withDescription(
+      "Print a JSON report (watch: one line of JSON per build)",
+    ),
     Flag.withDefault(false),
   ),
   timings: Flag.Boolean("timings").pipe(
@@ -52,6 +54,19 @@ function configOf(options: CliFlags): string | undefined {
   return options.config._tag === "Some" ? options.config.value : undefined;
 }
 
+function stageLine(timings: readonly StageTiming[]): string {
+  return timings
+    .map((timing) => `${timing.stage} ${Math.round(timing.ms)} ms`)
+    .join(" · ");
+}
+
+/** The stage times of a failed build: the last stage is the one that failed. */
+function failedStageLine(error: AnhurBuildError): string | undefined {
+  return error.timings.length === 0
+    ? undefined
+    : `anhur:   failed in ${error.timings.at(-1)?.stage ?? "?"} · ${stageLine(error.timings)}`;
+}
+
 function report(kind: string, result: BuildResult, timings: boolean): string {
   const relative =
     path.relative(process.cwd(), result.outputDir) || result.outputDir;
@@ -60,8 +75,14 @@ function report(kind: string, result: BuildResult, timings: boolean): string {
     ...result.messages.map((message) => `anhur:   ${message}`),
   ];
   if (timings) {
+    const { unchanged, compared, validated } = result.reuse;
     lines.push(
-      `anhur:   ${result.timings.map((timing) => `${timing.stage} ${Math.round(timing.ms)} ms`).join(" · ")}`,
+      `anhur:   ${stageLine(result.timings)}`,
+      `anhur:   documents: ${unchanged} unchanged · ${compared} compared by content · ${validated} validated`,
+      ...result.notStored.map(
+        (entry) =>
+          `anhur:   "${entry.source}" is validated in every new session: ${entry.reason}`,
+      ),
     );
   }
   if (result.warnings.length > 0) {
@@ -72,9 +93,15 @@ function report(kind: string, result: BuildResult, timings: boolean): string {
   return lines.join("\n");
 }
 
+/**
+ * The JSON report of one build; `indent: 0` puts it on one line. A failed
+ * build has no result; `failedTimings` are the stages it ran.
+ */
 function jsonReport(
   result: BuildResult | undefined,
   diagnostics: readonly Diagnostic[],
+  indent = 2,
+  failedTimings?: readonly StageTiming[],
 ): string {
   return JSON.stringify(
     {
@@ -83,11 +110,13 @@ function jsonReport(
       documents: result?.documentCount,
       written: result?.written,
       removed: result?.removed,
-      timings: result?.timings,
+      timings: result?.timings ?? failedTimings,
+      reuse: result?.reuse,
+      notStored: result?.notStored,
       diagnostics: diagnostics.map(({ cause: _cause, ...rest }) => rest),
     },
     null,
-    2,
+    indent,
   );
 }
 
@@ -124,14 +153,23 @@ const runOnce = Effect.fn("cli.runOnce")(function* (
             { hint: "This is a bug in Anhur or a plugin." },
           ),
         ];
+  const failedTimings =
+    failure instanceof AnhurBuildError ? failure.timings : [];
   // The JSON report is the command's output, so it goes to stdout even on failure.
-  if (options.json) yield* Console.log(jsonReport(undefined, diagnostics));
-  else
+  if (options.json) {
+    yield* Console.log(jsonReport(undefined, diagnostics, 2, failedTimings));
+  } else {
     yield* Console.error(
       failure instanceof AnhurBuildError
         ? failure.message
         : (diagnostics[0]?.message ?? String(failure)),
     );
+    const stages =
+      options.timings && failure instanceof AnhurBuildError
+        ? failedStageLine(failure)
+        : undefined;
+    if (stages !== undefined) yield* Console.error(stages);
+  }
   process.exitCode = 1;
 });
 
@@ -152,7 +190,8 @@ const watchCommand = Command.make(
   flags,
   Effect.fn("cli.watch")(function* (options: CliFlags) {
     const rootDir = path.resolve(options.root);
-    yield* Console.log(`anhur: watching ${rootDir}`);
+    // With --json, stdout has one line of JSON per build and nothing else.
+    if (!options.json) yield* Console.log(`anhur: watching ${rootDir}`);
     yield* Effect.acquireRelease(
       Effect.tryPromise({
         try: () =>
@@ -160,10 +199,24 @@ const watchCommand = Command.make(
             { rootDir, configPath: configOf(options), mode: "dev" },
             {
               onBuild: (result) => {
-                console.log(report("rebuilt", result, options.timings));
+                console.log(
+                  options.json
+                    ? jsonReport(result, result.warnings, 0)
+                    : report("rebuilt", result, options.timings),
+                );
               },
               onError: (error) => {
+                if (options.json) {
+                  console.log(
+                    jsonReport(undefined, error.diagnostics, 0, error.timings),
+                  );
+                  return;
+                }
                 console.error(error.message);
+                const stages = options.timings
+                  ? failedStageLine(error)
+                  : undefined;
+                if (stages !== undefined) console.error(stages);
               },
             },
           ),

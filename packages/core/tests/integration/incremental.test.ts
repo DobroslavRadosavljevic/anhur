@@ -8,6 +8,7 @@ import {
   type AnhurSession,
   type BuildResult,
 } from "../../src/build";
+import { COUNTING, count, resetCounts } from "../fixtures/counting";
 import { createProject, type TestProject } from "../fixtures/temp-project";
 
 const projects: TestProject[] = [];
@@ -29,27 +30,7 @@ function sessionFor(dir: TestProject): AnhurSession {
   return session;
 }
 
-/** Counters the test configs below write to (the config runs in this process). */
-type Counts = { [name: string]: number | undefined };
-// SAFETY: a global the test configs and this file agree on.
-const shared = globalThis as { anhurCounts?: Counts };
-beforeEach(() => {
-  shared.anhurCounts = {};
-});
-function count(name: string): number {
-  return shared.anhurCounts?.[name] ?? 0;
-}
-function resetCounts(): void {
-  shared.anhurCounts = {};
-}
-
-const COUNTING = `
-const counts = ((globalThis as { anhurCounts?: Record<string, number> }).anhurCounts ??= {});
-const bump = (name: string) => {
-  const store = ((globalThis as { anhurCounts?: Record<string, number> }).anhurCounts ??= counts);
-  store[name] = (store[name] ?? 0) + 1;
-};
-`;
+beforeEach(resetCounts);
 
 /** Names of the files a build wrote, relative to the output folder. */
 function written(result: BuildResult): string[] {
@@ -58,15 +39,6 @@ function written(result: BuildResult): string[] {
       path.relative(result.outputDir, file).split(path.sep).join("/"),
     )
     .sort();
-}
-
-/**
- * Make a file look old, so its stat alone proves it unchanged (a file
- * written in the last seconds is read and hashed again instead).
- */
-async function settle(dir: TestProject, ...files: string[]): Promise<void> {
-  const past = new Date(Date.now() - 60_000);
-  for (const file of files) await utimes(dir.path(file), past, past);
 }
 
 const BLOG = `
@@ -276,6 +248,29 @@ export default defineConfig({ content: [notes], views: [titles] });
     expect(count("select")).toBe(2);
   });
 
+  it("leave a generated file edited by hand to the next session, which repairs it", async () => {
+    // Failure: the new session looked at the size only, so an edit that
+    // kept the size (a letter, a digit) stayed in the output for ever.
+    const dir = await project({
+      "anhur.config.ts": BLOG,
+      "authors/ada.yml": "name: Ada\n",
+      "posts/a.md": "---\ntitle: A\nauthor: ada\n---\n",
+    });
+    const session = sessionFor(dir);
+    await session.build();
+    const original = await dir.read(".anhur/generated/allPosts.js");
+    const edited = original.replace('"title":"A"', '"title":"Z"');
+    expect(edited).not.toBe(original);
+    expect(edited.length).toBe(original.length);
+    await dir.write(".anhur/generated/allPosts.js", edited);
+    // Documented: a rebuild of the same session does not look at the file.
+    expect(written(await session.build())).toEqual([]);
+
+    const next = await build({ rootDir: dir.dir });
+    expect(written(next)).toEqual(["allPosts.js"]);
+    expect(await dir.read(".anhur/generated/allPosts.js")).toBe(original);
+  });
+
   it("notice a file that changed without a new size or time", async () => {
     const dir = await project({
       "anhur.config.ts": BLOG,
@@ -322,12 +317,10 @@ describe("document store", () => {
     await build({ rootDir: dir.dir });
     expect(count("compile")).toBe(2);
     expect(
-      (await readdir(dir.path(".anhur/cache/documents"))).filter((name) =>
+      (await readdir(dir.path(".anhur/cache/documents/build"))).filter((name) =>
         name.endsWith(".json"),
       ),
     ).toHaveLength(2);
-
-    await settle(dir, "notes/a.md", "notes/b.md");
     resetCounts();
     const second = await build({ rootDir: dir.dir });
     expect(count("compile")).toBe(0);
@@ -345,7 +338,7 @@ describe("document store", () => {
     await rm(dir.path("notes/b.md"));
     await build({ rootDir: dir.dir });
     expect(
-      (await readdir(dir.path(".anhur/cache/documents"))).filter((name) =>
+      (await readdir(dir.path(".anhur/cache/documents/build"))).filter((name) =>
         name.endsWith(".json"),
       ),
     ).toHaveLength(1);
@@ -371,7 +364,6 @@ describe("document store", () => {
       "notes/a.md": "---\ntitle: a\n---\n",
     });
     await build({ rootDir: dir.dir });
-    await settle(dir, "notes/a.md");
     resetCounts();
     await build({ rootDir: dir.dir });
     expect(count("compile")).toBe(1);
@@ -383,7 +375,6 @@ describe("document store", () => {
       "notes/a.md": "---\ntitle: a\n---\n",
     });
     await build({ rootDir: dir.dir });
-    await settle(dir, "notes/a.md");
     await dir.write(
       "anhur.config.ts",
       FIELDS("\n  pure: true,").replace("toUpperCase()", "toLowerCase()"),
@@ -415,7 +406,6 @@ export default defineConfig({ content: [notes] });
     try {
       limits.anhurLimit = 10;
       await build({ rootDir: dir.dir });
-      await settle(dir, "notes/a.md");
       limits.anhurLimit = 3;
       await expect(build({ rootDir: dir.dir })).rejects.toThrow(/title/);
     } finally {
@@ -433,9 +423,8 @@ export default defineConfig({ content: [notes] });
     });
     await build({ rootDir: dir.dir });
     expect(
-      await readdir(dir.path(".anhur/cache/documents")).catch(() => []),
+      await readdir(dir.path(".anhur/cache/documents/build")).catch(() => []),
     ).toEqual([]);
-    await settle(dir, "notes/a.md");
     resetCounts();
     await build({ rootDir: dir.dir });
     expect(count("compile")).toBe(1);
@@ -448,8 +437,7 @@ export default defineConfig({ content: [notes] });
       "notes/b.md": "---\ntitle: b\n---\n",
     });
     await build({ rootDir: dir.dir });
-    await settle(dir, "notes/a.md", "notes/b.md");
-    const store = dir.path(".anhur/cache/documents");
+    const store = dir.path(".anhur/cache/documents/build");
     const [first, second] = (await readdir(store))
       .filter((name) => name.endsWith(".json"))
       .sort();
@@ -478,7 +466,7 @@ export default defineConfig({ content: [notes] });
     });
     await check({ rootDir: dir.dir });
     expect(
-      await readdir(dir.path(".anhur/cache/documents")).catch(() => []),
+      await readdir(dir.path(".anhur/cache/documents/build")).catch(() => []),
     ).toEqual([]);
 
     const off = await project({

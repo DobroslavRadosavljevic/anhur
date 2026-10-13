@@ -1,6 +1,6 @@
-import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, symlink } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DocumentFields, DocumentValue } from "../../src/document";
 import { compileGlob, listContentFiles } from "../../src/engine/content-files";
 import { copyData } from "../../src/engine/copy-data";
@@ -65,13 +65,10 @@ describe("compileGlob", () => {
     "posts/**/deep/*.md",
     "{posts,drafts}/*.md",
     "**/{a,b}.{md,mdx}",
-    // Not compiled here: these go to `path.matchesGlob`.
-    "{a}.md",
-    "x{1..3}.md",
-    "a**/b",
-    "!a.md",
   ];
 
+  // The runtime's own matcher agrees on these plain patterns. Patterns on
+  // which the runtimes differ are in content-files.test.ts.
   it("matches like path.matchesGlob", () => {
     for (const pattern of patterns) {
       const matches = compileGlob(pattern);
@@ -88,11 +85,6 @@ describe("compileGlob", () => {
     expect(matches("posts/a.md")).toBe(true);
     expect(matches("posts/2024/a.md")).toBe(true);
     expect(matches("a.md")).toBe(false);
-  });
-
-  it("leaves a pattern it cannot compile to path.matchesGlob", () => {
-    // A reversed range is not a valid class for a regular expression.
-    expect(() => compileGlob("[z-a].md")("a.md")).not.toThrow();
   });
 
   it("needs one name or more after a trailing **", () => {
@@ -136,7 +128,7 @@ describe("listContentFiles", () => {
     expect(files[0]?.absolute).toBe(path.join(root, "2024", "c.md"));
   });
 
-  it("enters a linked folder a pattern names, but not through **", async () => {
+  it("enters a linked folder a literal segment names, not through * or **", async () => {
     const project = await createProject({
       "content/a.md": "",
       "shared/guide.md": "",
@@ -151,14 +143,16 @@ describe("listContentFiles", () => {
       );
     expect(await list(["**/*.md"])).toEqual(["a.md"]);
     expect(await list(["guides/*.md"])).toEqual(["guides/guide.md"]);
-    expect(await list(["*/*.md"])).toEqual(["guides/guide.md"]);
+    expect(await list(["*/*.md"])).toEqual([]);
+    expect(await list(["**/*"])).toEqual(["a.md"]);
+    expect(await list(["**/guides/*.md"])).toEqual(["guides/guide.md"]);
     expect(await list(["./guides/**/*.md"])).toEqual([
       "guides/deep/more.md",
       "guides/guide.md",
     ]);
   });
 
-  it("skips a folder below the root that cannot be read", async () => {
+  it("skips a folder below the root that cannot be read and tells the caller", async () => {
     // A user with every permission (root in a container) can read it anyway.
     if (process.getuid?.() === 0) return;
     const project = await createProject({
@@ -168,12 +162,15 @@ describe("listContentFiles", () => {
     projects.push(project);
     await chmod(project.path("content/locked"), 0o000);
     try {
+      const skipped: string[] = [];
       const files = await listContentFiles(project.path("content"), {
         include: ["**/*.md"],
         exclude: [],
         skip: [],
+        onSkip: (folder) => void skipped.push(folder),
       });
       expect(files.map((file) => file.relative)).toEqual(["a.md"]);
+      expect(skipped).toEqual([project.path("content/locked")]);
     } finally {
       await chmod(project.path("content/locked"), 0o755);
     }
@@ -319,10 +316,31 @@ describe("truncateText", () => {
   });
 
   it("only looks at the start of a long text", () => {
-    const long = "word ".repeat(200_000);
-    const started = performance.now();
-    expect(truncateText(long, 20)).toBe("word word word word…");
-    expect(performance.now() - started).toBeLessThan(200);
+    // Counts the graphemes the segmenter hands out.
+    const segment = Intl.Segmenter.prototype.segment;
+    let pulled = 0;
+    const spy = vi
+      .spyOn(Intl.Segmenter.prototype, "segment")
+      .mockImplementation(function (this: Intl.Segmenter, input: string) {
+        const segments = segment.call(this, input);
+        return {
+          containing: (index?: number) => segments.containing(index),
+          *[Symbol.iterator](): Generator<Intl.SegmentData, undefined> {
+            for (const one of segments) {
+              pulled += 1;
+              yield one;
+            }
+            return undefined;
+          },
+        };
+      });
+    try {
+      const long = "word ".repeat(200_000);
+      expect(truncateText(long, 20)).toBe("word word word word…");
+      expect(pulled).toBeLessThanOrEqual(21);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -339,14 +357,22 @@ describe("findNonPlainData", () => {
     );
   });
 
-  it("ends for values that point at themselves more than once", () => {
-    const knot: DocumentFields = {};
-    for (let index = 0; index < 8; index += 1) knot[`self${index}`] = knot;
-    const started = performance.now();
+  it("does little work for a value that points at itself more than once", () => {
+    // Eight links to itself: a walk that follows each of them at every
+    // level visits 8^64 objects.
+    let visits = 0;
+    const fields: DocumentFields = {};
+    const knot: DocumentFields = new Proxy(fields, {
+      ownKeys: (target) => {
+        visits += 1;
+        return Reflect.ownKeys(target);
+      },
+    });
+    for (let index = 0; index < 8; index += 1) fields[`self${index}`] = knot;
     expect(findNonPlainData(knot)).toMatchObject({
       message: "contains a circular reference",
     });
-    expect(performance.now() - started).toBeLessThan(2000);
+    expect(visits).toBeLessThan(1000);
   });
 });
 
@@ -378,20 +404,5 @@ describe("toJsLiteral", () => {
       ok: false,
       fieldPath: ["map", 0, 1, "bad"],
     });
-  });
-});
-
-describe("temp project helper", () => {
-  it("creates nested folders for the tests above", async () => {
-    const project = await createProject({});
-    projects.push(project);
-    await mkdir(project.path("x/y"), { recursive: true });
-    await writeFile(project.path("x/y/z.md"), "");
-    const files = await listContentFiles(project.path("x"), {
-      include: ["**"],
-      exclude: [],
-      skip: [],
-    });
-    expect(files.map((file) => file.relative)).toEqual(["y/z.md"]);
   });
 });

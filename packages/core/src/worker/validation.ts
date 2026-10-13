@@ -11,6 +11,7 @@ import { createSignatureMemo } from "../engine/file-signature";
 import type { ResolvedProject } from "../engine/resolve";
 import type { SourceFile } from "../engine/types";
 import {
+  isWorkerRequest,
   toWireDiagnostic,
   type WireFile,
   type WireResult,
@@ -29,15 +30,13 @@ const WorkerLive = Collector.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
 );
 
-function isRequest(value: unknown): value is WorkerRequest {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    "id" in value &&
-    typeof value.id === "number" &&
-    "files" in value &&
-    Array.isArray(value.files)
-  );
+/** Why something failed: never empty. */
+function reasonOf(cause: unknown): string {
+  const text = messageOf(cause).trim();
+  if (text !== "") return text;
+  return cause instanceof Error && cause.name !== ""
+    ? cause.name
+    : "an error without a message";
 }
 
 function sourceFile(project: ResolvedProject, file: WireFile): SourceFile {
@@ -78,7 +77,7 @@ async function main(): Promise<void> {
   } catch (cause) {
     reply({
       type: "failed",
-      message: `the config did not load in a worker: ${messageOf(cause)}`,
+      message: `the config did not load in a worker: ${reasonOf(cause)}`,
     });
     return;
   }
@@ -89,18 +88,19 @@ async function main(): Promise<void> {
     });
     return;
   }
-  /** Asset hashes this worker computed, for the files it meets again. */
-  const hashes = new Map<string, AssetHashEntry>();
+  // The engine starts a worker for one build and stops it after, so this
+  // is the state of one build: every batch shares the hashes, the stats
+  // and the checked assets, and the next build starts with none of them.
+  const session: FieldSession = {
+    project,
+    publicBase: setup.publicBase,
+    assetRoots: setup.assetRoots,
+    hashes: new Map<string, AssetHashEntry>(),
+    stats: createSignatureMemo(),
+    emitted: new Map(),
+  };
 
   const validate = async (request: WorkerRequest): Promise<WireResult[]> => {
-    const session: FieldSession = {
-      project,
-      publicBase: setup.publicBase,
-      assetRoots: setup.assetRoots,
-      hashes,
-      stats: createSignatureMemo(),
-      emitted: new Map(),
-    };
     const stale: StaleFile[] = request.files.map((file) => ({
       file: sourceFile(project, file),
       raw: file.raw,
@@ -135,19 +135,34 @@ async function main(): Promise<void> {
   };
 
   port.on("message", (input: unknown) => {
-    if (!isRequest(input)) return;
+    if (!isWorkerRequest(input)) return;
     const request = input;
     validate(request).then(
       (results) => {
-        reply({ type: "done", id: request.id, results });
+        try {
+          reply({ type: "done", id: request.id, results });
+        } catch (cause) {
+          // A result that `postMessage` cannot copy (a proxy, for one).
+          reply({
+            type: "failed",
+            message: `a worker could not send its results: ${reasonOf(cause)}`,
+          });
+        }
       },
       (cause: unknown) => {
         reply({
           type: "failed",
-          message: `a worker failed: ${messageOf(cause)}`,
+          message: `a worker failed: ${reasonOf(cause)}`,
         });
       },
     );
+  });
+  // A request that cannot be read is never answered: say so now.
+  port.on("messageerror", (cause: unknown) => {
+    reply({
+      type: "failed",
+      message: `a worker could not read a request: ${reasonOf(cause)}`,
+    });
   });
   reply({ type: "ready" });
 }

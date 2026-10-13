@@ -8,6 +8,7 @@ import {
   type DocumentValue,
   type FieldPath,
 } from "../document";
+import { isDeepFrozen } from "../engine/freeze";
 import type { FieldSpec } from "../plugin/types";
 import { readFieldSpec } from "./field";
 
@@ -126,7 +127,8 @@ const lazyTargets = new WeakMap<ZodNode, ZodNode>();
 
 /**
  * Target of a lazy schema. A getter may build a new schema on every call;
- * the walkers keep the first one, so a node always has the same children.
+ * everything in this file reads the target through here and keeps the
+ * first one, so a node always has the same children.
  */
 function lazyTarget(schema: ZodNode, getter: () => ZodNode): ZodNode {
   let target = lazyTargets.get(schema);
@@ -237,7 +239,7 @@ function transformsValue(schema: ZodNode, seen: Set<ZodNode>): boolean {
     );
   }
   if (def.type === "lazy" && def.getter) {
-    return transformsValue(def.getter(), seen);
+    return transformsValue(lazyTarget(schema, def.getter), seen);
   }
   if (WRAPPERS.has(def.type) && def.innerType) {
     return transformsValue(def.innerType, seen);
@@ -303,7 +305,7 @@ function topLevelKeys(
       return def.in ? topLevelKeys(def.in, seen) : undefined;
     }
     if (def.type === "lazy" && def.getter) {
-      return topLevelKeys(def.getter(), seen);
+      return topLevelKeys(lazyTarget(schema, def.getter), seen);
     }
     if (def.type === "union") {
       return mergeKeySets(
@@ -450,7 +452,7 @@ export function analyzeSchema(schema: ZodNode): SchemaAnalysis {
         }
         break;
       case "lazy":
-        if (def.getter) visit(def.getter(), pattern);
+        if (def.getter) visit(lazyTarget(node, def.getter), pattern);
         break;
       default:
         if (WRAPPERS.has(def.type) && def.innerType) {
@@ -779,7 +781,7 @@ export type DataWalk = {
   readonly tooDeep: FieldPath | undefined;
 };
 
-/** {@link walkData} results of frozen data, by data object. */
+/** {@link walkData} results of deep-frozen data, by data object. */
 const dataWalks = new WeakMap<
   object,
   { readonly schema: ZodNode; readonly walk: DataWalk }
@@ -791,10 +793,10 @@ const dataWalks = new WeakMap<
  * the data is followed, and recursive schemas are followed to any depth.
  */
 export function walkData(schema: ZodNode, data: DocumentValue): DataWalk {
-  // Frozen data stays as it is: the engine walks a document once, however
-  // many checks (references, uniqueness) read the result.
+  // Deep-frozen data stays as it is: the engine walks a document once,
+  // however many checks (references, uniqueness) read the result.
   const frozen =
-    Predicate.isObjectOrArray(data) && Object.isFrozen(data) ? data : undefined;
+    Predicate.isObjectOrArray(data) && isDeepFrozen(data) ? data : undefined;
   if (frozen) {
     const known = dataWalks.get(frozen);
     if (known && known.schema === schema) return known.walk;

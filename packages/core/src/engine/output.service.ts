@@ -19,6 +19,8 @@ import {
   adoptLegacy,
   createOutputState,
   currentManifest,
+  isTempFile,
+  OutputWriteError,
   writeOutputFiles,
   type OutputState,
   type WriteResult,
@@ -32,6 +34,8 @@ const LOCK_HEARTBEAT = "1 minute";
 /** A lock that cannot be read yet may be mid-write; only older ones are stale. */
 const UNREADABLE_LOCK_GRACE_MS = 30_000;
 const WRITE_TIMEOUT = "30 minutes";
+/** A stopped write gets this long to finish the files it is moving. */
+const SETTLE_WAIT = "1 minute";
 
 function processAlive(pid: number): boolean {
   try {
@@ -42,6 +46,16 @@ function processAlive(pid: number): boolean {
       Predicate.isObject(cause) && "code" in cause && cause.code === "EPERM"
     );
   }
+}
+
+/** An error of the file system (`EACCES`, `ENOSPC`), not a bug in the engine. */
+function isFileSystemError(cause: unknown): boolean {
+  return (
+    cause instanceof Error &&
+    "code" in cause &&
+    Predicate.isString(cause.code) &&
+    "syscall" in cause
+  );
 }
 
 type LockOwner = {
@@ -82,8 +96,9 @@ function parseLock(text: string): LockOwner | undefined {
 /**
  * Owns the generated output folder: ownership check, an exclusive lock
  * (shared across processes through `<outputDir>.lock`), and diff writes
- * with per-file atomic renames. Only files listed in the manifest are ever
- * deleted.
+ * with per-file atomic renames. It deletes only what Anhur wrote: files
+ * listed in the manifest, files of an older Anhur and its own temp files
+ * (see `writeOutputFiles`).
  */
 export class OutputWriter extends Context.Service<
   OutputWriter,
@@ -99,6 +114,8 @@ export class OutputWriter extends Context.Service<
     /**
      * Write changed files, delete stale ones, update the manifest.
      * `revision` is `OutputPlan.revision` of the plan the files come from.
+     * When interrupted, it returns after the files in work were moved into
+     * place and the manifest says what is on disk.
      */
     readonly write: (
       outputDir: string,
@@ -114,6 +131,13 @@ export class OutputWriter extends Context.Service<
       const path = yield* Path.Path;
       const failed = (message: string, hint?: string) =>
         buildFailed([errorDiagnostic("publish-failed", message, { hint })]);
+
+      /**
+       * Output folders with a write that was told to stop and did not end
+       * within `SETTLE_WAIT`. Their lock is not released: it stays until
+       * other builds see it as stale.
+       */
+      const unsettled = new Set<string>();
 
       /** What this session knows about each output folder it wrote. */
       const states = new Map<string, OutputState>();
@@ -147,7 +171,8 @@ export class OutputWriter extends Context.Service<
           const entries = yield* fs
             .readDirectory(outputDir)
             .pipe(Effect.orElseSucceed((): string[] => []));
-          if (entries.length === 0) return;
+          // Only files of a first build that was killed: as good as empty.
+          if (entries.every(isTempFile)) return;
           const legacy = yield* fileWork(() => adoptLegacy(outputDir));
           if (legacy) return;
           return yield* Effect.fail(
@@ -323,18 +348,43 @@ export class OutputWriter extends Context.Service<
           Effect.forkScoped,
         );
         yield* Effect.addFinalizer(() =>
-          fs.readFileString(lockPath).pipe(
-            Effect.flatMap((text) =>
-              parseLock(text)?.token === token
-                ? fs.remove(lockPath, { force: true })
-                : Effect.void,
-            ),
-            Effect.ignore({
-              log: "Warn",
-              message: "Releasing the output lock failed",
-            }),
-          ),
+          unsettled.has(outputDir)
+            ? Effect.logWarning(
+                "A stopped build may still write its output: the lock is kept",
+                { outputDir, lockPath },
+              )
+            : fs.readFileString(lockPath).pipe(
+                Effect.flatMap((text) =>
+                  parseLock(text)?.token === token
+                    ? fs.remove(lockPath, { force: true })
+                    : Effect.void,
+                ),
+                Effect.ignore({
+                  log: "Warn",
+                  message: "Releasing the output lock failed",
+                }),
+              ),
         );
+      });
+
+      /**
+       * Wait until a write that was told to stop has ended, so the lock
+       * is not released while it still moves files.
+       */
+      const settle = Effect.fn("OutputWriter.settle")(function* (
+        outputDir: string,
+        work: Promise<WriteResult>,
+      ) {
+        const ended = yield* Effect.callback<boolean>((resume) => {
+          const done = () => resume(Effect.succeed(true));
+          work.then(done, done);
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: SETTLE_WAIT,
+            orElse: () => Effect.succeed(false),
+          }),
+        );
+        if (!ended) unsettled.add(outputDir);
       });
 
       const write = Effect.fn("OutputWriter.write")(function* (
@@ -343,17 +393,32 @@ export class OutputWriter extends Context.Service<
         revision: PlanRevision,
       ) {
         const now = yield* Clock.currentTimeMillis;
+        unsettled.delete(outputDir);
+        let work: Promise<WriteResult> | undefined;
         return yield* Effect.tryPromise({
-          try: () =>
-            writeOutputFiles(
+          // The signal is aborted by an interrupt and by the timeout.
+          try: (signal) => {
+            work = writeOutputFiles(
               outputDir,
               files,
               revision,
               stateOf(outputDir),
               now,
-            ),
-          catch: (cause) => failed(messageOf(cause)),
+              signal,
+            );
+            return work;
+          },
+          catch: (cause) => cause,
         }).pipe(
+          // Anything but a problem with the folder is a bug: a defect.
+          Effect.catch((cause) =>
+            cause instanceof OutputWriteError || isFileSystemError(cause)
+              ? Effect.fail(failed(messageOf(cause)))
+              : Effect.die(cause),
+          ),
+          Effect.onInterrupt(() =>
+            work ? settle(outputDir, work) : Effect.void,
+          ),
           Effect.timeoutOrElse({
             duration: WRITE_TIMEOUT,
             orElse: () =>

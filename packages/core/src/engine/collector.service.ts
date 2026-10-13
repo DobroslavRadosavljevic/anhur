@@ -27,7 +27,12 @@ import {
   type FieldPath,
 } from "../document";
 import { builtinLoaders, findLoader } from "../loaders";
-import type { CompileFieldSpec, LoadedFile } from "../plugin/types";
+import type {
+  AssetRef,
+  CompileFieldSpec,
+  FieldContext,
+  LoadedFile,
+} from "../plugin/types";
 import { installedVersion } from "../plugin/versions";
 import {
   formatPattern,
@@ -37,6 +42,7 @@ import {
 } from "../schema/walk";
 import { listContentFiles, type ContentFile } from "./content-files";
 import {
+  documentStoreDir,
   prepareDocumentStore,
   readStoredDocument,
   storedDocumentKey,
@@ -49,11 +55,18 @@ import {
   createFieldContext,
   emitAssetFile,
   mergeEffects,
+  storedAssetAllowed,
   type DocumentShares,
   type EffectRecorder,
   type FieldSession,
 } from "./field-context";
-import { FieldCache, type CachedDependency } from "./field-cache.service";
+import {
+  dependencyOf,
+  FieldCache,
+  fieldCacheDir,
+  sameDependency,
+  type CachedDependency,
+} from "./field-cache.service";
 import {
   isSettled,
   mapPool,
@@ -69,6 +82,7 @@ import { relativeTo, toPosix } from "./paths";
 import { canCache } from "./cache-codec";
 import { findNonPlainData } from "./plain-data";
 import type { ResolvedProject, ResolvedSource } from "./resolve";
+import type { DocumentReuse, NotStored } from "./result";
 import type { SourceFile, ValidatedDocument } from "./types";
 import { poolWork, validateInWorkers } from "./validation-pool";
 import {
@@ -92,13 +106,22 @@ const CHECK_CONCURRENCY = 48;
  */
 const SLOW_DISK_SAMPLE = 63;
 const SLOW_DISK_SAMPLE_MS = 4;
-/** Costly documents that must wait before worker threads are started. */
+/** Costly documents that must wait before worker threads are thought of. */
 const WORKER_MIN_DOCUMENTS = 128;
 /**
- * One worker is started per this many waiting documents (two at least): a
- * worker loads the compilers again, which costs memory and start time…
+ * Documents validated in the main thread first, to learn what one costs.
+ * The first ones also load the compilers, so only the next ones are timed.
  */
-const WORKER_DOCUMENTS_EACH = 200;
+const WORKER_WARM_UP = 8;
+const WORKER_SAMPLE = 16;
+/**
+ * Workers are started when the documents left would take longer than this
+ * in the main thread: a worker loads the config and the compilers again,
+ * which costs about this much time, and memory…
+ */
+const WORKER_MIN_ESTIMATE_MS = 1000;
+/** …one worker per this much work (two at least)… */
+const WORKER_ESTIMATE_EACH_MS = 1500;
 const WORKER_MIN = 2;
 /** …up to this many (and one less than the available CPU cores). */
 const WORKER_MAX = 6;
@@ -127,8 +150,12 @@ export type CachedDocument = {
   readonly signature: FileSignature | undefined;
   /** Epoch milliseconds, taken before the content was read. */
   readonly readAt: number;
+  /** Epoch milliseconds, taken before `dependencies` were looked at. */
+  readonly dependenciesAt: number;
   /** Key in the document store, when the document is kept there. */
   readonly storeKey: string | undefined;
+  /** False when the store does not hold the document yet (it was made by a dry run). */
+  readonly stored: boolean;
 };
 
 /** Per-build options of {@link Collector.validate}. */
@@ -150,6 +177,13 @@ export type ValidateResult = {
    * document went away: nothing a later stage reads has changed.
    */
   readonly changed: boolean;
+  /**
+   * Sources whose documents are not kept on disk although the document
+   * store is on (a field or loader that is not pure, a schema without a
+   * fingerprint). Empty for sources that set `documentCache: false`.
+   */
+  readonly notStored: readonly NotStored[];
+  readonly reuse: DocumentReuse;
 };
 
 /** A document validated just now, with what the caches keep about it. */
@@ -157,7 +191,7 @@ export type FreshDocument = {
   readonly document: ValidatedDocument;
   /** `context.warn()` messages. */
   readonly warnings: readonly string[];
-  /** Size and mtime of the files the document used. */
+  /** State of the files the document used. */
   readonly dependencies: readonly CachedDependency[];
   /** Key in the document store, when the document is kept there. */
   readonly storeKey: string | undefined;
@@ -183,6 +217,8 @@ type CheckedFile =
       readonly warnings: readonly Diagnostic[];
       /** Not from the session cache: later stages must treat it as new. */
       readonly restored: boolean;
+      /** True when the file was read to compare its content. */
+      readonly compared: boolean;
     }
   | ({ readonly kind: "stale" } & StaleFile);
 
@@ -194,15 +230,6 @@ function stripExtension(relative: string): string {
   const slash = relative.lastIndexOf("/");
   const dot = relative.lastIndexOf(".");
   return dot > slash + 1 ? relative.slice(0, dot) : relative;
-}
-
-function watchedOf(
-  file: string,
-  signature: FileSignature | undefined,
-): CachedDependency {
-  return signature
-    ? { path: file, mtimeMs: signature.mtimeMs, size: signature.size }
-    : { path: file, mtimeMs: -1, size: -1 };
 }
 
 function warningsOf(
@@ -228,18 +255,44 @@ function samplePath(pattern: readonly PatternSegment[]): FieldPath {
   );
 }
 
+/** Whether whole documents of a source may be kept on disk. */
+type StoreRule =
+  | { readonly kind: "store" }
+  /** The config turns it off: nothing to report. */
+  | { readonly kind: "off" }
+  | { readonly kind: "blocked"; readonly reason: string };
+
+/** The key of a pure field's options (`""` when it has none); `undefined`: not pure. */
+function pureKey(spec: CompileFieldSpec): string | undefined {
+  const pure = spec.pure;
+  if (pure === true) return "";
+  if (Predicate.isObject(pure) && Predicate.isString(pure.key)) return pure.key;
+  return undefined;
+}
+
 /**
- * True when whole documents of `source` may be kept on disk: every
- * compiled field says its value only depends on what the engine tracks.
+ * Documents of `source` may be kept on disk when its schema has a
+ * fingerprint and every compiled field says its value only depends on what
+ * the engine tracks.
  */
-function isStorable(source: ResolvedSource): boolean {
-  if (source.definition.documentCache === false) return false;
-  return source.analysis.fields.every(
-    (field) =>
-      field.spec.type !== "compile" ||
-      field.spec.cache !== undefined ||
-      field.spec.pure === true,
-  );
+function storeRule(source: ResolvedSource): StoreRule {
+  if (source.definition.documentCache === false) return { kind: "off" };
+  const problem = source.schemaFingerprint.problem;
+  if (problem !== undefined) return { kind: "blocked", reason: problem };
+  for (const field of source.analysis.fields) {
+    const spec = field.spec;
+    if (
+      spec.type === "compile" &&
+      spec.cache === undefined &&
+      pureKey(spec) === undefined
+    ) {
+      return {
+        kind: "blocked",
+        reason: `the field "${formatPattern(field.pattern)}" (${spec.kind}) is not pure and has no cache`,
+      };
+    }
+  }
+  return { kind: "store" };
 }
 
 function issuePath(path: readonly PropertyKey[]): (string | number)[] {
@@ -259,37 +312,35 @@ function isCostly(source: ResolvedSource): boolean {
 }
 
 /**
- * Number of worker threads to validate `stale` with (`0`: none). Starting a
- * worker loads the config and the compilers again, so workers are used
- * only when enough costly documents wait.
+ * True when documents of `source` may be validated in a worker thread: the
+ * work is costly, and a worker that loads the config again gets the same
+ * schema. A source that sets `documentCache: false` reads something besides
+ * its files, and a schema without a fingerprint is new on every read: both
+ * are validated here, with one config.
  */
-function workersFor(
-  project: ResolvedProject,
-  stale: readonly StaleFile[],
-): number {
-  const setting = project.config.workers;
-  if (setting === false || stale.length < WORKER_MIN_DOCUMENTS) return 0;
-  const costly = new Map<ResolvedSource, boolean>();
-  let waiting = 0;
-  for (const entry of stale) {
-    const source = entry.file.source;
-    let known = costly.get(source);
-    if (known === undefined) {
-      known = isCostly(source);
-      costly.set(source, known);
-    }
-    if (known) waiting += 1;
-  }
-  if (waiting < WORKER_MIN_DOCUMENTS) return 0;
-  // A number is the most to use; the size of the work still decides.
-  const most = Predicate.isNumber(setting)
-    ? setting
-    : Math.min(WORKER_MAX, Math.max(1, availableParallelism() - 1));
+function mayUseWorkers(source: ResolvedSource): boolean {
+  return (
+    isCostly(source) &&
+    source.definition.documentCache !== false &&
+    source.schemaFingerprint.value !== undefined
+  );
+}
+
+/**
+ * Number of worker threads for work the main thread would need
+ * `estimateMs` for (`0`: none), when the config leaves the choice to the
+ * engine. One worker does not make the work faster (the main thread only
+ * waits for it), so fewer than two are never started.
+ */
+function workersFor(estimateMs: number): number {
+  if (estimateMs < WORKER_MIN_ESTIMATE_MS) return 0;
+  const most = Math.min(WORKER_MAX, availableParallelism() - 1);
   const wanted = Math.max(
     WORKER_MIN,
-    Math.ceil(waiting / WORKER_DOCUMENTS_EACH),
+    Math.ceil(estimateMs / WORKER_ESTIMATE_EACH_MS),
   );
-  return Math.min(most, wanted);
+  const count = Math.min(most, wanted);
+  return count < WORKER_MIN ? 0 : count;
 }
 
 function toWireFile(stale: StaleFile): WireFile {
@@ -328,19 +379,34 @@ function fromWireResult(file: SourceFile, result: WireResult): FreshResult {
   };
 }
 
-/** True when every dependency still has the size and mtime it had. */
+/**
+ * True when a dependency recorded at `recordedAt` is proved unchanged by
+ * its state now. Without `recordedAt` the same state is enough (the field
+ * cache, which has no time of its own).
+ */
+function dependencyUnchanged(
+  dependency: CachedDependency,
+  now: CachedDependency,
+  recordedAt: number | undefined,
+): boolean {
+  return (
+    sameDependency(dependency, now) &&
+    (recordedAt === undefined || isSettled(dependency.mtimeMs, recordedAt))
+  );
+}
+
+/** True when every dependency is as it was (see {@link dependencyUnchanged}). */
 async function dependenciesMatch(
   session: FieldSession,
   dependencies: readonly CachedDependency[],
+  recordedAt?: number,
 ): Promise<boolean> {
   for (const dependency of dependencies) {
-    const now = watchedOf(
+    const now = dependencyOf(
       dependency.path,
       await signatureOf(session.stats, dependency.path),
     );
-    if (now.mtimeMs !== dependency.mtimeMs || now.size !== dependency.size) {
-      return false;
-    }
+    if (!dependencyUnchanged(dependency, now, recordedAt)) return false;
   }
   return true;
 }
@@ -349,15 +415,14 @@ async function dependenciesMatch(
 function dependenciesMatchSync(
   session: FieldSession,
   dependencies: readonly CachedDependency[],
+  recordedAt: number,
 ): boolean {
   for (const dependency of dependencies) {
-    const now = watchedOf(
+    const now = dependencyOf(
       dependency.path,
       signatureOfSync(session.stats, dependency.path),
     );
-    if (now.mtimeMs !== dependency.mtimeMs || now.size !== dependency.size) {
-      return false;
-    }
+    if (!dependencyUnchanged(dependency, now, recordedAt)) return false;
   }
   return true;
 }
@@ -388,7 +453,7 @@ function reuseUnchanged(
   if (
     signature === undefined ||
     !provesUnchanged(cached.signature, signature, cached.readAt) ||
-    !dependenciesMatchSync(session, cached.dependencies)
+    !dependenciesMatchSync(session, cached.dependencies, cached.dependenciesAt)
   ) {
     return undefined;
   }
@@ -397,19 +462,24 @@ function reuseUnchanged(
     document: cached.document,
     warnings: cached.warnings,
     restored: false,
+    compared: false,
   };
 }
 
-/** The shares of a document, with the keys its fields announce. */
-function announcedShares(
+/**
+ * Add the keys the fields in `occurrences` announce to `shares`. Only
+ * fields that are about to compile are passed: a field whose value comes
+ * from the field cache does no work another field could join.
+ */
+function announceShares(
+  shares: DocumentShares,
   session: FieldSession,
   file: SourceFile,
   body: string | undefined,
   occurrences: readonly (FieldOccurrence & {
     readonly spec: CompileFieldSpec;
   })[],
-): DocumentShares {
-  const shares = createDocumentShares();
+): void {
   for (const occurrence of occurrences) {
     const announce = occurrence.spec.shares;
     if (!announce) continue;
@@ -427,60 +497,114 @@ function announcedShares(
       // Nothing announced: the other fields do their own work.
     }
   }
-  return shares;
 }
 
 /** Access to the document store for one build. */
 type StoreAccess = {
-  readonly cacheDir: string;
-  /** Store key of a document; `undefined` when its source is not stored. */
+  /** Folder of the stored documents of this build mode. */
+  readonly dir: string;
+  /** Store key of a document; `undefined` when it is not stored. */
   readonly keyOf: (file: SourceFile) => string | undefined;
   /** Everything besides the file content a stored document depends on. */
   readonly stampOf: (file: SourceFile) => string;
+  /** The sources found not storable so far, one reason each. */
+  readonly notStored: () => readonly NotStored[];
 };
+
+/** The part of every stamp that is the same for all builds of a project. */
+const projectStamps = new WeakMap<ResolvedProject, string>();
+
+function projectStamp(project: ResolvedProject): string {
+  let stamp = projectStamps.get(project);
+  if (stamp === undefined) {
+    // The project fingerprint covers the config file, every module it
+    // imports that is not an installed package, the lockfile and the
+    // schemas. Loaders and plugins are fingerprinted too (options, source
+    // of functions): they may be made by an installed package.
+    stamp = sha256(
+      JSON.stringify([
+        STORE_STAMP_VERSION,
+        CORE_VERSION,
+        ZOD_VERSION,
+        project.fingerprint,
+        fingerprint(project.loaders),
+        fingerprint(project.plugins),
+      ]),
+    );
+    projectStamps.set(project, stamp);
+  }
+  return stamp;
+}
+
+/** One store access per build: the session of a build is its identity. */
+const storeAccesses = new WeakMap<FieldSession, StoreAccess | null>();
 
 /**
  * The document store of a build. A stored document is only valid for the
- * same versions, config, asset URLs, document location and field cache
- * keys (which cover the options of `markdown()`, `mdx()`, …).
+ * same versions, config, schema, loader, asset URLs, document location and
+ * field keys (which cover the options of `markdown()`, `mdx()`, …).
  */
 function storeAccess(
   project: ResolvedProject,
   session: FieldSession,
 ): StoreAccess | undefined {
+  const known = storeAccesses.get(session);
+  if (known !== undefined) return known ?? undefined;
+  const access = makeStoreAccess(project, session);
+  storeAccesses.set(session, access ?? null);
+  return access;
+}
+
+function makeStoreAccess(
+  project: ResolvedProject,
+  session: FieldSession,
+): StoreAccess | undefined {
   const cacheDir = project.cacheDir;
   if (cacheDir === undefined) return undefined;
-  // The config fingerprint covers the config file and the modules it
-  // imports by relative path. Loaders and plugins are fingerprinted too
-  // (options, source of functions), like each schema below: they may come
-  // from another package.
   const base = sha256(
-    JSON.stringify([
-      STORE_STAMP_VERSION,
-      CORE_VERSION,
-      ZOD_VERSION,
-      project.fingerprint,
-      session.publicBase ?? null,
-      fingerprint(project.loaders),
-      fingerprint(project.plugins),
-    ]),
+    JSON.stringify([projectStamp(project), session.publicBase ?? null]),
   );
-  /** Per source and file extension; `null` when the source is not stored. */
+  const loaders = [...project.loaders, ...builtinLoaders];
+  const reasons = new Map<string, string>();
+  const block = (source: ResolvedSource, reason: string): null => {
+    if (!reasons.has(source.name)) reasons.set(source.name, reason);
+    return null;
+  };
+  /** Per source and loader; `null` when such documents are not stored. */
   const fieldStamps = new Map<string, string | null>();
   const fieldStamp = (file: SourceFile): string | null => {
-    const key = `${file.source.name}\u0000${file.meta.extension}`;
+    const source = file.source;
+    const loader = findLoader(file.absPath, loaders);
+    const loaderAt = loader ? loaders.indexOf(loader) : -1;
+    const key = `${source.name}\u0000${file.meta.extension}\u0000${String(loaderAt)}`;
     const known = fieldStamps.get(key);
     if (known !== undefined) return known;
     let stamp: string | null = null;
-    if (isStorable(file.source)) {
+    const rule = storeRule(source);
+    if (rule.kind === "blocked") {
+      stamp = block(source, rule.reason);
+    } else if (rule.kind === "store" && !project.sourcesComplete) {
+      stamp = block(
+        source,
+        "the config imports more modules than Anhur follows, so a change in one of them could go unseen",
+      );
+    } else if (rule.kind === "store" && loader && loader.pure !== true) {
+      stamp = block(
+        source,
+        `the "${loader.name}" loader of ${file.meta.extension} files is not pure`,
+      );
+    } else if (rule.kind === "store" && loader) {
       const recorder = createEffectRecorder();
       try {
-        const parts = file.source.analysis.fields.flatMap((field) => {
+        const parts = source.analysis.fields.flatMap((field) => {
           const spec = field.spec;
           if (spec.type !== "compile") return [];
           const location = formatPattern(field.pattern);
           if (!spec.cache) {
-            return [[location, spec.kind, fingerprint(spec.compile)]];
+            // Known by its source and by the key of its options.
+            return [
+              [location, spec.kind, fingerprint(spec.compile), pureKey(spec)],
+            ];
           }
           const context = createFieldContext(
             session,
@@ -493,17 +617,21 @@ function storeAccess(
             [location, spec.kind, spec.cache.version, spec.cache.key(context)],
           ];
         });
-        stamp = sha256(JSON.stringify([file.source.schemaFingerprint, parts]));
-      } catch {
-        // A cache key that cannot be computed here: do not store the source.
-        stamp = null;
+        stamp = sha256(
+          JSON.stringify([source.schemaFingerprint.value, loader.name, parts]),
+        );
+      } catch (cause) {
+        stamp = block(
+          source,
+          `a field cache key could not be made (${messageOf(cause)})`,
+        );
       }
     }
     fieldStamps.set(key, stamp);
     return stamp;
   };
   return {
-    cacheDir,
+    dir: documentStoreDir(cacheDir, project.mode),
     keyOf: (file) =>
       fieldStamp(file) === null
         ? undefined
@@ -519,52 +647,115 @@ function storeAccess(
         file.meta.relativePath,
         file.meta.extension,
       ].join("\u0000"),
+    notStored: () =>
+      [...reasons.entries()].map(([source, reason]) => ({ source, reason })),
   };
 }
 
 /**
- * True when the files a stored document used are as they were. A file with
- * the same size and (settled) mtime is trusted; an asset whose stat changed
- * (a fresh checkout) is hashed again and must give the same URL.
+ * The assets of a stored document when the files it used are as they were,
+ * else `undefined`. A file with the same state as then (size, times and
+ * inode, with a settled mtime) is trusted; an asset whose state changed (a
+ * fresh checkout) is hashed again and must give the same URL. `rehashed`
+ * is set when a file had to be read for that.
  */
-async function storedEffectsValid(
+async function storedEffects(
   session: FieldSession,
   stored: StoredDocument,
-): Promise<boolean> {
+): Promise<
+  | { readonly assets: readonly AssetRef[]; readonly rehashed: boolean }
+  | undefined
+> {
   const assets = new Map(
     stored.assets.map((asset) => [asset.sourcePath, asset]),
   );
   const recorder = createEffectRecorder();
-  const sameAsset = async (sourcePath: string): Promise<boolean> => {
+  let rehashed = false;
+  /** The asset as this build sees it, when it is the stored one. */
+  const sameAsset = async (
+    sourcePath: string,
+  ): Promise<AssetRef | undefined> => {
     const asset = assets.get(sourcePath);
-    if (!asset) return false;
+    if (!asset) return undefined;
+    rehashed = true;
     try {
       const again = await emitAssetFile(session, sourcePath, recorder);
-      return again.hash === asset.hash && again.src === asset.src;
+      return again.hash === asset.hash &&
+        again.src === asset.src &&
+        again.sourcePath === asset.sourcePath
+        ? again
+        : undefined;
     } catch {
-      return false;
+      return undefined;
     }
   };
-  const proven = new Set<string>();
+  const proven = new Map<string, AssetRef | undefined>();
   for (const dependency of stored.watched) {
-    const now = await signatureOf(session.stats, dependency.path);
-    if (
-      now !== undefined &&
-      now.size === dependency.size &&
-      now.mtimeMs === dependency.mtimeMs &&
-      isSettled(now.mtimeMs, stored.readAt)
-    ) {
-      proven.add(dependency.path);
-      continue;
+    const signature = await signatureOf(session.stats, dependency.path);
+    const now = dependencyOf(dependency.path, signature);
+    const asset = assets.get(dependency.path);
+    if (dependencyUnchanged(dependency, now, stored.watchedAt)) {
+      if (!asset) {
+        proven.set(dependency.path, undefined);
+        continue;
+      }
+      // The entry is a file on disk: it may only name what the rules allow.
+      if (
+        signature?.isFile === true &&
+        asset.size === signature.size &&
+        (await storedAssetAllowed(session, asset))
+      ) {
+        proven.set(dependency.path, asset);
+        continue;
+      }
+      return undefined;
     }
-    if (!(await sameAsset(dependency.path))) return false;
-    proven.add(dependency.path);
+    const again = await sameAsset(dependency.path);
+    if (!again) return undefined;
+    proven.set(dependency.path, again);
   }
+  const result: AssetRef[] = [];
   for (const sourcePath of assets.keys()) {
-    if (!proven.has(sourcePath) && !(await sameAsset(sourcePath))) return false;
+    const asset = proven.has(sourcePath)
+      ? proven.get(sourcePath)
+      : await sameAsset(sourcePath);
+    if (!asset) return undefined;
+    result.push(asset);
   }
-  return true;
+  return { assets: result, rehashed };
 }
+
+/** What the document store keeps of a document of this session. */
+function storedEntryOf(
+  store: StoreAccess,
+  cached: CachedDocument,
+  signature: FileSignature,
+): StoredDocument {
+  const document = cached.document;
+  return {
+    stamp: store.stampOf(document.file),
+    hash: cached.hash,
+    signature,
+    readAt: cached.readAt,
+    draft: document.draft,
+    data: document.data,
+    assets: document.effects.assets,
+    dependencies: document.effects.dependencies,
+    watched: cached.dependencies,
+    watchedAt: cached.dependenciesAt,
+    cacheKeys: document.effects.cacheKeys,
+    warnings: cached.warnings.map((warning) => warning.message),
+  };
+}
+
+/** Options of {@link checkFile}. */
+type CheckOptions = {
+  readonly store: StoreAccess | undefined;
+  /** Epoch milliseconds, taken before any file of the build was looked at. */
+  readonly now: number;
+  /** False in a dry run: the store is read, never written. */
+  readonly persist: boolean;
+};
 
 /**
  * Decide whether a file needs validation: reuse the document of an earlier
@@ -576,9 +767,9 @@ async function checkFile(
   file: SourceFile,
   session: FieldSession,
   cache: Map<string, CachedDocument>,
-  store: StoreAccess | undefined,
-  now: number,
+  options: CheckOptions,
 ): Promise<CheckedFile> {
+  const { store, now } = options;
   const key = documentCacheKey(file);
   const signature = await signatureOf(session.stats, file.absPath);
   let raw: string | undefined;
@@ -621,7 +812,13 @@ async function checkFile(
       if (!(await hashIs(cached.hash))) return stale();
       entry = { ...cached, signature, readAt: now };
     }
-    if (!(await dependenciesMatch(session, cached.dependencies))) {
+    if (
+      !(await dependenciesMatch(
+        session,
+        cached.dependencies,
+        cached.dependenciesAt,
+      ))
+    ) {
       return stale();
     }
     // A reloaded config creates new source objects: rebind to them.
@@ -637,6 +834,7 @@ async function checkFile(
       document,
       warnings: cached.warnings,
       restored: document !== cached.document,
+      compared: raw !== undefined,
     };
   }
 
@@ -644,47 +842,80 @@ async function checkFile(
   if (!store || storeKey === undefined || signature === undefined) {
     return stale();
   }
-  const stored = await readStoredDocument(store.cacheDir, storeKey);
+  const stored = await readStoredDocument(store.dir, storeKey);
   if (!stored || stored.stamp !== store.stampOf(file)) return stale();
-  let readAt = stored.readAt;
-  if (!provesUnchanged(stored.signature, signature, stored.readAt)) {
-    if (!(await hashIs(stored.hash))) return stale();
-    readAt = now;
-  }
-  if (!(await storedEffectsValid(session, stored))) return stale();
+  const statProven = provesUnchanged(
+    stored.signature,
+    signature,
+    stored.readAt,
+  );
+  if (!statProven && !(await hashIs(stored.hash))) return stale();
+  const effects = await storedEffects(session, stored);
+  if (!effects) return stale();
   const document: ValidatedDocument = {
     file,
     hash: stored.hash,
     draft: stored.draft,
     data: deepFreeze(stored.data),
     effects: {
-      assets: stored.assets,
+      assets: effects.assets,
       dependencies: stored.dependencies,
       cacheKeys: stored.cacheKeys,
     },
   };
-  const dependencies = await Promise.all(
-    stored.watched.map(async (dependency) =>
-      watchedOf(
-        dependency.path,
-        await signatureOf(session.stats, dependency.path),
-      ),
-    ),
-  );
   const warnings = warningsOf(file, stored.warnings);
-  cache.set(key, {
+  // A file that had to be read to prove it unchanged (new times after a
+  // checkout) is recorded as it is now, so the next session needs no read.
+  const refresh = !statProven || effects.rehashed;
+  const entry: CachedDocument = {
     hash: stored.hash,
     projectFingerprint: project.fingerprint,
     publicBase: session.publicBase,
-    dependencies,
+    dependencies: refresh
+      ? await Promise.all(
+          stored.watched.map(async (dependency) =>
+            dependencyOf(
+              dependency.path,
+              await signatureOf(session.stats, dependency.path),
+            ),
+          ),
+        )
+      : stored.watched,
     document,
     warnings,
     signature,
-    readAt,
+    readAt: statProven ? stored.readAt : now,
+    dependenciesAt: refresh ? now : stored.watchedAt,
     storeKey,
-  });
-  return { kind: "reused", document, warnings, restored: true };
+    stored: true,
+  };
+  cache.set(key, entry);
+  if (refresh && options.persist && isSettled(signature.mtimeMs, now)) {
+    await writeStoredDocument(
+      store.dir,
+      storeKey,
+      storedEntryOf(store, entry, signature),
+    );
+  }
+  return {
+    kind: "reused",
+    document,
+    warnings,
+    restored: true,
+    compared: raw !== undefined || effects.rehashed,
+  };
 }
+
+/** One compiled field of a document after its field cache lookup. */
+type FieldAttempt = {
+  readonly occurrence: FieldOccurrence & { readonly spec: CompileFieldSpec };
+  readonly context: FieldContext;
+  /** What the field reported: replayed from the cache entry, or filled by the compile. */
+  readonly recorder: EffectRecorder;
+  /** Key in the field cache; `undefined` when the field is not cached. */
+  readonly cacheKey: string | undefined;
+  readonly hit: { readonly value: DocumentValue } | undefined;
+};
 
 /** Apply a timeout to user / plugin code, failing with a diagnostic. */
 function withTimeout<A>(
@@ -749,7 +980,7 @@ export class Collector extends Context.Service<
         fileWork(() =>
           Promise.all(
             [...files].map(async (file) =>
-              watchedOf(file, await signatureOf(session.stats, file)),
+              dependencyOf(file, await signatureOf(session.stats, file)),
             ),
           ),
         );
@@ -769,7 +1000,26 @@ export class Collector extends Context.Service<
         const skip = [project.outputDir];
         if (project.cacheDir !== undefined) skip.push(project.cacheDir);
         const files = yield* Effect.tryPromise({
-          try: () => listContentFiles(root, { include, exclude, skip }),
+          // The signal stops the listing when the build is interrupted or
+          // the time limit below ends it.
+          try: (signal) =>
+            listContentFiles(root, {
+              include,
+              exclude,
+              skip,
+              signal,
+              onSkip: (folder, reason) => {
+                failures.push(
+                  warningDiagnostic(
+                    "read-failed",
+                    `The folder ${relativeTo(project.projectDir, folder)} was left out: ${reason}.`,
+                    {
+                      hint: "Its files are not part of the build. Fix the permissions or exclude the folder.",
+                    },
+                  ),
+                );
+              },
+            }),
           catch: (cause) =>
             errorDiagnostic(
               "read-failed",
@@ -970,9 +1220,16 @@ export class Collector extends Context.Service<
           const localization = project.localization!;
           for (const locale of localization.locales) {
             const base = path.join(source.root, locale);
-            const found = (yield* isDirectory(base))
-              ? (yield* globFiles(project, base, source.include, [])).files
-              : [];
+            const listed = (yield* isDirectory(base))
+              ? yield* globFiles(project, base, source.include, [])
+              : undefined;
+            const found = listed?.files ?? [];
+            diagnostics.push(
+              ...(listed?.failures ?? []).map((failure) => ({
+                ...failure,
+                source: source.name,
+              })),
+            );
             if (found.length === 0) {
               if (locale === localization.defaultLocale && !optional) {
                 diagnostics.push(
@@ -1111,28 +1368,119 @@ export class Collector extends Context.Service<
         return loaded;
       });
 
-      const compileField = Effect.fn("Collector.compileField")(function* (
+      /**
+       * Look one compiled field up in the field cache. Never fails: a field
+       * that is not cached, or whose entry cannot be used, has no `hit`.
+       */
+      const lookupField = Effect.fn("Collector.lookupField")(function* (
         project: ResolvedProject,
         session: FieldSession,
         file: SourceFile,
         body: string | undefined,
         occurrence: FieldOccurrence & { readonly spec: CompileFieldSpec },
-        recorder: EffectRecorder,
-        cacheKeys: Set<string>,
-        options: ValidateOptions,
         bodyHash: string | null,
         shares: DocumentShares,
       ) {
         const spec = occurrence.spec;
-        const fieldRecorder = createEffectRecorder();
+        const recorder = createEffectRecorder();
         const context = createFieldContext(
           session,
           file,
           body,
           occurrence.path,
-          fieldRecorder,
+          recorder,
           shares,
         );
+        const miss = (cacheKey: string | undefined): FieldAttempt => ({
+          occurrence,
+          context,
+          recorder,
+          cacheKey,
+          hit: undefined,
+        });
+        const cacheSpec = spec.cache;
+        if (!cacheSpec || !project.cacheDir) return miss(undefined);
+        const plugin = spec.requires
+          ? project.plugins.find(
+              (candidate) => candidate.name === spec.requires,
+            )
+          : undefined;
+        const cacheKey = fingerprint([
+          CORE_VERSION,
+          spec.kind,
+          cacheSpec.version,
+          plugin?.version ?? "",
+          cacheSpec.key(context),
+          occurrence.value,
+          occurrence.path,
+          // The body is hashed once per document, not once per field.
+          bodyHash,
+          file.meta,
+          project.mode,
+          session.publicBase ?? null,
+        ]);
+        const hit = yield* fieldCache.read(
+          fieldCacheDir(project.cacheDir, project.mode),
+          cacheKey,
+        );
+        if (
+          Option.isNone(hit) ||
+          !(yield* dependenciesUnchanged(session, hit.value.dependencies))
+        ) {
+          return miss(cacheKey);
+        }
+        const entry = hit.value;
+        const replayed = yield* fileWork(async () => {
+          try {
+            for (const asset of entry.assets) {
+              const again = await emitAssetFile(
+                session,
+                asset.sourcePath,
+                recorder,
+              );
+              if (again.hash !== asset.hash) return false;
+            }
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        if (!replayed) {
+          recorder.assets.clear();
+          return miss(cacheKey);
+        }
+        for (const dependency of entry.dependencies) {
+          recorder.dependencies.add(dependency.path);
+        }
+        recorder.warnings.push(...entry.warnings);
+        const attempt: FieldAttempt = {
+          occurrence,
+          context,
+          recorder,
+          cacheKey,
+          hit: { value: entry.value },
+        };
+        return attempt;
+      });
+
+      /** The value of a field: from its cache hit, or compiled now. */
+      const finishField = Effect.fn("Collector.finishField")(function* (
+        project: ResolvedProject,
+        session: FieldSession,
+        file: SourceFile,
+        attempt: FieldAttempt,
+        recorder: EffectRecorder,
+        cacheKeys: Set<string>,
+        options: ValidateOptions,
+      ) {
+        const { occurrence, context, cacheKey } = attempt;
+        const spec = occurrence.spec;
+        const fieldRecorder = attempt.recorder;
+        if (attempt.hit) {
+          mergeEffects(fieldRecorder, recorder);
+          if (cacheKey !== undefined) cacheKeys.add(cacheKey);
+          return attempt.hit.value;
+        }
         const fail = (message: string, cause?: unknown) =>
           errorDiagnostic("field-failed", `${spec.kind}: ${message}`, {
             file: file.absPath,
@@ -1140,71 +1488,6 @@ export class Collector extends Context.Service<
             fieldPath: occurrence.path,
             cause,
           });
-        const merge = () => {
-          mergeEffects(fieldRecorder, recorder);
-        };
-
-        let cacheKey: string | undefined;
-        const cacheSpec = spec.cache;
-        if (cacheSpec && project.cacheDir) {
-          const plugin = spec.requires
-            ? project.plugins.find(
-                (candidate) => candidate.name === spec.requires,
-              )
-            : undefined;
-          cacheKey = fingerprint([
-            CORE_VERSION,
-            spec.kind,
-            cacheSpec.version,
-            plugin?.version ?? "",
-            cacheSpec.key(context),
-            occurrence.value,
-            occurrence.path,
-            // The body is hashed once per document, not once per field.
-            bodyHash,
-            file.meta,
-            project.mode,
-            session.publicBase ?? null,
-          ]);
-          const hit = yield* fieldCache.read(project.cacheDir, cacheKey);
-          if (
-            Option.isSome(hit) &&
-            (yield* dependenciesUnchanged(session, hit.value.dependencies))
-          ) {
-            const entry = hit.value;
-            const replayed = yield* withTimeout(
-              Effect.tryPromise({
-                try: async () => {
-                  for (const asset of entry.assets) {
-                    const again = await emitAssetFile(
-                      session,
-                      asset.sourcePath,
-                      fieldRecorder,
-                    );
-                    if (again.hash !== asset.hash) return false;
-                  }
-                  for (const dependency of entry.dependencies) {
-                    fieldRecorder.dependencies.add(dependency.path);
-                  }
-                  fieldRecorder.warnings.push(...entry.warnings);
-                  return true;
-                },
-                catch: () => fail("cache replay failed"),
-              }),
-              "1 minute",
-              fail(`cache replay did not finish within ${LOAD_TIMEOUT}`),
-            ).pipe(Effect.orElseSucceed(() => false));
-            if (replayed) {
-              merge();
-              cacheKeys.add(cacheKey);
-              return entry.value;
-            }
-            fieldRecorder.assets.clear();
-            fieldRecorder.dependencies.clear();
-            fieldRecorder.warnings.length = 0;
-          }
-        }
-
         const value = yield* withTimeout(
           Effect.tryPromise({
             try: async (): Promise<DocumentValue> =>
@@ -1214,7 +1497,7 @@ export class Collector extends Context.Service<
           "5 minutes",
           fail(`did not finish within ${FIELD_TIMEOUT}`),
         );
-        merge();
+        mergeEffects(fieldRecorder, recorder);
         // Values the cache cannot round-trip (class instances) are not cached;
         // validation reports them with the field path.
         if (cacheKey !== undefined && project.cacheDir && canCache(value)) {
@@ -1223,15 +1506,19 @@ export class Collector extends Context.Service<
               session,
               fieldRecorder.dependencies,
             );
-            yield* fieldCache.write(project.cacheDir, cacheKey, {
-              value,
-              assets: [...fieldRecorder.assets.values()].map((asset) => ({
-                sourcePath: asset.sourcePath,
-                hash: asset.hash,
-              })),
-              dependencies,
-              warnings: [...fieldRecorder.warnings],
-            });
+            yield* fieldCache.write(
+              fieldCacheDir(project.cacheDir, project.mode),
+              cacheKey,
+              {
+                value,
+                assets: [...fieldRecorder.assets.values()].map((asset) => ({
+                  sourcePath: asset.sourcePath,
+                  hash: asset.hash,
+                })),
+                dependencies,
+                warnings: [...fieldRecorder.warnings],
+              },
+            );
           }
           cacheKeys.add(cacheKey);
         }
@@ -1282,23 +1569,49 @@ export class Collector extends Context.Service<
             occurrence.spec.type === "compile" &&
             (occurrence.present || occurrence.spec.whenAbsent === "compile"),
         );
-        const shares = announcedShares(session, file, loaded.body, occurrences);
-        const compiled = yield* Effect.forEach(
+        // Cache lookups first: only a field that is about to compile does
+        // work another field of the document can join (`context.isShared`).
+        const shares = createDocumentShares();
+        const attempts = yield* Effect.forEach(
           occurrences,
           (occurrence) =>
-            compileField(
+            lookupField(
               project,
               session,
               file,
               loaded.body,
               occurrence,
+              bodyHash,
+              shares,
+            ),
+          { concurrency: FIELD_CONCURRENCY },
+        );
+        announceShares(
+          shares,
+          session,
+          file,
+          loaded.body,
+          attempts
+            .filter((attempt) => attempt.hit === undefined)
+            .map((attempt) => attempt.occurrence),
+        );
+        const compiled = yield* Effect.forEach(
+          attempts,
+          (attempt) =>
+            finishField(
+              project,
+              session,
+              file,
+              attempt,
               recorder,
               cacheKeys,
               options,
-              bodyHash,
-              shares,
             ).pipe(
-              Effect.map((value) => ({ ok: true as const, occurrence, value })),
+              Effect.map((value) => ({
+                ok: true as const,
+                occurrence: attempt.occurrence,
+                value,
+              })),
               Effect.catch((diagnostic) =>
                 Effect.succeed({ ok: false as const, diagnostic }),
               ),
@@ -1415,11 +1728,12 @@ export class Collector extends Context.Service<
             assets: document.effects.assets,
             dependencies: document.effects.dependencies,
             watched: dependencies,
+            watchedAt: readAt,
             cacheKeys: document.effects.cacheKeys,
             warnings,
           };
           yield* fileWork(() =>
-            writeStoredDocument(store.cacheDir, storeKey, entry),
+            writeStoredDocument(store.dir, storeKey, entry),
           );
         }
         const fresh: FreshDocument = {
@@ -1442,7 +1756,7 @@ export class Collector extends Context.Service<
         const store = storeAccess(project, session);
         if (store && !options.dryRun) {
           yield* fileWork(() =>
-            prepareDocumentStore(store.cacheDir).catch(() => undefined),
+            prepareDocumentStore(store.dir).catch(() => undefined),
           );
         }
         return yield* Effect.forEach(
@@ -1462,8 +1776,20 @@ export class Collector extends Context.Service<
       });
 
       /**
+       * Fingerprint of a project no worker could load (its config fails or
+       * hangs in a worker thread). Later builds of that project do not try
+       * again: each try costs the start time of the workers.
+       */
+      let unusableProject: string | undefined;
+
+      /**
        * Validate stale files in worker threads when that pays off, the rest
        * (and whatever the workers did not finish) here.
+       *
+       * Whether it pays off is measured, not guessed: some of the costly
+       * documents are validated here first. When their fields come from the
+       * field cache, or the documents are small, the rest is quick here too
+       * and no worker is started.
        */
       const validateSpread = Effect.fn("Collector.validateSpread")(function* (
         project: ResolvedProject,
@@ -1473,20 +1799,69 @@ export class Collector extends Context.Service<
         readAt: number,
       ) {
         const warnings: Diagnostic[] = [];
-        const workers = workersFor(project, stale);
-        if (workers === 0) {
-          return {
-            results: yield* validateStale(
-              project,
-              stale,
-              session,
-              options,
-              readAt,
-            ),
-            warnings,
-          };
+        const results: FreshResult[] = [];
+        results.length = stale.length;
+        /** Validate the files at `indexes` in this thread. */
+        const validateHere = Effect.fn("Collector.validateHere")(function* (
+          indexes: readonly number[],
+        ) {
+          const done = yield* validateStale(
+            project,
+            indexes.map((index) => stale[index]!),
+            session,
+            options,
+            readAt,
+          );
+          for (const [position, index] of indexes.entries()) {
+            results[index] = done[position]!;
+          }
+        });
+
+        const costly: number[] = [];
+        const plain: number[] = [];
+        const eligible = new Map<ResolvedSource, boolean>();
+        for (const [index, entry] of stale.entries()) {
+          const source = entry.file.source;
+          let known = eligible.get(source);
+          if (known === undefined) {
+            known = mayUseWorkers(source);
+            eligible.set(source, known);
+          }
+          (known ? costly : plain).push(index);
         }
-        const outcome = yield* poolWork(() =>
+        if (
+          project.config.workers === false ||
+          costly.length < WORKER_MIN_DOCUMENTS ||
+          unusableProject === project.fingerprint
+        ) {
+          yield* validateHere([...stale.keys()]);
+          return { results, warnings };
+        }
+
+        let rest = costly;
+        let workers: number;
+        const setting = project.config.workers;
+        if (Predicate.isNumber(setting)) {
+          // A number in the config is the number to use: nothing to measure.
+          workers = setting;
+        } else {
+          yield* validateHere(costly.slice(0, WORKER_WARM_UP));
+          const sample = costly.slice(
+            WORKER_WARM_UP,
+            WORKER_WARM_UP + WORKER_SAMPLE,
+          );
+          const started = performance.now();
+          yield* validateHere(sample);
+          const each = (performance.now() - started) / sample.length;
+          rest = costly.slice(WORKER_WARM_UP + WORKER_SAMPLE);
+          workers = workersFor(each * rest.length);
+        }
+        if (workers === 0) {
+          yield* validateHere([...rest, ...plain]);
+          return { results, warnings };
+        }
+
+        const pool = poolWork((signal) =>
           validateInWorkers(
             {
               rootDir: project.projectDir,
@@ -1496,10 +1871,15 @@ export class Collector extends Context.Service<
               publicBase: session.publicBase,
               assetRoots: session.assetRoots,
             },
-            stale.map(toWireFile),
-            { workers, dryRun: options.dryRun, readAt },
+            rest.map((index) => toWireFile(stale[index]!)),
+            { workers, dryRun: options.dryRun, readAt, signal },
           ),
         );
+        // The documents workers do not take are validated here meanwhile.
+        const [outcome] = yield* Effect.all([pool, validateHere(plain)], {
+          concurrency: 2,
+        });
+        if (outcome.unusable) unusableProject = project.fingerprint;
         if (outcome.problem !== undefined) {
           warnings.push(
             warningDiagnostic(
@@ -1511,25 +1891,53 @@ export class Collector extends Context.Service<
             ),
           );
         }
-        const results: FreshResult[] = [];
-        results.length = stale.length;
         const left: number[] = [];
-        for (const [index, entry] of stale.entries()) {
-          const result = outcome.results[index];
+        for (const [position, index] of rest.entries()) {
+          const result = outcome.results[position];
           if (result === undefined) left.push(index);
-          else results[index] = fromWireResult(entry.file, result);
+          else results[index] = fromWireResult(stale[index]!.file, result);
         }
-        const here = yield* validateStale(
-          project,
-          left.map((index) => stale[index]!),
-          session,
-          options,
-          readAt,
-        );
-        for (const [position, index] of left.entries()) {
-          results[index] = here[position]!;
-        }
+        yield* validateHere(left);
         return { results, warnings };
+      });
+
+      /**
+       * True while the session cache may hold documents the store does not
+       * have: a dry run (`anhur check`, then a build in one session) reads
+       * the caches and never writes them.
+       */
+      let unstored = false;
+
+      /** Write the documents a dry run of this session made to the store. */
+      const storeUnstored = Effect.fn("Collector.storeUnstored")(function* (
+        project: ResolvedProject,
+        store: StoreAccess,
+        cache: Map<string, CachedDocument>,
+      ) {
+        const waiting = [...cache.entries()].filter(
+          ([, cached]) =>
+            !cached.stored &&
+            cached.storeKey !== undefined &&
+            cached.signature !== undefined &&
+            cached.projectFingerprint === project.fingerprint,
+        );
+        yield* fileWork(async () => {
+          await prepareDocumentStore(store.dir).catch(() => undefined);
+          await mapPool(waiting, CHECK_CONCURRENCY, async ([key, cached]) => {
+            const { storeKey, signature } = cached;
+            if (storeKey === undefined || signature === undefined) return;
+            await writeStoredDocument(
+              store.dir,
+              storeKey,
+              storedEntryOf(store, cached, signature),
+            );
+            // The entry may have been replaced while this one was written.
+            if (cache.get(key) === cached) {
+              cache.set(key, { ...cached, stored: true });
+            }
+          });
+        });
+        unstored = false;
       });
 
       const validate = Effect.fn("Collector.validate")(function* (
@@ -1569,21 +1977,35 @@ export class Collector extends Context.Service<
             blocking = false;
           }
         }
+        if (store && !options.dryRun && unsettled.length > 0) {
+          yield* fileWork(() =>
+            prepareDocumentStore(store.dir).catch(() => undefined),
+          );
+        }
+        const check: CheckOptions = {
+          store,
+          now: readAt,
+          persist: !options.dryRun,
+        };
         const settled = yield* fileWork(() =>
           mapPool(unsettled, CHECK_CONCURRENCY, (index) =>
-            checkFile(project, files[index]!, session, cache, store, readAt),
+            checkFile(project, files[index]!, session, cache, check),
           ),
         );
         for (const [position, index] of unsettled.entries()) {
           checked[index] = settled[position]!;
         }
         const stale: StaleFile[] = [];
+        let compared = 0;
         for (const entry of checked) {
           if (entry.kind === "stale") {
             stale.push(entry);
             // A failed validation must not leave an older result to be reused later.
             cache.delete(documentCacheKey(entry.file));
-          } else if (entry.restored) changed = true;
+            continue;
+          }
+          if (entry.restored) changed = true;
+          if (entry.compared) compared += 1;
         }
         if (stale.length > 0) changed = true;
         const fresh = yield* validateSpread(
@@ -1609,6 +2031,12 @@ export class Collector extends Context.Service<
             continue;
           }
           const warnings = warningsOf(entry.file, result.warnings);
+          // `validateFresh` wrote the store entry, unless this is a dry run.
+          const stored =
+            result.storeKey !== undefined &&
+            entry.signature !== undefined &&
+            !options.dryRun;
+          if (result.storeKey !== undefined && !stored) unstored = true;
           cache.set(documentCacheKey(entry.file), {
             hash: result.document.hash,
             projectFingerprint: project.fingerprint,
@@ -1618,12 +2046,27 @@ export class Collector extends Context.Service<
             warnings,
             signature: entry.signature,
             readAt,
+            dependenciesAt: readAt,
             storeKey: result.storeKey,
+            stored,
           });
           documents.push(result.document);
           diagnostics.push(...warnings);
         }
-        return { documents, diagnostics, changed };
+        if (store && unstored && !options.dryRun) {
+          yield* storeUnstored(project, store, cache);
+        }
+        return {
+          documents,
+          diagnostics,
+          changed,
+          notStored: store?.notStored() ?? [],
+          reuse: {
+            unchanged: checked.length - stale.length - compared,
+            compared,
+            validated: stale.length,
+          },
+        };
       });
 
       return Collector.of({ discover, validate, validateStale });

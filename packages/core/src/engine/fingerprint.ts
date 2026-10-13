@@ -112,7 +112,8 @@ function objectKey(value: unknown, state: State): string {
     return `d:${Number.isNaN(value.getTime()) ? "NaN" : value.toISOString()}`;
   }
   if (value instanceof RegExp) {
-    return `r:/${value.source}/${value.flags}|${value.lastIndex}`;
+    // Not `lastIndex`: it changes when a /g or /y expression is used.
+    return `r:/${value.source}/${value.flags}`;
   }
   if (value instanceof URL) return `URL:${JSON.stringify(value.href)}`;
   if (ArrayBuffer.isView(value)) {

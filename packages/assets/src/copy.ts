@@ -67,21 +67,44 @@ export async function readAssetsManifest(
   return raw.files.filter((file) => isHashedAssetName(file));
 }
 
+declare const folderStateBrand: unique symbol;
+
 /**
- * What a session knows about an assets folder between builds: the assets
- * that were in place after the last build and the folder's mtime then.
- * While both are the same, every file is still there and nothing has to be
- * copied, pruned or listed again.
+ * What a session knows about one assets folder between builds. Make it
+ * with {@link createAssetsFolderState}, keep it for the session, and give
+ * it to each {@link copyAssets} and {@link pruneAssets} call for that
+ * folder. With it, a build does not read the folder again while the
+ * folder is as the last build left it.
+ *
+ * The value is opaque: it has no fields to read or to set.
  */
-export type AssetsFolderState = {
+export type AssetsFolderState = { readonly [folderStateBrand]: true };
+
+/**
+ * What a state holds: the assets that were in place after the last build
+ * and the folder's mtime then. While both are the same, every file is
+ * still there and nothing has to be copied, pruned or listed again.
+ */
+type FolderRecord = {
   assets: readonly AssetRef[] | undefined;
   mtimeMs: number | undefined;
   /** Epoch milliseconds when `mtimeMs` was read. */
   readAt: number;
 };
 
+/** The record of each state. A state is only the key of its record. */
+const folderRecords = new WeakMap<AssetsFolderState, FolderRecord>();
+
+/** A new state that knows nothing: the next build reads the folder. */
 export function createAssetsFolderState(): AssetsFolderState {
-  return { assets: undefined, mtimeMs: undefined, readAt: 0 };
+  // SAFETY: the brand is a type-only mark; the object has no fields and is only a key of `folderRecords`.
+  const state = Object.freeze({}) as AssetsFolderState;
+  folderRecords.set(state, {
+    assets: undefined,
+    mtimeMs: undefined,
+    readAt: 0,
+  });
+  return state;
 }
 
 /**
@@ -112,14 +135,14 @@ async function folderMtime(dir: string): Promise<number | undefined> {
 
 /** True when `dir` holds exactly `assets`, as the last build left it. */
 async function isSettled(
-  state: AssetsFolderState | undefined,
+  record: FolderRecord | undefined,
   dir: string,
   assets: readonly AssetRef[],
 ): Promise<boolean> {
-  if (!state || state.mtimeMs === undefined) return false;
-  if (state.mtimeMs >= state.readAt - SETTLE_MS) return false;
-  if (!sameAssets(state.assets, assets)) return false;
-  return (await folderMtime(dir)) === state.mtimeMs;
+  if (!record || record.mtimeMs === undefined) return false;
+  if (record.mtimeMs >= record.readAt - SETTLE_MS) return false;
+  if (!sameAssets(record.assets, assets)) return false;
+  return (await folderMtime(dir)) === record.mtimeMs;
 }
 
 async function listFiles(dir: string): Promise<string[] | undefined> {
@@ -315,6 +338,10 @@ function uniqueByName(assets: readonly AssetRef[]): AssetRef[] {
  * changed during the build fails it). The manifest then lists the files of
  * earlier builds plus the ones in place now — also when a copy failed — so
  * {@link pruneAssets} can remove every file Anhur wrote.
+ *
+ * With a `state` of the session (see {@link AssetsFolderState}), nothing is
+ * read or copied while `assets` and the folder are as the last
+ * {@link pruneAssets} call left them.
  */
 export async function copyAssets(
   dir: string,
@@ -322,8 +349,9 @@ export async function copyAssets(
   options: CopyOptions,
   state?: AssetsFolderState,
 ): Promise<CopyResult> {
-  if (await isSettled(state, dir, assets)) return { copied: 0 };
-  if (state) state.mtimeMs = undefined;
+  const folder = state && folderRecords.get(state);
+  if (await isSettled(folder, dir, assets)) return { copied: 0 };
+  if (folder) folder.mtimeMs = undefined;
   const owned = await ownedFiles(dir, options.extensions);
   const previous = owned.files;
   const unique = uniqueByName(assets);
@@ -371,6 +399,9 @@ export async function copyAssets(
  * Delete files of earlier builds that `assets` no longer uses (only names
  * in the manifest), then make the manifest list exactly `assets`. Run it
  * after the generated modules that point at the new files are published.
+ *
+ * With a `state` of the session (see {@link AssetsFolderState}), it writes
+ * down how it left the folder, so later calls can skip an unchanged folder.
  */
 export async function pruneAssets(
   dir: string,
@@ -378,8 +409,9 @@ export async function pruneAssets(
   options: { readonly extensions?: readonly string[] } = {},
   state?: AssetsFolderState,
 ): Promise<PruneResult> {
-  if (await isSettled(state, dir, assets)) return { removed: 0 };
-  if (state) state.mtimeMs = undefined;
+  const folder = state && folderRecords.get(state);
+  if (await isSettled(folder, dir, assets)) return { removed: 0 };
+  if (folder) folder.mtimeMs = undefined;
   const owned = await ownedFiles(dir, options.extensions);
   const previous = owned.files;
   const current = new Set(uniqueByName(assets).map((asset) => asset.fileName));
@@ -401,10 +433,10 @@ export async function pruneAssets(
   const unchanged =
     removed === 0 && kept.size === previous.size && owned.listed;
   if (!unchanged) await writeManifest(dir, kept);
-  if (state) {
-    state.assets = [...assets];
-    state.readAt = Date.now();
-    state.mtimeMs = await folderMtime(dir);
+  if (folder) {
+    folder.assets = [...assets];
+    folder.readAt = Date.now();
+    folder.mtimeMs = await folderMtime(dir);
   }
   return { removed };
 }

@@ -6,8 +6,10 @@ import type {
 } from "../define/types";
 import { errorDiagnostic, messageOf, type Diagnostic } from "../diagnostics";
 import { isPlainObject, type DocumentFields } from "../document";
+import { frozenWriteHint } from "./freeze";
 import { toExport, toListRow } from "./list-rows";
 import type { ResolvedDerived } from "./resolve";
+import { sameItems } from "./same-items";
 import { compareKeys, sortRows } from "./sort";
 import type { FinalDocument, SourceDocuments } from "./types";
 
@@ -65,14 +67,6 @@ type Row = {
   readonly key: string | undefined;
   readonly row: DocumentFields;
 };
-
-function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
-  if (left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return false;
-  }
-  return true;
-}
 
 function finalize(
   rows: DocumentFields[],
@@ -162,6 +156,7 @@ export function deriveAll(
           source: derived.name,
           file: document?.file.absPath,
           cause,
+          hint: frozenWriteHint(cause),
         }),
       );
     };

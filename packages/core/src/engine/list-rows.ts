@@ -8,7 +8,10 @@ import {
 import { deepFreeze } from "./freeze";
 import type { FinalDocument, ValidatedDocument } from "./types";
 
-/** Exported form of documents: one frozen object per document, made once. */
+/**
+ * Exported form of documents: one deep-frozen object per document, made
+ * once.
+ */
 const exported = new WeakMap<
   FinalDocument | ValidatedDocument,
   TransformDocument
@@ -19,7 +22,9 @@ function withMeta(
 ): TransformDocument {
   let known = exported.get(document);
   if (!known) {
-    known = Object.freeze({ ...document.data, _meta: document.file.meta });
+    // The data is deep-frozen already: this freezes the new object, and
+    // makes the whole of it known as deep-frozen.
+    known = deepFreeze({ ...document.data, _meta: document.file.meta });
     exported.set(document, known);
   }
   return known;

@@ -12,6 +12,7 @@ import type { EmittedModule } from "../plugin/types";
 import type { DerivedResult } from "./derive";
 import { toExport, toListRow } from "./list-rows";
 import { toPosix } from "./paths";
+import { sameItems } from "./same-items";
 import type {
   ResolvedCollection,
   ResolvedDerived,
@@ -109,17 +110,12 @@ export function createPlanMemory(): PlanMemory {
   };
 }
 
-/** Hash stored in the output manifest for the text of a file. */
-export function contentHash(contents: string): string {
+/**
+ * Hash stored in the output manifest for the text of a file (or for its
+ * bytes on disk: the same value for UTF-8 text).
+ */
+export function contentHash(contents: string | Uint8Array): string {
   return createHash("sha256").update(contents).digest("hex").slice(0, 32);
-}
-
-function sameItems(left: readonly unknown[], right: readonly unknown[]) {
-  if (left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return false;
-  }
-  return true;
 }
 
 /** Owner name of the files Anhur writes itself. */

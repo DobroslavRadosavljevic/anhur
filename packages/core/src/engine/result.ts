@@ -47,16 +47,71 @@ export type BuildAssets = {
   readonly count: number;
 };
 
+/**
+ * A stage of a build, in the order the stages run: `config`, `discover`,
+ * `validate` (load, compile fields, schema), `transform`, `relations`
+ * (prepare, references, uniqueness), `views`, `plugins` (generate hooks),
+ * `plan` (generated modules), `publish` (write, publish hooks) and
+ * `cleanup` (unused cache entries).
+ */
+export type BuildStage =
+  | "config"
+  | "discover"
+  | "validate"
+  | "transform"
+  | "relations"
+  | "views"
+  | "plugins"
+  | "plan"
+  | "publish"
+  | "cleanup";
+
 /** Time one stage of a build took. */
 export type StageTiming = {
-  /**
-   * `config`, `discover`, `validate` (load, compile fields, schema),
-   * `transform`, `relations` (prepare, references, uniqueness), `views`,
-   * `plugins` (generate hooks), `plan` (generated modules), `publish`
-   * (write, publish hooks) or `cleanup` (unused cache entries).
-   */
-  readonly stage: string;
+  readonly stage: BuildStage;
   readonly ms: number;
+};
+
+/** Stage times of failed builds, by the error the build failed with. */
+const failedTimings = new WeakMap<Error, readonly StageTiming[]>();
+
+/**
+ * Remember where the time of a failed build went. The engine calls this
+ * with the error a build fails with. Code that replaces that error by
+ * another one must call it again with the new error.
+ */
+export function recordFailedTimings(
+  cause: Error,
+  timings: readonly StageTiming[],
+): void {
+  failedTimings.set(cause, timings);
+}
+
+/**
+ * The stages a build ran before it failed with `cause`, in order. The last
+ * one is the stage that failed. `undefined` when no times are known for
+ * `cause`.
+ */
+export function failedTimingsOf(
+  cause: unknown,
+): readonly StageTiming[] | undefined {
+  return cause instanceof Error ? failedTimings.get(cause) : undefined;
+}
+
+/** How the documents of a build were made, by count. */
+export type DocumentReuse = {
+  /** Taken from a cache after one `stat`: the file was not read. */
+  readonly unchanged: number;
+  /** Taken from a cache after the file was read and its content compared. */
+  readonly compared: number;
+  /** Loaded, compiled and validated in this build. */
+  readonly validated: number;
+};
+
+/** A source whose documents are validated in every session, and why. */
+export type NotStored = {
+  readonly source: string;
+  readonly reason: string;
 };
 
 /** Outcome of a successful build. */
@@ -79,4 +134,13 @@ export type BuildResult = {
   readonly dryRun: boolean;
   /** Where the time went, in the order the stages ran. */
   readonly timings: readonly StageTiming[];
+  /** How many documents came from a cache, and how many were validated. */
+  readonly reuse: DocumentReuse;
+  /**
+   * Sources whose documents are not kept on disk although the document
+   * store is on (a field or loader that is not pure, a schema without a
+   * fingerprint): every new session validates them again. Sources that
+   * set `documentCache: false` are not listed.
+   */
+  readonly notStored: readonly NotStored[];
 };
