@@ -152,27 +152,60 @@ function collectText(node: Nodes, out: string[]): void {
   }
 }
 
-/**
- * Visible text of a Markdown / MDX body, whitespace collapsed. Code blocks,
- * raw HTML, images, MDX ESM and `{expressions}` are left out; text inside
- * JSX elements is kept.
- */
-export function toPlainText(source: string, syntax: BodySyntax = {}): string {
-  if (source.trim().length === 0) return "";
+/** Plain text of the bodies read last: body-derived fields of one document share it. */
+const PLAIN_TEXT_MEMO_SIZE = 32;
+const plainTextMemo = new Map<string, string>();
+
+function computePlainText(source: string, syntax: BodySyntax): string {
   const out: string[] = [];
   collectText(parseBody(source, syntax), out);
   return out.join("").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Visible text of a Markdown / MDX body, whitespace collapsed. Code blocks,
+ * raw HTML, images, MDX ESM and `{expressions}` are left out; text inside
+ * JSX elements is kept.
+ *
+ * The last few results are remembered: `s.excerpt()` and `s.metadata()` of
+ * one document parse the body once.
+ */
+export function toPlainText(source: string, syntax: BodySyntax = {}): string {
+  if (source.trim().length === 0) return "";
+  const key = `${syntax.mdx ? "x" : "m"}${source}`;
+  const known = plainTextMemo.get(key);
+  if (known !== undefined) return known;
+  const text = computePlainText(source, syntax);
+  if (plainTextMemo.size >= PLAIN_TEXT_MEMO_SIZE) {
+    for (const oldest of plainTextMemo.keys()) {
+      plainTextMemo.delete(oldest);
+      break;
+    }
+  }
+  plainTextMemo.set(key, text);
+  return text;
+}
+
+type Granularity = "word" | "grapheme";
+
+const segmenters = new Map<string, Intl.Segmenter>();
+
+/** Segmenters are costly to create: one per locale and granularity. */
 function segmenter(
   locale: string | undefined,
-  granularity: "word" | "grapheme",
+  granularity: Granularity,
 ): Intl.Segmenter {
-  try {
-    return new Intl.Segmenter(locale, { granularity });
-  } catch {
-    return new Intl.Segmenter("en", { granularity });
+  const key = `${granularity}\u0000${locale ?? ""}`;
+  let known = segmenters.get(key);
+  if (!known) {
+    try {
+      known = new Intl.Segmenter(locale, { granularity });
+    } catch {
+      known = new Intl.Segmenter("en", { granularity });
+    }
+    segmenters.set(key, known);
   }
+  return known;
 }
 
 /** Number of words, using the locale's word segmentation (works for CJK, Cyrillic, …). */
@@ -189,14 +222,26 @@ export function countWords(text: string, locale?: string): number {
  * including the trailing `…`. Never splits an emoji or combined character.
  */
 export function truncateText(text: string, length: number): string {
-  const graphemes = [...segmenter(undefined, "grapheme").segment(text)].map(
-    (segment) => segment.segment,
-  );
-  if (graphemes.length <= length) return text;
-  if (length <= 1) return "…".slice(0, length);
-  const head = graphemes
-    .slice(0, length - 1)
-    .join("")
-    .trimEnd();
-  return `${head}…`;
+  // A grapheme has at least one UTF-16 code unit.
+  if (text.length <= length) return text;
+  if (length <= 0) return "";
+  if (length === 1) {
+    const iterator = segmenter(undefined, "grapheme")
+      .segment(text)
+      [Symbol.iterator]();
+    iterator.next();
+    return iterator.next().done === true ? text : "…";
+  }
+  // Only the first `length` graphemes matter: stop there instead of
+  // segmenting the whole text.
+  let count = 0;
+  let headEnd = 0;
+  for (const segment of segmenter(undefined, "grapheme").segment(text)) {
+    count += 1;
+    if (count > length) {
+      return `${text.slice(0, headEnd).trimEnd()}…`;
+    }
+    if (count === length - 1) headEnd = segment.index + segment.segment.length;
+  }
+  return text;
 }

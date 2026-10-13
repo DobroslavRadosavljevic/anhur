@@ -78,17 +78,19 @@ function finalDocument(
   };
 }
 
-function validatedOf(
+/** The document as it was before its transform: `data` is the schema output. */
+function transformedFrom(
   document: FinalDocument,
   data: DocumentFields,
-): ValidatedDocument {
-  return {
+): FinalDocument {
+  const origin: ValidatedDocument = {
     file: document.file,
     hash: "",
     draft: false,
     data,
     effects: document.effects,
   };
+  return { ...document, origin };
 }
 
 function group(
@@ -173,15 +175,19 @@ describe("discriminated unions (H2, H3)", () => {
       slug: "f",
       author: "A visiting writer",
     });
-    const diagnostics = resolveRelations(
-      project,
-      [group(authorSource, [ada]), group(postSource, [post, guest, freeText])],
-      [],
-    );
+    const postGroup = group(postSource, [post, guest, freeText]);
+    const diagnostics = resolveRelations(project, [
+      group(authorSource, [ada]),
+      postGroup,
+    ]);
     expect(diagnostics).toEqual([]);
-    expect(post.data.author).toMatchObject({ name: "Ada" });
-    expect(guest.data.author).toBe("ada");
-    expect(freeText.data.author).toBe("A visiting writer");
+    const [embedded, sameGuest, sameFreeText] = postGroup.documents;
+    expect(embedded?.data.author).toMatchObject({ name: "Ada" });
+    expect(sameGuest?.data.author).toBe("ada");
+    expect(sameFreeText?.data.author).toBe("A visiting writer");
+    // Documents are replaced, never changed in place.
+    expect(post.data.author).toBe("ada");
+    expect(sameGuest).toBe(guest);
   });
 });
 
@@ -202,30 +208,30 @@ describe("references and transforms (M2)", () => {
     ]);
 
   it("checks the schema value even when the transform renames the field", () => {
-    const post = finalDocument(postSource, "p", { writer: "nobody" });
-    const diagnostics = resolveRelations(
-      project,
-      [people(), group(postSource, [post])],
-      [validatedOf(post, { author: "nobody" })],
+    const post = transformedFrom(
+      finalDocument(postSource, "p", { writer: "nobody" }),
+      { author: "nobody" },
     );
+    const postGroup = group(postSource, [post]);
+    const diagnostics = resolveRelations(project, [people(), postGroup]);
     expect(diagnostics.map((d) => [d.code, d.fieldPath])).toEqual([
       ["reference-failed", ["author"]],
     ]);
-    expect(post.data.writer).toBe("nobody");
+    expect(postGroup.documents[0]?.data.writer).toBe("nobody");
   });
 
   it("checks and embeds a value the transform put at the reference location", () => {
-    const changed = finalDocument(postSource, "p", { author: "bob" });
-    const missing = finalDocument(postSource, "q", { author: "zed" });
-    const diagnostics = resolveRelations(
-      project,
-      [people(), group(postSource, [changed, missing])],
-      [
-        validatedOf(changed, { author: "ada" }),
-        validatedOf(missing, { author: "ada" }),
-      ],
+    const changed = transformedFrom(
+      finalDocument(postSource, "p", { author: "bob" }),
+      { author: "ada" },
     );
-    expect(changed.data.author).toMatchObject({ name: "Bob" });
+    const missing = transformedFrom(
+      finalDocument(postSource, "q", { author: "zed" }),
+      { author: "ada" },
+    );
+    const postGroup = group(postSource, [changed, missing]);
+    const diagnostics = resolveRelations(project, [people(), postGroup]);
+    expect(postGroup.documents[0]?.data.author).toMatchObject({ name: "Bob" });
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.hint).toContain("The transform set this value.");
   });

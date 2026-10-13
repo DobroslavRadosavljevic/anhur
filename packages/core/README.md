@@ -137,6 +137,43 @@ Builds of one session (`createAnhur`, watch, the Vite plugin) run one at a time.
 
 A failed build writes nothing; the previous output stays. Errors are `AnhurBuildError`s with a list of `diagnostics` (`code`, `message`, `file`, `fieldPath`, `hint`).
 
+## ⚡ Speed
+
+Anhur is built for sites with thousands of files. A build does work only for what changed.
+
+| Situation                                | What Anhur does                                                                                                                                          |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rebuild in a session (dev server, watch) | One `stat` per file. An unchanged document is not read, compiled, checked, serialized or written again.                                                  |
+| New session, files unchanged             | Validated documents come from `.anhur/cache/documents`. Files are not read, parsed or compiled.                                                          |
+| New session after a checkout             | Files with new times are read once and compared by content. The next session does not read them.                                                         |
+| New session after a config change        | Documents are validated again. Compiled fields (Markdown, MDX, images) come from `.anhur/cache/fields`, unless their options hold functions (see below). |
+| First build                              | Documents are compiled in worker threads when that is faster (see `workers` below).                                                                      |
+
+Numbers for your project: `anhur build --timings` prints the time of each stage, how many documents came from a cache, and which sources are not kept on disk and why. The same is in `result.timings`, `result.reuse` and `result.notStored`. A failed build has its stage times in `error.timings`.
+
+Rules that make this safe:
+
+- **Documents are frozen.** Data from the schema, a transform or `prepare` cannot be changed later, also below a Zod `.readonly()`. `transform` and `prepare` get their own copies; hooks, views and plugins get read-only documents and read-only lists of them (`[...source.documents].sort()`, not `source.documents.sort()`). An unchanged document is the same object in every build of a session, so a plugin can compare by identity. That also holds when a `prepare` hook or a transform runs again and gives the same data.
+- **`transform` runs again only when its document changed**, or when a source it read through `ctx.documents()` changed. A transform that reads something else (a file, an environment variable, the network) sets `transformCache: false` on the collection and runs on every build.
+- **A stored document is reused only when everything it was made from is the same**:
+  - the file, and the files a field reported (`addDependency`, assets): size, times and inode;
+  - the config file and every module it imports that is not an installed package (relative paths, package `imports` such as `#cms/notes`, workspace packages, `paths` aliases under Bun);
+  - the lockfile, and the entry file of each installed package the config imports;
+  - the schema (shape, checks, defaults, the source of its functions), the loaders and the plugins.
+- **What Anhur cannot see**: a schema that reads something else when it runs (the clock, an environment variable, the network) in a `.transform()`, `.refine()` or default. Set `documentCache: false` on that collection: it is then validated in every new session, in the main thread.
+- **A view, index or group is resolved again only when a document it is made from changed.** `generate: { cache: false }` resolves it on every build, for a `where`, `select`, key function or `compare` that reads something else.
+- **A file is "unchanged" when its size, times and inode are the same.** A file modified in the last seconds is compared by content instead, so two quick saves are never missed.
+- **Compiled fields with functions in their options** (`remarkPlugins`, `rehypePlugins`, `documentLink`) compile again after every config change: a function is only known by its source.
+- **`dev` and `build` have their own cache folders**, so `vite dev` after `anhur build` is still a warm start.
+- **`workers`** in `defineConfig`:
+  - `true` (default): when 128 or more documents with cached compiled fields wait, Anhur validates some in the main thread to learn what one costs. It starts 2 to 6 worker threads when the rest would take longer than about a second.
+  - A number: start that many when 128 or more such documents wait, without measuring.
+  - `false`: no workers.
+
+  Each worker loads the config file and the compilers itself and runs the `setup` hook of every plugin, so workers trade memory for time. Use `workers: false` when a custom field or loader keeps state in memory that another part of the config reads (a list read by a plugin hook, a counter shared between documents), or when the config computes a value at load time that documents use through a function (a build id from the clock): each worker computes its own.
+
+- **`cacheDir: false`** turns the disk caches off.
+
 ## ⚙️ Generated exports
 
 Per collection `posts` (type `Post`):
@@ -191,6 +228,7 @@ anhur build              # validate and write
 anhur check              # validate only, write nothing (CI)
 anhur watch              # rebuild on change; errors keep the last good output
 anhur build --root site --config content/anhur.config.ts --json
+anhur build --timings    # time of each stage, and what came from a cache
 ```
 
 Exit code is `1` on errors; `--json` prints a machine-readable report with diagnostics.
@@ -203,6 +241,9 @@ import { build, check, createAnhur, watch } from "@anhur/core/build";
 const result = await build({ rootDir: "site", mode: "build" });
 result.documentCount;
 result.written; // files that changed
+result.timings; // [{ stage: "validate", ms: 412 }, …]
+result.reuse; // { unchanged: 4998, compared: 0, validated: 2 }
+result.notStored; // [{ source: "posts", reason: 'the field "views" (api) is not pure and has no cache' }]
 
 const controller = await watch(
   { rootDir: "site" },
@@ -214,7 +255,7 @@ const controller = await watch(
 await controller.close();
 ```
 
-`createAnhur(options)` keeps a session (config and field caches) for repeated builds — what the Vite plugin uses.
+`createAnhur(options)` keeps a session for repeated builds — what the Vite plugin uses. A session remembers the config, every validated document and what later stages made of it, so a rebuild only does work for changed files. Call `close()` when done.
 
 ## 🔌 Plugins
 
@@ -235,7 +276,35 @@ const sitemap = definePlugin({
 });
 ```
 
-Hooks: `setup` (validate options), `loaders` (new file types), `generate` (emit modules), `beforePublish` / `afterPublish` (side effects such as uploads). Custom fields use `defineField(zodSchema, { kind, compile, cache })` from `@anhur/core/plugin`.
+Hooks: `setup` (validate options), `loaders` (new file types), `generate` (emit modules), `beforePublish` / `afterPublish` (side effects such as uploads). In a session, `context.sources` holds the same document objects for unchanged documents, so `generate` can skip work for a source whose documents are the same as last time. The lists are frozen: copy one before you sort it.
+
+Custom fields use `defineField(zodSchema, { kind, whenAbsent, compile, cache, pure, shares })` from `@anhur/core/plugin`:
+
+| Option       | Use                                                                                                                                                                                                                                      |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `whenAbsent` | `"skip"`: leave a missing key to Zod. `"compile"`: call `compile` with `undefined` (fields made from the body).                                                                                                                          |
+| `cache`      | `{ version, key }`: keep the compiled value on disk. `key(context)` covers every option that changes the value.                                                                                                                          |
+| `pure`       | `true` when the value depends only on the input, the body, the document and what the field reports through its context. A field made with options passes `{ key: fingerprint(options) }`: the engine knows `compile` by its source only. |
+| `shares`     | Keys of the values this field computes through `context.share(key, compute)`, so another field of the document can use the same work (`s.toc()` reads the headings of the body `m.body()` compiles). Start a key with your plugin name.  |
+
+Documents of a source are restored from disk in the next session when every compiled field has `pure` or `cache` and the loader of the file is pure. A field without them (for example one that calls an API) runs in every new session, and so does every field of its source: `result.notStored` names it.
+
+A custom loader sets `pure: true` when its result depends only on the text of the file:
+
+```ts
+defineConfig({
+  loaders: [
+    {
+      name: "toml",
+      test: /\.toml$/,
+      pure: true,
+      load: ({ raw }) => ({ data: parseToml(raw) }),
+    },
+  ],
+});
+```
+
+A loader that reads anything else (a second file, `git`, the clock) leaves `pure` out.
 
 ## License
 

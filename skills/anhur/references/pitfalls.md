@@ -114,6 +114,16 @@ Pass `{ locale, slug }` with the generated `Locale`. Scope lists with `_meta.loc
 
 `ctx.documents(source)` gives validated, pre-transform, frozen documents of another source. Reading files with `fs` inside `transform` is not tracked for rebuilds; use a custom field with `context.addDependency(path)` instead.
 
+In a session (dev server, watch) a `transform` runs again only when its document changed or a source it read through `ctx.documents()` changed. A transform that reads anything else (files, environment, network) needs `transformCache: false` on the collection.
+
+Validated documents are also kept on disk between sessions. A schema whose `.transform()`, `.refine()` or default reads anything besides the file (clock, environment, network) needs `documentCache: false` on the collection. A view whose `where` / `select` / `compare` does the same needs `generate: { cache: false }`.
+
+Document data is frozen after validation, also below a Zod `.readonly()`. Do not change a document in a view callback, a plugin hook or `onSuccess`; return a new object. The document lists of plugin hooks are frozen too: `[...source.documents].sort()`, not `source.documents.sort()`. `transform` and `prepare` get their own copies and may change them.
+
+Custom fields that keep state in memory (a list filled in `compile`, read by a plugin hook; a counter shared between documents) do not work with worker threads: set `workers: false` in `defineConfig`. The same holds for a value the config computes when it loads (a build id from the clock) that documents use through a function: each worker computes its own.
+
+Mark a custom field `pure: true` only when its value depends on nothing but its input, the body, the document and what it reports through the field context. A pure field with options needs `pure: { key: fingerprint(options) }`, or a changed option gives the stored document of the old one. A custom field without `pure` or `cache`, or a custom loader without `pure: true`, makes every new session validate the whole collection again; `anhur build --timings` names it.
+
 ## Plain union with content fields
 
 `s.union([s.object({ cover: a.image() }), …])` is rejected — the walker cannot tell which branch holds the field. Use `s.discriminatedUnion("type", [...])`; references and uniques are then checked only in the variant a document selects.

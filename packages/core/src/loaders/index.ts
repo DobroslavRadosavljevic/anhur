@@ -69,6 +69,7 @@ export function splitFrontmatter(raw: string): FrontmatterParts {
 /** YAML frontmatter + body for `.md` / `.mdx` / `.markdown`. */
 export const matterLoader: Loader = {
   name: "frontmatter",
+  pure: true,
   test: /\.(?:md|mdx|markdown)$/i,
   load({ raw }): LoadedFile {
     const { frontmatter, body } = splitFrontmatter(raw);
@@ -83,6 +84,7 @@ export const matterLoader: Loader = {
 /** Whole-file YAML. */
 export const yamlLoader: Loader = {
   name: "yaml",
+  pure: true,
   test: /\.ya?ml$/i,
   load({ raw }): LoadedFile {
     return { data: parseYamlFields(raw, "YAML document") };
@@ -92,6 +94,7 @@ export const yamlLoader: Loader = {
 /** Whole-file JSON. */
 export const jsonLoader: Loader = {
   name: "json",
+  pure: true,
   test: /\.json$/i,
   load({ raw }): LoadedFile {
     const value: unknown = JSON.parse(raw.replace(/^\uFEFF/, ""));

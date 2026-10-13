@@ -43,12 +43,24 @@ function isIgnoredName(file: string): boolean {
   return name.startsWith(".") || TEMP_FILE.test(name);
 }
 
+/** `targets.files` as a set: a large site watches thousands of single files. */
+const fileSets = new WeakMap<WatchTargets, ReadonlySet<string>>();
+
+function watchedFiles(targets: WatchTargets): ReadonlySet<string> {
+  let files = fileSets.get(targets);
+  if (!files) {
+    files = new Set(targets.files);
+    fileSets.set(targets, files);
+  }
+  return files;
+}
+
 function classify(
   file: string,
   targets: WatchTargets,
 ): "ignored" | "relevant" | "unknown" {
   if (targets.ignore.some((dir) => isInside(file, dir))) return "ignored";
-  if (targets.files.includes(file)) return "relevant";
+  if (watchedFiles(targets).has(file)) return "relevant";
   if (isIgnoredName(file)) return "ignored";
   if (file.split(path.sep).includes("node_modules")) return "ignored";
   return targets.directories.some((dir) => isInside(file, dir))

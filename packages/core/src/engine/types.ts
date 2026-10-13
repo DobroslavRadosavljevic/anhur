@@ -21,7 +21,11 @@ export type DocumentEffects = {
   readonly cacheKeys: readonly string[];
 };
 
-/** A document after loading, field compilation and Zod validation. */
+/**
+ * A document after loading, field compilation and Zod validation. `data` is
+ * deeply frozen: the same object is reused by every later build of the
+ * session while the file does not change.
+ */
 export type ValidatedDocument = {
   readonly file: SourceFile;
   /** SHA-256 of the raw file text. */
@@ -32,11 +36,18 @@ export type ValidatedDocument = {
   readonly effects: DocumentEffects;
 };
 
-/** A document that is part of the output (after transform / relations / prepare). */
+/**
+ * A document that is part of the output (after transform / relations /
+ * prepare). Never changed in place: a stage that changes a document makes a
+ * new one, so an unchanged document is the same object in every build and
+ * later stages can keep what they computed for it.
+ */
 export type FinalDocument = {
   readonly file: SourceFile;
-  data: DocumentFields;
+  readonly data: DocumentFields;
   readonly effects: DocumentEffects;
+  /** The validated document this one was made from. */
+  readonly origin?: ValidatedDocument;
 };
 
 /** Documents of one source at some stage. */

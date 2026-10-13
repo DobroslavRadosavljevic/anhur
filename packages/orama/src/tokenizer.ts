@@ -9,8 +9,8 @@ export type TokenizerSpec = {
   readonly stemmer?: StemmerLanguage;
 };
 
-/** Folded words kept per tokenizer (bounded, least recently used dropped). */
-const CACHE_SIZE = 2048;
+/** Folded words kept per tokenizer; the cache starts over when it is full. */
+const CACHE_SIZE = 8192;
 
 /** Runs of Han, Hiragana, Katakana or Hangul (languages written without spaces between words). */
 const CJK_RUN =
@@ -110,17 +110,11 @@ export function createUnicodeTokenizer(
   const tokensOf = (word: string, query: boolean): readonly string[] => {
     const key = `${query ? "q" : "i"}${word}`;
     const cached = cache.get(key);
-    if (cached !== undefined) {
-      cache.delete(key);
-      cache.set(key, cached);
-      return cached;
-    }
+    if (cached !== undefined) return cached;
     const tokens = wordTokens(word, locale, stemmer, query);
+    // Reordering entries on every hit costs more than folding a word again.
+    if (cache.size >= CACHE_SIZE) cache.clear();
     cache.set(key, tokens);
-    if (cache.size > CACHE_SIZE) {
-      const oldest = cache.keys().next();
-      if (oldest.done !== true) cache.delete(oldest.value);
-    }
     return tokens;
   };
   return {

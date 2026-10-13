@@ -2,6 +2,7 @@ import { Predicate } from "effect";
 import { z } from "zod";
 import type { EmbeddedDocument } from "../define/infer";
 import type { DocumentValue } from "../document";
+import { fingerprint } from "../engine/fingerprint";
 import { slugDropsCharacters, slugify } from "../naming";
 import type {
   AnhurPlugin,
@@ -60,6 +61,7 @@ export function raw(): z.ZodString {
   return defineField(z.string(), {
     kind: "raw",
     whenAbsent: "compile",
+    pure: true,
     compile: (input, context) =>
       stringInput(input, context) ?? context.body ?? "",
   });
@@ -84,6 +86,7 @@ export function excerpt(options: ExcerptOptions = {}): z.ZodString {
   return defineField(z.string(), {
     kind: "excerpt",
     whenAbsent: "compile",
+    pure: { key: fingerprint([length]) },
     compile: (input, context) => {
       const source = stringInput(input, context) ?? context.body ?? "";
       return truncateText(toPlainText(source, { mdx: isMdx(context) }), length);
@@ -111,6 +114,7 @@ export function metadata(
   return defineField(DocumentMetadataSchema, {
     kind: "metadata",
     whenAbsent: "compile",
+    pure: { key: fingerprint([wordsPerMinute]) },
     compile: (input, context): DocumentMetadata => {
       assertAbsent(input, context);
       const text = toPlainText(context.body ?? "", { mdx: isMdx(context) });
@@ -162,12 +166,15 @@ export function toc(options: TocOptions = {}): z.ZodType<TocEntry[]> {
     kind: "toc",
     whenAbsent: "compile",
     cache: {
-      version: `toc-2;${BODY_PARSER_VERSION}`,
+      version: `toc-3;${BODY_PARSER_VERSION}`,
       key: (context) => {
         const plugin = headingsPlugin(context);
-        return plugin
+        const source = plugin
           ? `${plugin.name}@${plugin.version ?? ""};${plugin.headings.key(context)}`
           : "builtin";
+        // The options shape the value: `maxDepth: 2` must not read an
+        // entry cached for `maxDepth: 3`.
+        return `${JSON.stringify(options)};${source}`;
       },
     },
     compile: async (input, context) => {
@@ -268,6 +275,7 @@ export function slug(options: SlugOptions = {}): z.ZodString {
   const spec = {
     kind: "slug",
     whenAbsent: "compile" as const,
+    pure: { key: fingerprint(options) },
     compile: (input: DocumentValue, context: FieldContext) => {
       const explicit = stringInput(input, context);
       const derived = explicit === undefined || explicit.length === 0;
@@ -384,31 +392,51 @@ export type IsoDateOptions = {
   readonly output?: "datetime" | "date";
 };
 
+/** Epoch milliseconds of an `isodate` input; reports a problem and gives `undefined` when it is no date. */
+function isoEpoch(
+  value: string | Date,
+  ctx: z.core.$RefinementCtx<string | Date>,
+): number | undefined {
+  if (value instanceof Date) {
+    const epoch = value.getTime();
+    if (!Number.isNaN(epoch)) return epoch;
+    ctx.addIssue({ code: "custom", message: "Invalid date" });
+    return undefined;
+  }
+  const parsed = parseIsoDate(value);
+  if (parsed.ok) return parsed.epoch;
+  ctx.addIssue({ code: "custom", message: parsed.reason });
+  return undefined;
+}
+
+// Two functions, not one that reads `output`: a schema is known to the
+// document store by the source of its functions.
+function toIsoDateTime(
+  value: string | Date,
+  ctx: z.core.$RefinementCtx<string | Date>,
+): string {
+  const epoch = isoEpoch(value, ctx);
+  return epoch === undefined ? z.NEVER : new Date(epoch).toISOString();
+}
+
+function toIsoDate(
+  value: string | Date,
+  ctx: z.core.$RefinementCtx<string | Date>,
+): string {
+  const epoch = isoEpoch(value, ctx);
+  return epoch === undefined
+    ? z.NEVER
+    : new Date(epoch).toISOString().slice(0, 10);
+}
+
 /**
  * ISO 8601 date string. Accepts a string or a `Date` (YAML parses bare dates
  * as `Date`) and outputs a normalized string.
  */
 export function isodate(options: IsoDateOptions = {}) {
-  const output = options.output ?? "datetime";
-  return z.union([z.string(), z.date()]).transform((value, ctx) => {
-    let epoch: number;
-    if (value instanceof Date) {
-      epoch = value.getTime();
-      if (Number.isNaN(epoch)) {
-        ctx.addIssue({ code: "custom", message: "Invalid date" });
-        return z.NEVER;
-      }
-    } else {
-      const parsed = parseIsoDate(value);
-      if (!parsed.ok) {
-        ctx.addIssue({ code: "custom", message: parsed.reason });
-        return z.NEVER;
-      }
-      epoch = parsed.epoch;
-    }
-    const iso = new Date(epoch).toISOString();
-    return output === "date" ? iso.slice(0, 10) : iso;
-  });
+  return z
+    .union([z.string(), z.date()])
+    .transform(options.output === "date" ? toIsoDate : toIsoDateTime);
 }
 
 /**

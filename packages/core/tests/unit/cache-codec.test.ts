@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DocumentValue } from "../../src/document";
+import { isPlainObject, type DocumentValue } from "../../src/document";
 import {
   canCache,
   decodeCacheValue,
@@ -34,6 +34,14 @@ describe("cache codec", () => {
     const decoded = roundTrip(value);
     expect(Object.keys(decoded ?? {})).toEqual(["__proto__", "y"]);
     expect(Object.getPrototypeOf(decoded)).toBe(Object.prototype);
+  });
+
+  it("keeps an invalid date invalid", () => {
+    const decoded = roundTrip({ bad: new Date(Number.NaN), good: new Date(5) });
+    if (!isPlainObject(decoded)) throw new Error("expected an object");
+    const { bad, good } = decoded;
+    expect(bad instanceof Date && Number.isNaN(bad.getTime())).toBe(true);
+    expect(good instanceof Date && good.getTime()).toBe(5);
   });
 
   it("refuses values it cannot round-trip", () => {

@@ -1,4 +1,5 @@
 import { formatFieldPath, type FieldPath } from "./document";
+import type { StageTiming } from "./engine/result";
 
 /**
  * Stable machine-readable diagnostic codes. Each pipeline stage reports with
@@ -137,10 +138,18 @@ export function hasErrors(diagnostics: readonly Diagnostic[]): boolean {
  */
 export class AnhurBuildError extends Error {
   readonly diagnostics: readonly Diagnostic[];
+  /**
+   * The stages the build ran before it failed, in order, with their times.
+   * The last one is the stage that failed. Empty when the times are not
+   * known (an unexpected error).
+   */
+  readonly timings: readonly StageTiming[];
 
   constructor(
     diagnostics: readonly Diagnostic[],
-    options: FormatDiagnosticOptions = {},
+    options: FormatDiagnosticOptions & {
+      readonly timings?: readonly StageTiming[];
+    } = {},
   ) {
     const errors = diagnostics.filter((d) => d.severity === "error");
     const count = errors.length;
@@ -151,6 +160,7 @@ export class AnhurBuildError extends Error {
     super(`${head}\n${formatDiagnostics(diagnostics, options)}`);
     this.name = "AnhurBuildError";
     this.diagnostics = diagnostics;
+    this.timings = options.timings ?? [];
   }
 }
 

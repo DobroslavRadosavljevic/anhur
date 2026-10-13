@@ -1,5 +1,10 @@
 export { orama } from "./plugin";
-export { generateSearchModules, type RuntimeOramaOptions } from "./build";
+export {
+  createSearchMemory,
+  generateSearchModules,
+  type RuntimeOramaOptions,
+  type SearchMemory,
+} from "./build";
 export { createUnicodeTokenizer, type TokenizerSpec } from "./tokenizer";
 export {
   STEMMER_LANGUAGES,
