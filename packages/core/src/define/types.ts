@@ -156,6 +156,18 @@ export type SingletonOnSuccess = (
  */
 export type TransformCacheOption = boolean;
 
+/**
+ * `documentCache` of a collection / singleton. Validated documents are
+ * kept on disk, and a later session reuses the document of a file that did
+ * not change instead of validating it again. That is only right when the
+ * schema gives the same output for the same file every time. Set `false`
+ * when a `.transform()`, `.refine()` or default in the schema reads
+ * something else (the clock, an environment variable, the network): every
+ * new session then validates the documents of this source again. Default
+ * `true`.
+ */
+export type DocumentCacheOption = boolean;
+
 /** Transform function as stored on a definition. */
 export type DocumentTransform = (
   document: TransformDocument,
@@ -179,6 +191,8 @@ export type CollectionDefinition<
   readonly transform?: DocumentTransform;
   /** See {@link TransformCacheOption}. */
   readonly transformCache?: boolean;
+  /** See {@link DocumentCacheOption}. */
+  readonly documentCache?: boolean;
   readonly onSuccess?: CollectionOnSuccess;
   readonly generate?: CollectionGenerateOptions;
   /** Phantom: document data after schema + transform. */
@@ -206,6 +220,8 @@ export type SingletonDefinition<
   readonly transform?: DocumentTransform;
   /** See {@link TransformCacheOption}. */
   readonly transformCache?: boolean;
+  /** See {@link DocumentCacheOption}. */
+  readonly documentCache?: boolean;
   readonly onSuccess?: SingletonOnSuccess;
   readonly generate?: SingletonGenerateOptions;
   readonly _data?: TData;
@@ -225,6 +241,13 @@ export type DerivedGenerateOptions = {
   readonly compare?: (a: DocumentFields, b: DocumentFields) => number;
   /** Keep at most this many items (views: whole list; groups: per group). */
   readonly limit?: number;
+  /**
+   * In a build session the result is kept while the documents it is made
+   * from stay the same. Set `false` when `where`, `select`, a key function
+   * or `compare` reads something else (the clock, an environment variable):
+   * the view is then resolved on every build. Default `true`.
+   */
+  readonly cache?: boolean;
 };
 
 export type ViewGenerateOptions = DerivedGenerateOptions & {

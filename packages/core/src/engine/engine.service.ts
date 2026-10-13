@@ -110,7 +110,7 @@ type BuildMemory = {
   readonly derived: DeriveMemory;
   readonly plan: PlanMemory;
   readonly sources: Map<string, SourceRecord>;
-  /** Watch targets of the last build that found no changed document. */
+  /** Watch targets of the documents as they are now (`undefined`: not found yet). */
   watch: WatchTargets | undefined;
 };
 
@@ -635,7 +635,12 @@ export class Engine extends Context.Service<
           { dryRun: options.dryRun === true },
         );
         timed("validate");
-        if (validated.changed) cachesDirty = true;
+        if (validated.changed) {
+          cachesDirty = true;
+          // The watch targets come from the documents: find them again,
+          // also when this build fails before it gets there.
+          remembered.watch = undefined;
+        }
         const collectDiagnostics = [
           ...discovered.diagnostics,
           ...validated.diagnostics,
@@ -709,11 +714,10 @@ export class Engine extends Context.Service<
         const assetsInfo: AssetsInfo | undefined = bases
           ? { publicBase: bases.publicBase, localBase: bases.localBase }
           : undefined;
-        // The targets come from the documents: the same documents, the same targets.
+        // The same documents as in the build that found them: the same targets.
         const watch =
-          !validated.changed && remembered.watch
-            ? remembered.watch
-            : watchTargetsOf(project, loaded.configFiles, sources, assetsDir);
+          remembered.watch ??
+          watchTargetsOf(project, loaded.configFiles, sources, assetsDir);
         remembered.watch = watch;
         yield* Ref.update(state, (value) => ({ ...value, watch }));
         const assets = uniqueAssets(sources);

@@ -41,6 +41,7 @@ import {
   type SchemaAnalysis,
 } from "../schema/walk";
 import { fingerprint } from "./fingerprint";
+import { schemaFingerprint } from "./schema-fingerprint";
 import { isInside, overlaps } from "./paths";
 
 export type ResolvedCollectionGenerate = {
@@ -78,6 +79,12 @@ type SourceCommon = {
   /** Absolute directory the source reads from. */
   readonly root: string;
   readonly analysis: SchemaAnalysis;
+  /**
+   * Fingerprint of the schema (its shape, checks, defaults and the source
+   * of its functions), taken when the config is resolved. Stored documents are
+   * only valid for the schema that made them, wherever it is defined.
+   */
+  readonly schemaFingerprint: string;
   readonly references: readonly ReferenceLocation[];
   readonly uniques: readonly UniqueLocation[];
   /** Folder under the output dir for per-document modules (POSIX). */
@@ -692,6 +699,7 @@ function resolveCollection(
     include,
     exclude,
     analysis,
+    schemaFingerprint: schemaFingerprint(source.schema),
     references: referencesOf(analysis),
     uniques: uniquesOf(analysis),
     documentsDir,
@@ -830,6 +838,7 @@ function resolveSingleton(
     filePath,
     include: include.length > 0 ? include : DEFAULT_SINGLETON_INCLUDE,
     analysis,
+    schemaFingerprint: schemaFingerprint(source.schema),
     references: referencesOf(analysis),
     uniques: uniquesOf(analysis),
     documentsDir,

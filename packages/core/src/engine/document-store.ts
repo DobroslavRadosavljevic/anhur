@@ -9,7 +9,11 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { Predicate } from "effect";
-import { isPlainObject, type DocumentFields } from "../document";
+import {
+  isPlainObject,
+  type DocumentFields,
+  type DocumentValue,
+} from "../document";
 import type { AssetRef } from "../plugin/types";
 import { decodeCacheValue, encodeCacheValue } from "./cache-codec";
 import type { CachedDependency } from "./field-cache.service";
@@ -149,7 +153,13 @@ function parseStored(text: string): StoredDocument | undefined {
   ) {
     return undefined;
   }
-  const data = decodeCacheValue(raw.data);
+  let data: DocumentValue;
+  try {
+    data = decodeCacheValue(raw.data);
+  } catch {
+    // A damaged entry (for example a number that is not one): not stored.
+    return undefined;
+  }
   if (!isPlainObject(data)) return undefined;
   return {
     stamp: raw.stamp,

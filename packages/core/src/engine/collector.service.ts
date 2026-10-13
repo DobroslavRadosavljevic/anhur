@@ -233,6 +233,7 @@ function samplePath(pattern: readonly PatternSegment[]): FieldPath {
  * compiled field says its value only depends on what the engine tracks.
  */
 function isStorable(source: ResolvedSource): boolean {
+  if (source.definition.documentCache === false) return false;
   return source.analysis.fields.every(
     (field) =>
       field.spec.type !== "compile" ||
@@ -449,6 +450,10 @@ function storeAccess(
 ): StoreAccess | undefined {
   const cacheDir = project.cacheDir;
   if (cacheDir === undefined) return undefined;
+  // The config fingerprint covers the config file and the modules it
+  // imports by relative path. Loaders and plugins are fingerprinted too
+  // (options, source of functions), like each schema below: they may come
+  // from another package.
   const base = sha256(
     JSON.stringify([
       STORE_STAMP_VERSION,
@@ -456,6 +461,8 @@ function storeAccess(
       ZOD_VERSION,
       project.fingerprint,
       session.publicBase ?? null,
+      fingerprint(project.loaders),
+      fingerprint(project.plugins),
     ]),
   );
   /** Per source and file extension; `null` when the source is not stored. */
@@ -472,7 +479,9 @@ function storeAccess(
           const spec = field.spec;
           if (spec.type !== "compile") return [];
           const location = formatPattern(field.pattern);
-          if (!spec.cache) return [[location, spec.kind]];
+          if (!spec.cache) {
+            return [[location, spec.kind, fingerprint(spec.compile)]];
+          }
           const context = createFieldContext(
             session,
             file,
@@ -484,7 +493,7 @@ function storeAccess(
             [location, spec.kind, spec.cache.version, spec.cache.key(context)],
           ];
         });
-        stamp = sha256(JSON.stringify(parts));
+        stamp = sha256(JSON.stringify([file.source.schemaFingerprint, parts]));
       } catch {
         // A cache key that cannot be computed here: do not store the source.
         stamp = null;
@@ -1387,6 +1396,8 @@ export class Collector extends Context.Service<
           ...recorder.dependencies,
           ...recorder.assets.keys(),
         ]);
+        // A value two fields share reports its warnings to both: once is enough.
+        const warnings = [...new Set(recorder.warnings)];
         const storeKey = store?.keyOf(file);
         if (
           store &&
@@ -1405,7 +1416,7 @@ export class Collector extends Context.Service<
             dependencies: document.effects.dependencies,
             watched: dependencies,
             cacheKeys: document.effects.cacheKeys,
-            warnings: [...recorder.warnings],
+            warnings,
           };
           yield* fileWork(() =>
             writeStoredDocument(store.cacheDir, storeKey, entry),
@@ -1413,7 +1424,7 @@ export class Collector extends Context.Service<
         }
         const fresh: FreshDocument = {
           document,
-          warnings: [...recorder.warnings],
+          warnings,
           dependencies,
           storeKey,
         };

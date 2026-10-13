@@ -108,24 +108,74 @@ function patternSource(pattern: string): string | undefined {
 /** Tests a POSIX path relative to the folder the patterns apply to. */
 export type PathMatcher = (relativePath: string) => boolean;
 
+/** `./posts/*.md` and `posts/*.md` are the same pattern. */
+function withoutDotPrefix(pattern: string): string {
+  let rest = pattern;
+  while (rest.startsWith("./")) rest = rest.slice(2);
+  return rest;
+}
+
+function toRegExp(source: string): RegExp | undefined {
+  try {
+    return new RegExp(`^(?:${source})$`, IGNORE_CASE ? "i" : "");
+  } catch {
+    // For example a class with a reversed range (`[z-a]`).
+    return undefined;
+  }
+}
+
 /**
  * Matcher for a glob pattern, with the semantics of Node's `fs.glob` /
  * `path.matchesGlob`. Plain patterns (`**`, `*`, `?`, `[a-z]`, `{a,b}`)
  * are compiled once; anything else is left to `path.matchesGlob`.
  */
 export function compileGlob(pattern: string): PathMatcher {
-  const alternatives = expandBraces(pattern);
+  const plain = withoutDotPrefix(pattern);
+  const alternatives = expandBraces(plain);
   const sources = alternatives?.map((alternative) =>
     patternSource(alternative),
   );
-  if (!sources || sources.includes(undefined)) {
-    return (relativePath) => path.matchesGlob(relativePath, pattern);
+  const compiled =
+    sources && !sources.includes(undefined)
+      ? toRegExp(sources.join("|"))
+      : undefined;
+  if (!compiled) {
+    return (relativePath) => path.matchesGlob(relativePath, plain);
   }
-  const compiled = new RegExp(
-    `^(?:${sources.join("|")})$`,
-    IGNORE_CASE ? "i" : "",
-  );
   return (relativePath) => compiled.test(relativePath);
+}
+
+/**
+ * Decides whether a folder behind a symbolic link is entered. Node's glob
+ * follows such a folder when a pattern names it with its own segments
+ * (`guides/*.md`, or a `*` segment), but never while expanding `**`.
+ * Patterns this module does not compile itself never follow links.
+ */
+function linkFollower(patterns: readonly string[]): PathMatcher {
+  const prefixes: RegExp[][] = [];
+  for (const pattern of patterns) {
+    for (const alternative of expandBraces(withoutDotPrefix(pattern)) ?? []) {
+      const segments = alternative.split("/");
+      const matchers: RegExp[] = [];
+      // The last segment names files; the ones before it name folders.
+      for (const segment of segments.slice(0, -1)) {
+        if (segment === "**") break;
+        const source = segmentSource(segment);
+        const matcher = source === undefined ? undefined : toRegExp(source);
+        if (!matcher) break;
+        matchers.push(matcher);
+      }
+      if (matchers.length > 0) prefixes.push(matchers);
+    }
+  }
+  return (relativePath) => {
+    const names = relativePath.split("/");
+    return prefixes.some(
+      (matchers) =>
+        names.length <= matchers.length &&
+        names.every((name, index) => matchers[index]!.test(name)),
+    );
+  };
 }
 
 /** What to list below a folder. */
@@ -142,12 +192,15 @@ function isSkipped(absolute: string, skip: readonly string[]): boolean {
   );
 }
 
-/** True when a symbolic link points at a file. */
-async function linksToFile(absolute: string): Promise<boolean> {
+/** What a symbolic link points at (`undefined`: nothing, or not readable). */
+async function linkTarget(
+  absolute: string,
+): Promise<"file" | "folder" | undefined> {
   try {
-    return (await stat(absolute)).isFile();
+    const info = await stat(absolute);
+    return info.isFile() ? "file" : info.isDirectory() ? "folder" : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -160,8 +213,10 @@ export type ContentFile = {
 
 /**
  * The files below `root` that match `include` and not `exclude`, sorted by
- * absolute path. Dotfiles, dot-folders and `node_modules` are never listed,
- * and folders behind symbolic links are not entered. Rejects when a folder
+ * absolute path. Dotfiles, dot-folders and `node_modules` are never listed.
+ * A folder behind a symbolic link is entered only when a pattern names it
+ * (see {@link linkFollower}). A folder below `root` that cannot be read (no
+ * permission, deleted while listing) is skipped; rejects when `root` itself
  * cannot be read.
  */
 export async function listContentFiles(
@@ -170,36 +225,51 @@ export async function listContentFiles(
 ): Promise<ContentFile[]> {
   const include = options.include.map(compileGlob);
   const exclude = options.exclude.map(compileGlob);
+  const followsLink = linkFollower(options.include);
   const excluded = (relativePath: string) =>
     exclude.some((matches) => matches(relativePath));
   const found: ContentFile[] = [];
 
   const walk = async (folder: string, prefix: string): Promise<void> => {
-    const entries = await readdir(folder, { withFileTypes: true });
+    let entries;
+    try {
+      entries = await readdir(folder, { withFileTypes: true });
+    } catch (cause) {
+      if (prefix === "") throw cause;
+      return;
+    }
     const pending: Promise<void>[] = [];
     for (const entry of entries) {
       const name = entry.name;
       if (name.startsWith(".") || name === "node_modules") continue;
       const relativePath = prefix === "" ? name : `${prefix}/${name}`;
       const absolute = path.join(folder, name);
-      if (entry.isDirectory()) {
+      const enter = async (): Promise<void> => {
         if (excluded(relativePath) || isSkipped(absolute, options.skip)) {
-          continue;
+          return;
         }
-        pending.push(walk(absolute, relativePath));
+        await walk(absolute, relativePath);
+      };
+      if (entry.isDirectory()) {
+        pending.push(enter());
         continue;
       }
       if (excluded(relativePath)) continue;
-      if (!include.some((matches) => matches(relativePath))) continue;
+      const matches = include.some((matcher) => matcher(relativePath));
       const file: ContentFile = { absolute, relative: relativePath };
-      if (entry.isFile()) found.push(file);
-      else if (entry.isSymbolicLink()) {
-        pending.push(
-          linksToFile(absolute).then((isFile) => {
-            if (isFile) found.push(file);
-          }),
-        );
+      if (entry.isFile()) {
+        if (matches) found.push(file);
+        continue;
       }
+      if (!entry.isSymbolicLink()) continue;
+      const follows = followsLink(relativePath);
+      if (!matches && !follows) continue;
+      pending.push(
+        linkTarget(absolute).then(async (target) => {
+          if (target === "file" && matches) found.push(file);
+          else if (target === "folder" && follows) await enter();
+        }),
+      );
     }
     await Promise.all(pending);
   };

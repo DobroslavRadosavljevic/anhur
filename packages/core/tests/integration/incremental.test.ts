@@ -1,4 +1,4 @@
-import { readdir, rm, utimes } from "node:fs/promises";
+import { readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -239,6 +239,43 @@ export default defineConfig({ content: [tags, posts, notes] });
     expect(await dir.read(".anhur/generated/allPosts.js")).toContain('"A"');
   });
 
+  it("keep the result of a view, unless generate.cache is false", async () => {
+    const config = (generate: string) => `
+import { defineCollection, defineConfig, defineView, schema as s } from "@anhur/core";
+${COUNTING}
+const notes = defineCollection({ name: "notes", directory: "notes", include: "*.md", schema: s.object({ title: s.string() }) });
+const titles = defineView({
+  name: "titles",
+  from: notes,
+  select: (doc) => {
+    bump("select");
+    return { title: doc.title };
+  },${generate}
+});
+export default defineConfig({ content: [notes], views: [titles] });
+`;
+    const dir = await project({
+      "anhur.config.ts": config(""),
+      "notes/a.md": "---\ntitle: A\n---\n",
+      "notes/b.md": "---\ntitle: B\n---\n",
+    });
+    const session = sessionFor(dir);
+    await session.build();
+    expect(count("select")).toBe(2);
+    resetCounts();
+    await session.build();
+    expect(count("select")).toBe(0);
+
+    await dir.write(
+      "anhur.config.ts",
+      config("\n  generate: { cache: false },"),
+    );
+    await session.build();
+    resetCounts();
+    await session.build();
+    expect(count("select")).toBe(2);
+  });
+
   it("notice a file that changed without a new size or time", async () => {
     const dir = await project({
       "anhur.config.ts": BLOG,
@@ -355,6 +392,83 @@ describe("document store", () => {
     await build({ rootDir: dir.dir });
     expect(count("compile")).toBe(1);
     expect(await dir.read(".anhur/generated/allNotes.js")).toContain('"a"');
+  });
+
+  it("validates again when a schema changed and the config file did not", async () => {
+    // A schema from another package: the config file stays the same.
+    // SAFETY: a global the test config below and this test agree on.
+    const limits = globalThis as { anhurLimit?: number };
+    const dir = await project({
+      "anhur.config.ts": `
+import { defineCollection, defineConfig, schema as s } from "@anhur/core";
+const limit = (globalThis as { anhurLimit?: number }).anhurLimit ?? 0;
+const notes = defineCollection({
+  name: "notes",
+  directory: "notes",
+  include: "*.md",
+  schema: s.object({ title: s.string().max(limit) }),
+});
+export default defineConfig({ content: [notes] });
+`,
+      "notes/a.md": "---\ntitle: abcdef\n---\n",
+    });
+    try {
+      limits.anhurLimit = 10;
+      await build({ rootDir: dir.dir });
+      await settle(dir, "notes/a.md");
+      limits.anhurLimit = 3;
+      await expect(build({ rootDir: dir.dir })).rejects.toThrow(/title/);
+    } finally {
+      delete limits.anhurLimit;
+    }
+  });
+
+  it("validates in every session with documentCache: false", async () => {
+    const dir = await project({
+      "anhur.config.ts": FIELDS("\n  pure: true,").replace(
+        'include: "*.md",',
+        'include: "*.md",\n  documentCache: false,',
+      ),
+      "notes/a.md": "---\ntitle: a\n---\n",
+    });
+    await build({ rootDir: dir.dir });
+    expect(
+      await readdir(dir.path(".anhur/cache/documents")).catch(() => []),
+    ).toEqual([]);
+    await settle(dir, "notes/a.md");
+    resetCounts();
+    await build({ rootDir: dir.dir });
+    expect(count("compile")).toBe(1);
+  });
+
+  it("validates again when a stored document is damaged", async () => {
+    const dir = await project({
+      "anhur.config.ts": FIELDS("\n  pure: true,"),
+      "notes/a.md": "---\ntitle: a\n---\n",
+      "notes/b.md": "---\ntitle: b\n---\n",
+    });
+    await build({ rootDir: dir.dir });
+    await settle(dir, "notes/a.md", "notes/b.md");
+    const store = dir.path(".anhur/cache/documents");
+    const [first, second] = (await readdir(store))
+      .filter((name) => name.endsWith(".json"))
+      .sort();
+    if (first === undefined || second === undefined) {
+      throw new Error("expected two stored documents");
+    }
+    // Not JSON at all, and JSON with a value the codec cannot decode.
+    await writeFile(path.join(store, first), "{ not json");
+    const entry = await readFile(path.join(store, second), "utf8");
+    await writeFile(
+      path.join(store, second),
+      entry.replace('"data":{', '"data":{"broken":{"\\u0000":["b","x"]},'),
+    );
+    expect(await readFile(path.join(store, second), "utf8")).not.toBe(entry);
+    resetCounts();
+    const result = await build({ rootDir: dir.dir });
+    expect(count("compile")).toBe(2);
+    expect(result.documentCount).toBe(2);
+    expect(result.written).toEqual([]);
   });
 
   it("is not written by check, and is off with cacheDir: false", async () => {

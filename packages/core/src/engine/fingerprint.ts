@@ -46,7 +46,8 @@ function bytesKey(name: string, bytes: Uint8Array): string {
   return `${name}:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-function constructorName(value: unknown): string {
+/** Name of the class of an instance; empty for plain objects and primitives. */
+export function constructorName(value: unknown): string {
   if (!Predicate.isObjectOrArray(value)) return "";
   const proto: object | null = Object.getPrototypeOf(value);
   if (!proto || proto === Object.prototype) return "";

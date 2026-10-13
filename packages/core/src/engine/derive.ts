@@ -116,7 +116,8 @@ export function deriveAll(
 
   const results: DerivedResult[] = [];
   for (const derived of derivedList) {
-    const known = memory.records.get(derived.name);
+    const remember = derived.definition.generate?.cache !== false;
+    const known = remember ? memory.records.get(derived.name) : undefined;
     if (known && known.derived === derived) {
       let unchanged = true;
       for (const [name, documents] of known.inputs) {
@@ -274,7 +275,7 @@ export function deriveAll(
       result = { kind: "group", derived, groups };
     }
     results.push(result);
-    memory.records.set(derived.name, { derived, inputs, result });
+    if (remember) memory.records.set(derived.name, { derived, inputs, result });
   }
   return { results, diagnostics };
 }

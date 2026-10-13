@@ -6,6 +6,7 @@ import type {
   CollectionGenerateOptions,
   CollectionOnSuccess,
   ContentSchema,
+  DocumentCacheOption,
   DocumentTransform,
   SchemaOutput,
   SingletonDefinition,
@@ -72,6 +73,12 @@ export type DefineCollectionInput<
    * reads something Anhur cannot see (files, environment, the network).
    */
   readonly transformCache?: TransformCacheOption;
+  /**
+   * Keep validated documents on disk for later sessions (default `true`).
+   * Set `false` when the schema computes a value from something besides
+   * the file (the clock, an environment variable, the network).
+   */
+  readonly documentCache?: DocumentCacheOption;
   /** Called after the output is published, with the final documents. */
   readonly onSuccess?: CollectionOnSuccess;
   readonly generate?: CollectionGenerateOptions;
@@ -112,6 +119,7 @@ export function defineCollection<
     // SAFETY: the engine passes `{ ...data, _meta }` documents and checks the result is a plain object.
     transform: input.transform as DocumentTransform | undefined,
     transformCache: input.transformCache,
+    documentCache: input.documentCache,
     onSuccess: input.onSuccess,
     generate: input.generate,
   };
@@ -156,6 +164,8 @@ export type DefineSingletonInput<
   readonly transform?: TransformInput<TSchema, TOut>;
   /** Keep transform results between the builds of one session. Default `true`. */
   readonly transformCache?: TransformCacheOption;
+  /** Keep validated documents on disk for later sessions. Default `true`. */
+  readonly documentCache?: DocumentCacheOption;
   /** Called after publish with every locale variant. */
   readonly onSuccess?: SingletonOnSuccess;
   readonly generate?: SingletonGenerateOptions;
@@ -195,6 +205,7 @@ export function defineSingleton<
     // SAFETY: the engine passes `{ ...data, _meta }` documents and checks the result is a plain object.
     transform: input.transform as DocumentTransform | undefined,
     transformCache: input.transformCache,
+    documentCache: input.documentCache,
     onSuccess: input.onSuccess,
     generate: input.generate,
   };

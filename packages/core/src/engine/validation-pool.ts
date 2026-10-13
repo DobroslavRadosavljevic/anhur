@@ -35,8 +35,12 @@ export type PoolOutcome = {
 type Entry = {
   /** Path of the worker module. */
   readonly file: string;
-  /** Extra Node flags the worker needs to run it. */
-  readonly execArgv: readonly string[];
+  /**
+   * Node flags of the worker. `undefined`: the flags of this process
+   * (`--conditions`, `--import`, …), so a worker resolves modules the way
+   * the main thread does.
+   */
+  readonly execArgv: readonly string[] | undefined;
 };
 
 /**
@@ -47,14 +51,26 @@ type Entry = {
 function workerEntry(): Entry {
   const here = fileURLToPath(import.meta.url);
   if (!/\.[cm]?ts$/.test(here)) {
-    return { file: path.join(path.dirname(here), "worker.js"), execArgv: [] };
+    return {
+      file: path.join(path.dirname(here), "worker.js"),
+      execArgv: undefined,
+    };
   }
   const file = path.join(path.dirname(here), "..", "worker", "validation.ts");
-  if (process.versions.bun !== undefined) return { file, execArgv: [] };
+  const inherited = process.execArgv;
+  if (
+    process.versions.bun !== undefined ||
+    inherited.some((flag) => flag.includes("jiti"))
+  ) {
+    return { file, execArgv: undefined };
+  }
   // `jiti/register` is an import-only export: find it through the package.
   const jiti = createRequire(import.meta.url).resolve("jiti/package.json");
   const register = path.join(path.dirname(jiti), "lib", "jiti-register.mjs");
-  return { file, execArgv: ["--import", pathToFileURL(register).href] };
+  return {
+    file,
+    execArgv: [...inherited, "--import", pathToFileURL(register).href],
+  };
 }
 
 function isReply(value: unknown): value is WorkerReply {
@@ -95,7 +111,7 @@ export async function validateInWorkers(
       try {
         worker = new Worker(entry.file, {
           workerData: setup,
-          execArgv: [...entry.execArgv],
+          ...(entry.execArgv ? { execArgv: [...entry.execArgv] } : {}),
         });
       } catch (cause) {
         problem ??= messageOf(cause);

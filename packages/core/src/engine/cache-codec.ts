@@ -49,7 +49,11 @@ export function encodeCacheValue(value: DocumentValue): Encoded {
     return Number.isFinite(value) ? value : tagged("n", String(value));
   }
   if (Predicate.isBigInt(value)) return tagged("b", value.toString());
-  if (value instanceof Date) return tagged("d", value.getTime());
+  if (value instanceof Date) {
+    // JSON has no NaN: an invalid date must not come back as 1970.
+    const time = value.getTime();
+    return tagged("d", Number.isNaN(time) ? "NaN" : time);
+  }
   if (Array.isArray(value)) {
     const items: readonly DocumentValue[] = value;
     // Array.from visits holes (as undefined); map would keep them and JSON would write null.
@@ -117,7 +121,7 @@ export function decodeCacheValue(value: unknown): DocumentValue {
       case "b":
         return BigInt(String(payload));
       case "d":
-        return new Date(Number(payload));
+        return new Date(payload === "NaN" ? Number.NaN : Number(payload));
       case "m":
         return new Map(
           (Array.isArray(payload) ? payload : []).map((entry) => {

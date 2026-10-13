@@ -22,15 +22,18 @@ Peak memory is reached in the first build. Worker threads trade memory for time 
 
 - **Documents are frozen** after validation, a transform and `prepare`. Code that changed a document in a view callback, a plugin `generate` hook or `onSuccess` now gets a `TypeError`; return a new object instead. `transform` and `prepare` still get their own copies.
 - **`transform` runs again only when its document changed**, or when a source it read through `ctx.documents()` changed. Set `transformCache: false` on a collection or singleton whose transform reads something else (files, environment variables, the network).
-- **Compiled documents are kept on disk** in `.anhur/cache/documents`. A later session restores a document without reading its file when the file's size, times and inode are the same; a file modified in the last seconds, or with new times, is compared by content. This applies to sources whose compiled fields all declare `pure` or `cache`; `cacheDir: false` turns it off.
-- **Worker threads** (2 to 6, by the amount of work) compile documents when 128 or more with compiled fields wait, as in a first build. Each worker loads the config file and the compilers itself, so a first build uses more memory. Set `workers: false` in `defineConfig` to turn them off; this is needed for configs whose custom fields keep state in memory that a plugin hook reads.
+- **Compiled documents are kept on disk** in `.anhur/cache/documents`. A later session restores a document without reading its file when the file's size, times and inode are the same; a file modified in the last seconds, or with new times, is compared by content. A change of the config, a schema, a loader or a plugin validates the documents again. This applies to sources whose compiled fields all declare `pure` or `cache`. Set `documentCache: false` on a collection or singleton whose schema reads something else (the clock, an environment variable, the network) in a `.transform()`, `.refine()` or default; `cacheDir: false` turns every disk cache off.
+- **Worker threads** (2 to 6, by the amount of work) compile documents when 128 or more with compiled fields wait, as in a first build. Each worker loads the config file and the compilers itself, and runs the `setup` hook of every plugin, so a first build uses more memory. Set `workers: false` in `defineConfig` to turn them off; this is needed for configs whose custom fields keep state in memory that a plugin hook reads.
+- **The result of a view, index or group is kept in a session** while the documents it is made from stay the same. Set `generate: { cache: false }` when `where`, `select`, a key function or `compare` reads something else.
+- **Field contexts have `share()` and `isShared()`**. Code that builds a `FieldContext` by hand (a test double for a custom field) must add both.
+- **Content globs** are matched by Anhur's own matcher. A symbolic link to a folder is entered when a pattern names it (`guides/*.md`, `*/*.md`) and, like before, not through `**`. A folder below the content folder that cannot be read is skipped.
 - A generated file edited by hand while a session runs is rewritten by the first build of the next session, not by the next rebuild. A deleted generated file is still restored by the next rebuild.
 - Unused cache entries are removed by the first build of a session and then at most once a minute.
 - The field cache key changed: fields compile once more after the upgrade.
 
 ### Added
 
-- `workers` in `defineConfig`, `transformCache` on collections and singletons.
+- `workers` in `defineConfig`; `transformCache` and `documentCache` on collections and singletons; `generate.cache` on views, indexes and groups.
 - `BuildResult.timings` and `anhur build --timings`: the time of each build stage.
 - `@anhur/core/plugin`: `pure` and `shares` on `defineField`, `context.share()` and `context.isShared()` (one computation for several fields of a document).
 - `apps/bench`: a benchmark that generates a content project and times cold builds, rebuilds and warm starts.
@@ -38,6 +41,8 @@ Peak memory is reached in the first build. Worker threads trade memory for time 
 ### Fixed
 
 - `s.toc({ maxDepth })`: a changed `maxDepth` read the table of contents cached for the old value.
+- An invalid `Date` in a cached field value came back as 1 January 1970.
+- A damaged cache entry could fail the build. It is now compiled again.
 - Two sources that include the same file wrote the same field cache entry at once; one write failed with a warning.
 - `s.excerpt()` segmented the whole body to count the first characters: slow for long documents.
 - `s.toc()` compiled the body a second time. It now reads the headings from the compile of `md.body()` / `m.body()`.

@@ -81,8 +81,15 @@ function parseEntry(text: string): CachedField | undefined {
   ) {
     return undefined;
   }
+  let value: DocumentValue;
+  try {
+    value = decodeCacheValue(raw.value);
+  } catch {
+    // A damaged entry (for example a number that is not one): not cached.
+    return undefined;
+  }
   return {
-    value: decodeCacheValue(raw.value),
+    value,
     assets: raw.assets,
     dependencies: raw.dependencies,
     warnings: raw.warnings,

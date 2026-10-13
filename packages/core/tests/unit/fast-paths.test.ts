@@ -1,4 +1,4 @@
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DocumentFields, DocumentValue } from "../../src/document";
@@ -70,7 +70,6 @@ describe("compileGlob", () => {
     "x{1..3}.md",
     "a**/b",
     "!a.md",
-    "./a.md",
   ];
 
   it("matches like path.matchesGlob", () => {
@@ -82,6 +81,18 @@ describe("compileGlob", () => {
         );
       }
     }
+  });
+
+  it("reads ./ at the start of a pattern like fs.glob does", () => {
+    const matches = compileGlob("./posts/**/*.md");
+    expect(matches("posts/a.md")).toBe(true);
+    expect(matches("posts/2024/a.md")).toBe(true);
+    expect(matches("a.md")).toBe(false);
+  });
+
+  it("leaves a pattern it cannot compile to path.matchesGlob", () => {
+    // A reversed range is not a valid class for a regular expression.
+    expect(() => compileGlob("[z-a].md")("a.md")).not.toThrow();
   });
 
   it("needs one name or more after a trailing **", () => {
@@ -123,6 +134,49 @@ describe("listContentFiles", () => {
       "link.md",
     ]);
     expect(files[0]?.absolute).toBe(path.join(root, "2024", "c.md"));
+  });
+
+  it("enters a linked folder a pattern names, but not through **", async () => {
+    const project = await createProject({
+      "content/a.md": "",
+      "shared/guide.md": "",
+      "shared/deep/more.md": "",
+    });
+    projects.push(project);
+    const root = project.path("content");
+    await symlink(project.path("shared"), path.join(root, "guides"));
+    const list = async (include: string[]) =>
+      (await listContentFiles(root, { include, exclude: [], skip: [] })).map(
+        (file) => file.relative,
+      );
+    expect(await list(["**/*.md"])).toEqual(["a.md"]);
+    expect(await list(["guides/*.md"])).toEqual(["guides/guide.md"]);
+    expect(await list(["*/*.md"])).toEqual(["guides/guide.md"]);
+    expect(await list(["./guides/**/*.md"])).toEqual([
+      "guides/deep/more.md",
+      "guides/guide.md",
+    ]);
+  });
+
+  it("skips a folder below the root that cannot be read", async () => {
+    // A user with every permission (root in a container) can read it anyway.
+    if (process.getuid?.() === 0) return;
+    const project = await createProject({
+      "content/a.md": "",
+      "content/locked/b.md": "",
+    });
+    projects.push(project);
+    await chmod(project.path("content/locked"), 0o000);
+    try {
+      const files = await listContentFiles(project.path("content"), {
+        include: ["**/*.md"],
+        exclude: [],
+        skip: [],
+      });
+      expect(files.map((file) => file.relative)).toEqual(["a.md"]);
+    } finally {
+      await chmod(project.path("content/locked"), 0o755);
+    }
   });
 
   it("rejects when the folder cannot be read", async () => {

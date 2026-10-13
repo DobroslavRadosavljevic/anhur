@@ -154,8 +154,10 @@ Rules that make this safe:
 
 - **Documents are frozen.** Data from the schema, a transform or `prepare` cannot be changed later. `transform` gets its own copy; hooks, views and plugins get read-only documents. An unchanged document is the same object in every build of a session, so a plugin can compare by identity.
 - **`transform` runs again only when its document changed**, or when a source it read through `ctx.documents()` changed. A transform that reads something else (a file, an environment variable, the network) sets `transformCache: false` on the collection and runs on every build.
+- **A stored document is reused only when everything it was made from is the same**: the file, the config file and the modules it imports, the schema, the loaders, the plugins and the files a field reported. A schema that reads something else (the clock, an environment variable, the network) in a `.transform()`, `.refine()` or default sets `documentCache: false` on the collection and is validated in every new session.
+- **A view, index or group is resolved again only when a document it is made from changed.** `generate: { cache: false }` resolves it on every build, for a `where`, `select`, key function or `compare` that reads something else.
 - **A file is "unchanged" when its size, times and inode are the same.** A file modified in the last seconds is compared by content instead, so two quick saves are never missed. A fresh checkout (new times, same content) is also compared by content.
-- **`workers`** in `defineConfig`: `true` (default) uses up to 6 worker threads when 128 or more documents with compiled fields wait; a number sets the most; `false` turns them off. Each worker loads the config file and the compilers itself, so workers trade memory for time. Use `workers: false` when a custom field or loader fills state in memory that a plugin hook reads.
+- **`workers`** in `defineConfig`: `true` (default) uses up to 6 worker threads when 128 or more documents with compiled fields wait; a number sets the most; `false` turns them off. Each worker loads the config file and the compilers itself and runs the `setup` hook of every plugin, so workers trade memory for time. Use `workers: false` when a custom field or loader fills state in memory that a plugin hook reads.
 - **`cacheDir: false`** turns the disk caches off.
 
 ## ⚙️ Generated exports

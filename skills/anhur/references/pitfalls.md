@@ -116,6 +116,8 @@ Pass `{ locale, slug }` with the generated `Locale`. Scope lists with `_meta.loc
 
 In a session (dev server, watch) a `transform` runs again only when its document changed or a source it read through `ctx.documents()` changed. A transform that reads anything else (files, environment, network) needs `transformCache: false` on the collection.
 
+Validated documents are also kept on disk between sessions. A schema whose `.transform()`, `.refine()` or default reads anything besides the file (clock, environment, network) needs `documentCache: false` on the collection. A view whose `where` / `select` / `compare` does the same needs `generate: { cache: false }`.
+
 Document data is frozen after validation. Do not change a document in a view callback, a plugin hook or `onSuccess`; return a new object. `transform` and `prepare` get their own copies and may change them.
 
 Custom fields that keep state in memory (a list filled in `compile`, read by a plugin hook) do not work with worker threads: set `workers: false` in `defineConfig`. Mark a custom field `pure: true` only when its value depends on nothing but its input, the body, the document and what it reports through the field context.
