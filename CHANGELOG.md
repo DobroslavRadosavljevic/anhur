@@ -2,6 +2,49 @@
 
 All `@anhur/*` packages are released together with the same version.
 
+## Unreleased
+
+A rework of the build engine for sites with thousands of files. A build now does work only for what changed. Measured with the benchmark in [`apps/bench`](apps/bench) on generated projects (MDX posts, Markdown pages, JSON products, one image per four documents, views, search), with Bun on an Apple M3 Max:
+
+| Scenario                              | 1,000 documents   | 5,000 documents  |
+| ------------------------------------- | ----------------- | ---------------- |
+| First build, no caches                | 7.96 s → 2.52 s   | 38.3 s → 11.7 s  |
+| Rebuild in a session, nothing changed | 186 ms → 11 ms    | 969 ms → 40 ms   |
+| Rebuild in a session, one file edited | 194 ms → 50 ms    | 917 ms → 153 ms  |
+| Rebuild in a session, one file added  | 195 ms → 30 ms    | 940 ms → 122 ms  |
+| New session, caches warm              | 2.94 s → 0.16 s   | 16.1 s → 0.71 s  |
+| `anhur check`, caches warm            | 2.97 s → 0.13 s   | 15.8 s → 0.65 s  |
+| Peak memory                           | 748 MB → 1,119 MB | 1,833 → 1,802 MB |
+
+Peak memory is reached in the first build. Worker threads trade memory for time there: with `workers: false` the first build of the 1,000 document project takes 4.5 s and 417 MB.
+
+### Changed
+
+- **Documents are frozen** after validation, a transform and `prepare`. Code that changed a document in a view callback, a plugin `generate` hook or `onSuccess` now gets a `TypeError`; return a new object instead. `transform` and `prepare` still get their own copies.
+- **`transform` runs again only when its document changed**, or when a source it read through `ctx.documents()` changed. Set `transformCache: false` on a collection or singleton whose transform reads something else (files, environment variables, the network).
+- **Compiled documents are kept on disk** in `.anhur/cache/documents`. A later session restores a document without reading its file when the file's size, times and inode are the same; a file modified in the last seconds, or with new times, is compared by content. This applies to sources whose compiled fields all declare `pure` or `cache`; `cacheDir: false` turns it off.
+- **Worker threads** (2 to 6, by the amount of work) compile documents when 128 or more with compiled fields wait, as in a first build. Each worker loads the config file and the compilers itself, so a first build uses more memory. Set `workers: false` in `defineConfig` to turn them off; this is needed for configs whose custom fields keep state in memory that a plugin hook reads.
+- A generated file edited by hand while a session runs is rewritten by the first build of the next session, not by the next rebuild. A deleted generated file is still restored by the next rebuild.
+- Unused cache entries are removed by the first build of a session and then at most once a minute.
+- The field cache key changed: fields compile once more after the upgrade.
+
+### Added
+
+- `workers` in `defineConfig`, `transformCache` on collections and singletons.
+- `BuildResult.timings` and `anhur build --timings`: the time of each build stage.
+- `@anhur/core/plugin`: `pure` and `shares` on `defineField`, `context.share()` and `context.isShared()` (one computation for several fields of a document).
+- `apps/bench`: a benchmark that generates a content project and times cold builds, rebuilds and warm starts.
+
+### Fixed
+
+- `s.toc({ maxDepth })`: a changed `maxDepth` read the table of contents cached for the old value.
+- Two sources that include the same file wrote the same field cache entry at once; one write failed with a warning.
+- `s.excerpt()` segmented the whole body to count the first characters: slow for long documents.
+- `s.toc()` compiled the body a second time. It now reads the headings from the compile of `md.body()` / `m.body()`.
+- `s.excerpt()` and `s.metadata()` each parsed the body. They now share one parse.
+- `@anhur/assets` checked every copied file and rewrote its manifest twice on every build.
+- `@anhur/orama` built every index again on every build. An index is now built again only when a document of its locale changed.
+
 ## 0.1.1 — 2026-10-12
 
 ### Fixed
