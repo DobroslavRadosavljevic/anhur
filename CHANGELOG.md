@@ -2,7 +2,7 @@
 
 All `@anhur/*` packages are released together with the same version.
 
-## Unreleased
+## 0.2.0 — 2026-10-18
 
 A rework of the build engine for sites with thousands of files. A build now does work only for what changed. Measured with the benchmark in [`apps/bench`](apps/bench) on generated projects (MDX posts, Markdown pages, JSON products, one image per four documents, views, search), with Bun on an Apple M3 Max. Each number is the median of its runs; every "new process" row starts a new process, and its time is that of the build inside it.
 
