@@ -46,7 +46,8 @@ function bytesKey(name: string, bytes: Uint8Array): string {
   return `${name}:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-function constructorName(value: unknown): string {
+/** Name of the class of an instance; empty for plain objects and primitives. */
+export function constructorName(value: unknown): string {
   if (!Predicate.isObjectOrArray(value)) return "";
   const proto: object | null = Object.getPrototypeOf(value);
   if (!proto || proto === Object.prototype) return "";
@@ -111,7 +112,8 @@ function objectKey(value: unknown, state: State): string {
     return `d:${Number.isNaN(value.getTime()) ? "NaN" : value.toISOString()}`;
   }
   if (value instanceof RegExp) {
-    return `r:/${value.source}/${value.flags}|${value.lastIndex}`;
+    // Not `lastIndex`: it changes when a /g or /y expression is used.
+    return `r:/${value.source}/${value.flags}`;
   }
   if (value instanceof URL) return `URL:${JSON.stringify(value.href)}`;
   if (ArrayBuffer.isView(value)) {

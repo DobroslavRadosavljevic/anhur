@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
+import { builtinModules } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
-import { Context, Effect, FileSystem, Layer, Path, Predicate } from "effect";
+import {
+  Clock,
+  Context,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Predicate,
+} from "effect";
 import {
   errorDiagnostic,
   messageOf,
@@ -9,6 +19,7 @@ import {
 } from "../diagnostics";
 import type { BuildMode } from "../plugin/types";
 import { BuildFailedError, buildFailed } from "./build-failed";
+import { isSettled } from "./file-signature";
 import { resolveProject, type ResolvedProject } from "./resolve";
 
 /** Config file names tried, in order, when no explicit path is given. */
@@ -32,6 +43,32 @@ const SOURCE_EXTENSIONS = [
 ];
 const IMPORT_PATTERN =
   /(?:import|export)\s+(?:type\s+)?(?:[^'"`;]*?\s+from\s+)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)|require\s*\(\s*["']([^"']+)["']\s*\)/g;
+/**
+ * Type-only imports and exports: they are gone before the module runs, so
+ * the package they name may not exist at run time.
+ */
+const TYPE_ONLY_PATTERN =
+  /(?:import|export)\s+type\s+[^'"`;]*?\s+from\s+["'][^"']+["']/g;
+/** Packages loaded as they are installed: their versions are part of every cache key. */
+const NATIVE_MODULES = [
+  "@anhur/core",
+  "@anhur/assets",
+  "@anhur/markdown",
+  "@anhur/mdx",
+  "@anhur/orama",
+];
+/** Lockfiles, in the order they are looked for in each folder. */
+const LOCKFILE_NAMES = [
+  "bun.lock",
+  "bun.lockb",
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+];
+/** Local modules followed from the config file. A larger graph is not complete. */
+const MAX_CONFIG_MODULES = 2000;
+const BUILTIN_MODULES = new Set(builtinModules);
 const IMPORT_TIMEOUT = "2 minutes";
 const SETUP_TIMEOUT = "2 minutes";
 
@@ -61,19 +98,64 @@ export type ConfigSources = {
   readonly files: readonly string[];
 };
 
-/** Relative specifiers of a module's static and dynamic imports. */
-function localSpecifiers(source: string): string[] {
+/** A module of the config as a session remembers it. */
+type ModuleRecord = {
+  /** True for a module whose imports are followed; false for the entry file of an installed package. */
+  readonly follow: boolean;
+  readonly size: number;
+  readonly modified: number;
+  /** Epoch milliseconds, taken before the file was read. */
+  readonly readAt: number;
+  /** The text of a followed module; the hash of the bytes of another file. */
+  readonly content: string;
+  /** Real paths of the modules it imports that are followed. */
+  readonly local: readonly string[];
+  /** Real paths of the entry files of installed packages it imports. */
+  readonly installed: readonly string[];
+};
+
+/** Specifiers of a module's static and dynamic imports that exist at run time. */
+function importSpecifiers(source: string): string[] {
   const found: string[] = [];
-  for (const match of source.matchAll(IMPORT_PATTERN)) {
+  for (const match of source
+    .replace(TYPE_ONLY_PATTERN, "")
+    .matchAll(IMPORT_PATTERN)) {
     const specifier = match[1] ?? match[2] ?? match[3];
-    if (
-      specifier &&
-      (specifier.startsWith("./") || specifier.startsWith("../"))
-    ) {
-      found.push(specifier);
-    }
+    if (specifier) found.push(specifier);
   }
   return found;
+}
+
+function isRelative(specifier: string): boolean {
+  return specifier.startsWith("./") || specifier.startsWith("../");
+}
+
+/** Node and Bun modules, and the Anhur packages: never followed. */
+function isBuiltIn(specifier: string): boolean {
+  if (specifier.startsWith("node:") || specifier.startsWith("bun:")) {
+    return true;
+  }
+  if (specifier === "bun" || BUILTIN_MODULES.has(specifier)) return true;
+  return NATIVE_MODULES.some(
+    (name) => specifier === name || specifier.startsWith(`${name}/`),
+  );
+}
+
+/** Bun's own resolver, which also reads `paths` of a tsconfig. */
+function bunResolve(specifier: string, fromDir: string): string | undefined {
+  const bun: unknown = Reflect.get(globalThis, "Bun");
+  if (!Predicate.isObject(bun) || !("resolveSync" in bun)) return undefined;
+  const resolveSync = bun.resolveSync;
+  if (!Predicate.isFunction(resolveSync)) return undefined;
+  try {
+    const resolved: unknown = Reflect.apply(resolveSync, bun, [
+      specifier,
+      fromDir,
+    ]);
+    return Predicate.isString(resolved) ? resolved : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -158,39 +240,231 @@ export class ConfigLoader extends Context.Service<
       );
 
       /**
-       * Config file + every relative module it imports, also outside the
-       * project folder (`../shared/consts.ts`); installed packages are not
-       * followed.
+       * Where a specifier that is not relative leads: a package `imports`
+       * entry (`#cms/notes`), a workspace package, a `paths` alias. Asked
+       * the same way the config is loaded (jiti, then Bun), so a specifier
+       * that resolves nowhere here cannot be loaded either.
+       */
+      const resolver = createJiti(import.meta.url, {
+        moduleCache: false,
+        fsCache: false,
+      });
+      const resolvePackage = (
+        fromFile: string,
+        specifier: string,
+      ): string | undefined => {
+        let resolved: string | undefined;
+        try {
+          resolved = resolver.esmResolve(specifier, {
+            parentURL: pathToFileURL(fromFile).href,
+            try: true,
+          });
+        } catch {
+          resolved = undefined;
+        }
+        resolved ??= bunResolve(specifier, path.dirname(fromFile));
+        if (resolved === undefined) return undefined;
+        try {
+          return resolved.startsWith("file:")
+            ? fileURLToPath(resolved)
+            : resolved;
+        } catch {
+          return undefined;
+        }
+      };
+
+      /** Lockfile hashes by file state: a lockfile is large and seldom changes. */
+      const lockfileHashes = new Map<string, string>();
+
+      /**
+       * The lockfile nearest to the config: an installed package that
+       * changed (an upgrade of a schema package or a remark plugin) has
+       * another entry there.
+       */
+      const findLockfile = Effect.fn("ConfigLoader.findLockfile")(function* (
+        configPath: string,
+      ) {
+        let dir = path.dirname(configPath);
+        for (;;) {
+          for (const name of LOCKFILE_NAMES) {
+            const file = path.join(dir, name);
+            const info = yield* fs.stat(file).pipe(Effect.option);
+            if (info._tag !== "Some" || info.value.type !== "File") continue;
+            const modified =
+              info.value.mtime._tag === "Some"
+                ? info.value.mtime.value.getTime()
+                : 0;
+            const state = `${file}\u0000${String(info.value.size)}\u0000${String(modified)}`;
+            let hash = lockfileHashes.get(state);
+            if (hash === undefined) {
+              const bytes = yield* fs
+                .readFile(file)
+                .pipe(Effect.orElseSucceed(() => new Uint8Array()));
+              hash = createHash("sha256").update(bytes).digest("hex");
+              lockfileHashes.clear();
+              lockfileHashes.set(state, hash);
+            }
+            return { file, hash };
+          }
+          const parent = path.dirname(dir);
+          if (parent === dir) return undefined;
+          dir = parent;
+        }
+      });
+
+      /**
+       * What a session remembers of the modules of the config, so a rebuild
+       * looks at each one (a `stat`) and reads none that did not change.
+       */
+      const modules = new Map<string, ModuleRecord>();
+      /** The lockfile the `modules` were resolved with: a new one can change where an import leads. */
+      let resolvedWith: string | undefined;
+
+      /** The state of a file now; `undefined` when it is not a file. */
+      const fileState = Effect.fn("ConfigLoader.fileState")(function* (
+        file: string,
+      ) {
+        const info = yield* fs.stat(file).pipe(Effect.option);
+        if (info._tag !== "Some" || info.value.type !== "File") {
+          return undefined;
+        }
+        return {
+          size: Number(info.value.size),
+          modified:
+            info.value.mtime._tag === "Some"
+              ? info.value.mtime.value.getTime()
+              : 0,
+        };
+      });
+
+      /** Where the imports of a module lead. */
+      const readImports = Effect.fn("ConfigLoader.readImports")(function* (
+        file: string,
+        text: string,
+      ) {
+        const local: string[] = [];
+        const installed: string[] = [];
+        if (!SOURCE_EXTENSIONS.includes(path.extname(file))) {
+          return { local, installed };
+        }
+        for (const specifier of importSpecifiers(text)) {
+          if (isBuiltIn(specifier)) continue;
+          const target = isRelative(specifier)
+            ? yield* resolveSpecifier(file, specifier)
+            : resolvePackage(file, specifier);
+          if (target === undefined) continue;
+          const real = yield* fs
+            .realPath(target)
+            .pipe(Effect.orElseSucceed(() => target));
+          if (!real.split(path.sep).includes("node_modules")) local.push(real);
+          else if (!isRelative(specifier)) installed.push(real);
+        }
+        return { local, installed };
+      });
+
+      /**
+       * A module of the config: its text (a hash for the entry file of an
+       * installed package, which is not followed) and where its imports
+       * lead. Read again only when its size or time changed, or when it
+       * was changed in the seconds before it was read last.
+       */
+      const readModule = Effect.fn("ConfigLoader.readModule")(function* (
+        file: string,
+        follow: boolean,
+      ) {
+        const now = yield* Clock.currentTimeMillis;
+        const state = yield* fileState(file);
+        const known = modules.get(file);
+        if (
+          known &&
+          state &&
+          known.follow === follow &&
+          known.size === state.size &&
+          known.modified === state.modified &&
+          isSettled(state.modified, known.readAt)
+        ) {
+          return known;
+        }
+        const bytes = state
+          ? yield* fs
+              .readFile(file)
+              .pipe(Effect.orElseSucceed(() => new Uint8Array()))
+          : new Uint8Array();
+        const text = follow ? new TextDecoder().decode(bytes) : "";
+        const imports = follow
+          ? yield* readImports(file, text)
+          : { local: [], installed: [] };
+        const record: ModuleRecord = {
+          follow,
+          size: state?.size ?? -1,
+          modified: state?.modified ?? -1,
+          readAt: now,
+          content: follow
+            ? text
+            : createHash("sha256").update(bytes).digest("hex"),
+          local: imports.local,
+          installed: imports.installed,
+        };
+        modules.set(file, record);
+        return record;
+      });
+
+      /**
+       * Everything the config is made from: the config file and every
+       * module it imports that is not an installed package (relative
+       * paths, also outside the project; package `imports`; workspace
+       * packages; `paths` aliases), the entry file of each installed
+       * package it imports, and the lockfile. `complete` is false when the
+       * graph is too large to follow.
        */
       const collectSources = Effect.fn("ConfigLoader.collectSources")(
         function* (configPath: string) {
+          const lockfile = yield* findLockfile(configPath);
+          if (resolvedWith !== (lockfile?.hash ?? "")) {
+            modules.clear();
+            resolvedWith = lockfile?.hash ?? "";
+          }
           const seen = new Map<string, string>();
+          /** Entry files of installed packages: hashed, not followed, not watched. */
+          const installed = new Map<string, string>();
           const queue = [configPath];
+          let complete = true;
           while (queue.length > 0) {
             const file = queue.shift()!;
             if (seen.has(file)) continue;
-            const text = yield* fs
-              .readFileString(file)
-              .pipe(Effect.orElseSucceed(() => ""));
-            seen.set(file, text);
-            if (seen.size > 500) break;
-            for (const specifier of localSpecifiers(text)) {
-              const resolved = yield* resolveSpecifier(file, specifier);
-              if (
-                resolved &&
-                !resolved.split(path.sep).includes("node_modules")
-              ) {
-                queue.push(resolved);
-              }
+            if (seen.size >= MAX_CONFIG_MODULES) {
+              complete = false;
+              break;
+            }
+            const record = yield* readModule(file, true);
+            seen.set(file, record.content);
+            queue.push(...record.local);
+            for (const entry of record.installed) {
+              if (installed.has(entry)) continue;
+              installed.set(entry, (yield* readModule(entry, false)).content);
             }
           }
+          // Modules the config no longer reaches are forgotten.
+          for (const file of modules.keys()) {
+            if (!seen.has(file) && !installed.has(file)) modules.delete(file);
+          }
           const hash = createHash("sha256");
-          for (const [file, text] of [...seen.entries()].sort(([a], [b]) =>
-            a < b ? -1 : 1,
-          )) {
+          const sorted = <T>(entries: Iterable<readonly [string, T]>) =>
+            [...entries].sort(([a], [b]) => (a < b ? -1 : 1));
+          for (const [file, text] of sorted(seen.entries())) {
             hash.update(file).update("\u0000").update(text).update("\u0000");
           }
-          return { files: [...seen.keys()], fingerprint: hash.digest("hex") };
+          for (const [file, digest] of sorted(installed.entries())) {
+            hash.update(file).update("\u0000").update(digest).update("\u0000");
+          }
+          hash.update(lockfile ? `lock\u0000${lockfile.hash}` : "no lockfile");
+          return {
+            files: lockfile
+              ? [...seen.keys(), lockfile.file]
+              : [...seen.keys()],
+            fingerprint: hash.digest("hex"),
+            complete,
+          };
         },
       );
 
@@ -201,13 +475,7 @@ export class ConfigLoader extends Context.Service<
           interopDefault: true,
           moduleCache: false,
           fsCache: false,
-          nativeModules: [
-            "@anhur/core",
-            "@anhur/assets",
-            "@anhur/markdown",
-            "@anhur/mdx",
-            "@anhur/orama",
-          ],
+          nativeModules: NATIVE_MODULES,
         });
         const imported = yield* Effect.tryPromise({
           try: () => jiti.import(configPath, { default: true }),
@@ -327,6 +595,7 @@ export class ConfigLoader extends Context.Service<
           configPath,
           mode: options.mode,
           sourceFingerprint: sources.fingerprint,
+          sourcesComplete: sources.complete,
         });
         if (!resolved.project) {
           return yield* Effect.fail(

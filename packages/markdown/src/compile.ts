@@ -171,8 +171,15 @@ function rehypeCollectHeadings(headings: BodyHeading[]) {
 }
 
 type Stage =
-  /** Full compile to HTML; relative URLs are resolved with a `context`. */
-  | { readonly kind: "html"; readonly context: FieldContext | undefined }
+  /**
+   * Full compile to HTML; relative URLs are resolved with a `context`. The
+   * headings are noted on the way when `headings` is given.
+   */
+  | {
+      readonly kind: "html";
+      readonly context: FieldContext | undefined;
+      readonly headings?: BodyHeading[];
+    }
   /** Up to heading ids only (no assets, no user rehype plugins). */
   | { readonly kind: "headings"; readonly headings: BodyHeading[] };
 
@@ -208,6 +215,9 @@ function createProcessor(options: MarkdownOptions, stage: Stage) {
   if (stage.kind === "headings") {
     rehypePlugins.push(rehypeCollectHeadings(stage.headings));
   } else {
+    if (stage.headings) {
+      rehypePlugins.push(rehypeCollectHeadings(stage.headings));
+    }
     rehypePlugins.push(...(options.rehypePlugins ?? []));
   }
   return (
@@ -248,6 +258,33 @@ export async function compileMarkdown(
     .use(rehypeStringify)
     .process(sourceFile(source, context));
   return String(file);
+}
+
+/** Compiled HTML with the headings found on the way. */
+export type CompiledMarkdown = {
+  readonly html: string;
+  /** What {@link extractMarkdownHeadings} gives for the same source and options. */
+  readonly headings: readonly BodyHeading[];
+};
+
+/**
+ * {@link compileMarkdown} that also returns the headings, so `s.toc()` does
+ * not compile the body a second time to find them.
+ */
+export async function compileMarkdownWithHeadings(
+  source: string,
+  options: MarkdownOptions = {},
+  context?: FieldContext,
+): Promise<CompiledMarkdown> {
+  const headings: BodyHeading[] = [];
+  const file = await createProcessor(options, {
+    kind: "html",
+    context,
+    headings,
+  })
+    .use(rehypeStringify)
+    .process(sourceFile(source, context));
+  return { html: String(file), headings };
 }
 
 /**

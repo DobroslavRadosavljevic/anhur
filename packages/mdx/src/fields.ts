@@ -5,35 +5,21 @@ import {
 } from "@anhur/core/plugin";
 import { z } from "zod";
 import { optionsCacheKey } from "./cache-key";
-import { COMPILER_VERSION, compileMdx } from "./compile";
+import {
+  COMPILER_VERSION,
+  compileMdx,
+  compileMdxWithHeadings,
+} from "./compile";
 import {
   MDX_PLUGIN,
   assertSupportedOptions,
-  isMdxPlugin,
+  bodyShareKey,
+  resolveOptions,
   type MdxOptions,
 } from "./plugin";
 
 function isString(value: FieldInput): value is string {
   return typeof value === "string";
-}
-
-/** Plugin options, then field options on top (plugin lists run first). */
-function resolveOptions(context: FieldContext, field: MdxOptions): MdxOptions {
-  const plugin = context.getPlugin(MDX_PLUGIN);
-  const base = isMdxPlugin(plugin) ? plugin.mdxOptions : {};
-  return {
-    ...base,
-    ...field,
-    remarkPlugins: [
-      ...(base.remarkPlugins ?? []),
-      ...(field.remarkPlugins ?? []),
-    ],
-    rehypePlugins: [
-      ...(base.rehypePlugins ?? []),
-      ...(field.rehypePlugins ?? []),
-    ],
-    recmaPlugins: [...(base.recmaPlugins ?? []), ...(field.recmaPlugins ?? [])],
-  };
 }
 
 function cacheOf(field: MdxOptions) {
@@ -56,17 +42,22 @@ export function body(options: MdxOptions = {}): z.ZodString {
     requires: MDX_PLUGIN,
     whenAbsent: "compile",
     cache: cacheOf(options),
-    compile: (input: FieldInput, context: FieldContext) => {
+    shares: (context: FieldContext) => [
+      bodyShareKey(resolveOptions(context, options), context),
+    ],
+    compile: async (input: FieldInput, context: FieldContext) => {
       if (input !== undefined && input !== null) {
         throw new Error(
           "m.body() is compiled from the document body; remove this key from the file, or use m.mdx() for an MDX field.",
         );
       }
-      return compileMdx(
-        context.body ?? "",
-        resolveOptions(context, options),
-        context,
+      const resolved = resolveOptions(context, options);
+      // Shared with `s.toc()`, which reads the headings of this compile.
+      const compiled = await context.share(
+        bodyShareKey(resolved, context),
+        (shared) => compileMdxWithHeadings(shared.body ?? "", resolved, shared),
       );
+      return compiled.code;
     },
   });
 }

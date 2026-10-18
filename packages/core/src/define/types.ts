@@ -146,6 +146,28 @@ export type SingletonOnSuccess = (
   documents: readonly TransformDocument[],
 ) => void | Promise<void>;
 
+/**
+ * `transformCache` of a collection / singleton. In a build session (dev
+ * server, `anhur watch`) a transform runs again only when its document
+ * changed, or a source it read through `ctx.documents()` changed. Set
+ * `false` when the transform reads something Anhur cannot see (other
+ * files, environment variables, the network): it then runs on every build.
+ * Default `true`.
+ */
+export type TransformCacheOption = boolean;
+
+/**
+ * `documentCache` of a collection / singleton. Validated documents are
+ * kept on disk, and a later session reuses the document of a file that did
+ * not change instead of validating it again. That is only right when the
+ * schema gives the same output for the same file every time. Set `false`
+ * when a `.transform()`, `.refine()` or default in the schema reads
+ * something else (the clock, an environment variable, the network): every
+ * new session then validates the documents of this source again. Default
+ * `true`.
+ */
+export type DocumentCacheOption = boolean;
+
 /** Transform function as stored on a definition. */
 export type DocumentTransform = (
   document: TransformDocument,
@@ -167,6 +189,10 @@ export type CollectionDefinition<
   /** `false` keeps this collection monolingual when the project is localized. */
   readonly localized?: boolean;
   readonly transform?: DocumentTransform;
+  /** See {@link TransformCacheOption}. */
+  readonly transformCache?: boolean;
+  /** See {@link DocumentCacheOption}. */
+  readonly documentCache?: boolean;
   readonly onSuccess?: CollectionOnSuccess;
   readonly generate?: CollectionGenerateOptions;
   /** Phantom: document data after schema + transform. */
@@ -192,6 +218,10 @@ export type SingletonDefinition<
   /** Allow the file (or default-locale file) to be missing. */
   readonly optional?: boolean;
   readonly transform?: DocumentTransform;
+  /** See {@link TransformCacheOption}. */
+  readonly transformCache?: boolean;
+  /** See {@link DocumentCacheOption}. */
+  readonly documentCache?: boolean;
   readonly onSuccess?: SingletonOnSuccess;
   readonly generate?: SingletonGenerateOptions;
   readonly _data?: TData;
@@ -211,6 +241,13 @@ export type DerivedGenerateOptions = {
   readonly compare?: (a: DocumentFields, b: DocumentFields) => number;
   /** Keep at most this many items (views: whole list; groups: per group). */
   readonly limit?: number;
+  /**
+   * In a build session the result is kept while the documents it is made
+   * from stay the same. Set `false` when `where`, `select`, a key function
+   * or `compare` reads something else (the clock, an environment variable):
+   * the view is then resolved on every build. Default `true`.
+   */
+  readonly cache?: boolean;
 };
 
 export type ViewGenerateOptions = DerivedGenerateOptions & {
@@ -293,6 +330,31 @@ export type AnhurConfig = {
   readonly outputDir?: string;
   /** Field cache, relative to the config file. Default `.anhur/cache`; `false` disables. */
   readonly cacheDir?: string | false;
+  /**
+   * Worker threads for loading, compiling and validating documents.
+   *
+   * - `true` (default): the engine decides. When 128 or more documents
+   *   with cached compiled fields (Markdown, MDX, images) wait, as in a
+   *   first build, it validates some of them in the main thread to learn
+   *   what one costs. It starts 2 to 6 workers (one less than the CPU
+   *   cores at most) when the rest would take longer than about a second.
+   * - A number: start that many when 128 or more such documents wait,
+   *   without measuring.
+   * - `false`: keep everything in the main thread.
+   *
+   * Every worker loads the config file and the compilers again, so workers
+   * need more memory. A worker's memory is its own. Turn workers off when:
+   * - a custom field or loader keeps state in memory that another part of
+   *   the config reads (a list filled by `compile`, read by a plugin hook;
+   *   a counter or slug list shared between documents);
+   * - the config computes a value when it loads that documents use through
+   *   a function (a build id from the clock or a random number): each
+   *   worker computes its own.
+   *
+   * Sources that set `documentCache: false`, and sources whose schema is
+   * new on every read, are always validated in the main thread.
+   */
+  readonly workers?: boolean | number;
   /** Extra loaders, tried before plugin loaders and built-ins. */
   readonly loaders?: readonly Loader[];
   /** Build plugins (`markdown()`, `mdx()`, `assets()`, `orama()`, …). */

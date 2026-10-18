@@ -3,7 +3,7 @@ import type {
   SourceSnapshot,
   TransformDocument,
 } from "@anhur/core/plugin";
-import { create, insert, save } from "@orama/orama";
+import { create, insert, save, type Tokenizer } from "@orama/orama";
 import { STEMMER_LANGUAGES, isStemmerLanguage } from "./stemmers";
 import { tokenizerFor } from "./tokenizer-for";
 import type { TokenizerSpec } from "./tokenizer";
@@ -53,6 +53,91 @@ export type RuntimeOramaOptions = {
   readonly languages?: { readonly [locale: string]: string };
   readonly path?: string;
 };
+
+/** The index module of one locale and the documents it was built from. */
+type LocaleRecord = {
+  readonly documents: readonly TransformDocument[];
+  readonly code: string;
+};
+
+declare const searchMemoryBrand: unique symbol;
+
+/**
+ * What the plugin remembers between the builds of one session. Make it
+ * with {@link createSearchMemory}, keep it for the session, and give it to
+ * each {@link generateSearchModules} call. Documents are frozen and an
+ * unchanged document is the same object in every build, so an index is
+ * built again only when a document of its locale changed. In `dev` mode,
+ * text indexed before is not split into words again.
+ *
+ * The value is opaque: it has no fields to read or to set.
+ */
+export type SearchMemory = { readonly [searchMemoryBrand]: true };
+
+/** What a memory holds. */
+type SearchRecord = {
+  readonly locales: Map<string, LocaleRecord>;
+  /**
+   * Tokens of indexed text by locale, kept in `dev` mode only (a `build`
+   * run never reads them again). Each build of an index makes the map of
+   * its locale new, from the text it indexed: text that left the index
+   * does not stay.
+   */
+  readonly tokens: Map<string, Map<string, string[]>>;
+};
+
+/** The record of each memory. A memory is only the key of its record. */
+const searchRecords = new WeakMap<SearchMemory, SearchRecord>();
+
+/** A new memory that knows nothing: the next build makes every index. */
+export function createSearchMemory(): SearchMemory {
+  // SAFETY: the brand is a type-only mark; the object has no fields and is only a key of `searchRecords`.
+  const memory = Object.freeze({}) as SearchMemory;
+  searchRecords.set(memory, { locales: new Map(), tokens: new Map() });
+  return memory;
+}
+
+/** The record of a memory (a new one for a value this module did not make). */
+function recordOf(memory: SearchMemory): SearchRecord {
+  let record = searchRecords.get(memory);
+  if (!record) {
+    record = { locales: new Map(), tokens: new Map() };
+    searchRecords.set(memory, record);
+  }
+  return record;
+}
+
+function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+/**
+ * A tokenizer that keeps the tokens of indexed text (`known`: from the
+ * last build) and collects the ones this build used in `used`.
+ */
+function rememberingTokenizer(
+  tokenizer: Tokenizer,
+  known: ReadonlyMap<string, string[]>,
+  used: Map<string, string[]>,
+): Tokenizer {
+  return {
+    ...tokenizer,
+    tokenize: (raw, language, prop, withCache) => {
+      // Queries (no property) are tokenized by other rules.
+      if (prop === undefined) {
+        return tokenizer.tokenize(raw, language, prop, withCache);
+      }
+      let tokens = used.get(raw) ?? known.get(raw);
+      tokens ??= tokenizer.tokenize(raw, language, prop, withCache);
+      used.set(raw, tokens);
+      return tokens;
+    },
+  };
+}
 
 function isFieldType(value: unknown): value is OramaFieldType {
   return FIELD_TYPES.some((type) => type === value);
@@ -291,6 +376,7 @@ function jsonStringLiteral(json: string): string {
 export async function generateSearchModules(
   options: RuntimeOramaOptions,
   context: PluginGenerateContext,
+  memory: SearchMemory = createSearchMemory(),
 ): Promise<void> {
   const base = options.path ?? "search";
   if (!/^[A-Za-z0-9_-]+$/.test(base)) {
@@ -323,45 +409,79 @@ export async function generateSearchModules(
   const stemmers = stemmersByLocale(options.languages, keys);
   const loaders: string[] = [];
 
+  const record = recordOf(memory);
+  for (const key of record.locales.keys()) {
+    if (!keys.includes(key)) record.locales.delete(key);
+  }
+  // Only a session that builds again can use the tokens: a `build` run
+  // keeps none, so they do not add to its memory.
+  const remember = context.mode === "dev";
+  if (!remember) record.tokens.clear();
+  for (const key of record.tokens.keys()) {
+    if (!keys.includes(key)) record.tokens.delete(key);
+  }
   for (const locale of locales) {
     const key = locale ?? DEFAULT_KEY;
-    const stemmer = stemmers.get(key);
-    const tokenizer: TokenizerSpec = {
-      locale: locale ?? context.defaultLocale ?? "en",
-      ...(stemmer === undefined ? {} : { stemmer }),
-    };
-    const db = create({
-      schema,
-      sort: { enabled: false },
-      components: { tokenizer: await tokenizerFor(tokenizer) },
-    });
-    for (const [name, config] of Object.entries(options.collections)) {
+    const file = `${base}/${localeFileName(key)}.js`;
+    const rows = Object.entries(options.collections).map(([name, config]) => {
       const source = byName.get(name);
-      for (const document of source ? documentsFor(source, locale) : []) {
-        try {
-          insert(db, rowFor(name, config, document));
-        } catch (cause) {
-          throw new Error(
-            `orama: ${name} document "${document._meta.id}" (${document._meta.filePath}): ${message(cause)}`,
-            { cause },
-          );
+      return {
+        name,
+        config,
+        documents: source ? documentsFor(source, locale) : [],
+      };
+    });
+    const indexed = rows.flatMap((row) => row.documents);
+    const known = record.locales.get(key);
+    if (known && sameItems(known.documents, indexed)) {
+      context.emitModule({ path: file, code: known.code });
+    } else {
+      const stemmer = stemmers.get(key);
+      const tokenizer: TokenizerSpec = {
+        locale: locale ?? context.defaultLocale ?? "en",
+        ...(stemmer === undefined ? {} : { stemmer }),
+      };
+      const plain = await tokenizerFor(tokenizer);
+      const tokens = new Map<string, string[]>();
+      const db = create({
+        schema,
+        sort: { enabled: false },
+        components: {
+          tokenizer: remember
+            ? rememberingTokenizer(
+                plain,
+                record.tokens.get(key) ?? new Map(),
+                tokens,
+              )
+            : plain,
+        },
+      });
+      for (const { name, config, documents } of rows) {
+        for (const document of documents) {
+          try {
+            insert(db, rowFor(name, config, document));
+          } catch (cause) {
+            throw new Error(
+              `orama: ${name} document "${document._meta.id}" (${document._meta.filePath}): ${message(cause)}`,
+              { cause },
+            );
+          }
         }
       }
+      const snapshot: AnhurSearchIndex = {
+        version: 4,
+        locale: key,
+        tokenizer,
+        schema,
+        searchProperties,
+        collections,
+        data: save(db),
+      };
+      const code = `${HEADER}\nexport default JSON.parse(${jsonStringLiteral(JSON.stringify(snapshot))});\n`;
+      record.locales.set(key, { documents: indexed, code });
+      if (remember) record.tokens.set(key, tokens);
+      context.emitModule({ path: file, code });
     }
-    const snapshot: AnhurSearchIndex = {
-      version: 4,
-      locale: key,
-      tokenizer,
-      schema,
-      searchProperties,
-      collections,
-      data: save(db),
-    };
-    const file = `${base}/${localeFileName(key)}.js`;
-    context.emitModule({
-      path: file,
-      code: `${HEADER}\nexport default JSON.parse(${jsonStringLiteral(JSON.stringify(snapshot))});\n`,
-    });
     loaders.push(
       `  [${JSON.stringify(key)}, () => import(${JSON.stringify(`./${file}`)})],`,
     );

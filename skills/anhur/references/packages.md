@@ -18,30 +18,35 @@ Always required. Three entries:
 **`@anhur/core/build`** (engine, for hosts and scripts)
 
 - `build(options)`, `check(options)`, `watch(options, { onBuild, onError })`, `createAnhur(options)` (reusable session)
+- `BuildResult`: `documentCount`, `written`, `removed`, `warnings`, `timings` (per stage), `reuse` (`{ unchanged, compared, validated }` documents), `notStored` (sources validated in every session, with the reason). `AnhurBuildError`: `diagnostics`, `timings`
 - `isRelevantChange(file, watchTargets)`, `MANIFEST_FILE`, `CONFIG_FILE_NAMES`
 - Options: `rootDir`, `configPath`, `mode` (`build` | `dev`), `publicPathPrefix`, `dryRun`
 
 **`@anhur/core/plugin`** (authoring)
 
 - `definePlugin`, `defineContentPlugin`, `defineLoader`
-- `defineField(zodSchema, { kind, compile, requires?, whenAbsent?, cache? })` — custom compile-time fields with an explicit `FieldContext` (document, body, `emitAsset`, `addDependency`, `getPlugin`)
+- `defineField(zodSchema, { kind, whenAbsent, compile, requires?, cache?, pure?, shares? })` — custom compile-time fields with an explicit `FieldContext` (document, body, `emitAsset`, `addDependency`, `getPlugin`, `share`, `isShared`)
+  - `whenAbsent` is required: `"skip"` (leave a missing key to Zod) or `"compile"` (fields made from the body).
+  - Set `pure: true` when the value depends only on the input, the body, the document and what the field reports through its context; with options, `pure: { key: fingerprint(options) }`. Or set `cache: { version, key }` for costly values. A field with neither turns the on-disk document store off for its whole collection (`result.notStored` says so).
+  - A loader in `defineConfig({ loaders })` sets `pure: true` when its result depends only on the file text.
 - `rehypeLinkedAssets`, `classifyUrl`, `parseSrcset`, `fingerprint`, `buildToc`, text helpers
 
-**CLI** `anhur build | check | watch` with `--root`, `--config`, `--json`.
+**CLI** `anhur build | check | watch` with `--root`, `--config`, `--json`, `--timings`.
 
 Config fields:
 
-| Field          | Role                                                              |
-| -------------- | ----------------------------------------------------------------- |
-| `content`      | Collections + singletons                                          |
-| `views`        | `defineView` / `defineIndex` / `defineGroup`                      |
-| `localization` | `{ strategy: "folder", locales, defaultLocale }`                  |
-| `plugins`      | `mdx()`, `markdown()`, `assets()`, `orama()`, `definePlugin(…)`   |
-| `loaders`      | Extra file loaders (tried before plugin loaders and built-ins)    |
-| `outputDir`    | Default `.anhur/generated` (relative to the config file)          |
-| `cacheDir`     | Field cache, default `.anhur/cache`; `false` disables             |
-| `prepare`      | After transforms and drafts; before references, uniqueness, views |
-| `complete`     | After the output is written, with `{ projectDir, outputDir }`     |
+| Field          | Role                                                                                         |
+| -------------- | -------------------------------------------------------------------------------------------- |
+| `content`      | Collections + singletons                                                                     |
+| `views`        | `defineView` / `defineIndex` / `defineGroup`                                                 |
+| `localization` | `{ strategy: "folder", locales, defaultLocale }`                                             |
+| `plugins`      | `mdx()`, `markdown()`, `assets()`, `orama()`, `definePlugin(…)`                              |
+| `loaders`      | Extra file loaders (tried before plugin loaders and built-ins)                               |
+| `outputDir`    | Default `.anhur/generated` (relative to the config file)                                     |
+| `cacheDir`     | Disk caches (validated documents, compiled fields), default `.anhur/cache`; `false` disables |
+| `workers`      | Worker threads for compiling many documents: `true` (default: measured, 2 to 6), a number, or `false` |
+| `prepare`      | After transforms and drafts; before references, uniqueness, views                            |
+| `complete`     | After the output is written, with `{ projectDir, outputDir }`                                |
 
 Views detail: [views.md](views.md)
 

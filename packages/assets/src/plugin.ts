@@ -5,7 +5,12 @@ import {
   type PluginPublishContext,
   type PluginSetupContext,
 } from "@anhur/core/plugin";
-import { checkConcurrency, copyAssets, pruneAssets } from "./copy";
+import {
+  checkConcurrency,
+  copyAssets,
+  createAssetsFolderState,
+  pruneAssets,
+} from "./copy";
 import {
   normalizePrefix,
   pruneStorage,
@@ -270,6 +275,8 @@ export function assets(options: AssetsOptions = {}): AssetsPlugin {
   );
   /** Storage keys this process uploaded or saw, so rebuilds skip `exists()`. */
   const stored = new Set<string>();
+  /** The assets folder as the last build left it, so rebuilds skip it. */
+  const folder = createAssetsFolderState();
   return {
     name: ASSETS_PLUGIN,
     version: "3",
@@ -287,10 +294,12 @@ export function assets(options: AssetsOptions = {}): AssetsPlugin {
     },
     beforePublish: async (context: PluginPublishContext) => {
       if (!context.assetsDir) return;
-      const copied = await copyAssets(context.assetsDir, context.assets, {
-        svg,
-        extensions,
-      });
+      const copied = await copyAssets(
+        context.assetsDir,
+        context.assets,
+        { svg, extensions },
+        folder,
+      );
       if (copied.copied > 0) {
         context.info(
           `assets: ${copied.copied} copied (${context.assets.length} in use)`,
@@ -312,9 +321,12 @@ export function assets(options: AssetsOptions = {}): AssetsPlugin {
     },
     afterPublish: async (context: PluginPublishContext) => {
       if (!context.assetsDir) return;
-      const pruned = await pruneAssets(context.assetsDir, context.assets, {
-        extensions,
-      });
+      const pruned = await pruneAssets(
+        context.assetsDir,
+        context.assets,
+        { extensions },
+        folder,
+      );
       if (pruned.removed > 0) {
         context.info(`assets: ${pruned.removed} unused file(s) removed`);
       }

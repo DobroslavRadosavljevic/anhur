@@ -8,6 +8,7 @@ import {
   type DocumentValue,
   type FieldPath,
 } from "../document";
+import { isDeepFrozen } from "../engine/freeze";
 import type { FieldSpec } from "../plugin/types";
 import { readFieldSpec } from "./field";
 
@@ -121,6 +122,23 @@ function containsFields(
   );
 }
 
+/** The schema a `z.lazy()` node stands for: one instance per node. */
+const lazyTargets = new WeakMap<ZodNode, ZodNode>();
+
+/**
+ * Target of a lazy schema. A getter may build a new schema on every call;
+ * everything in this file reads the target through here and keeps the
+ * first one, so a node always has the same children.
+ */
+function lazyTarget(schema: ZodNode, getter: () => ZodNode): ZodNode {
+  let target = lazyTargets.get(schema);
+  if (!target) {
+    target = getter();
+    lazyTargets.set(schema, target);
+  }
+  return target;
+}
+
 function childSchemas(schema: ZodNode): ZodNode[] {
   const def = defOf(schema);
   const children: ZodNode[] = [];
@@ -137,8 +155,70 @@ function childSchemas(schema: ZodNode): ZodNode[] {
   if (def.right) children.push(def.right);
   if (def.in) children.push(def.in);
   if (def.out) children.push(def.out);
-  if (def.type === "lazy" && def.getter) children.push(def.getter());
+  if (def.type === "lazy" && def.getter) {
+    children.push(lazyTarget(schema, def.getter));
+  }
   return children;
+}
+
+/** Which nodes of a schema have a field helper at or below them. */
+type FieldReach = {
+  /** Every node found below the root. */
+  readonly known: WeakSet<ZodNode>;
+  /** The nodes of `known` with a helper at or below them. */
+  readonly withFields: WeakSet<ZodNode>;
+};
+
+const fieldReaches = new WeakMap<ZodNode, FieldReach | null>();
+/** Schemas with more nodes than this are walked in full. */
+const MAX_REACH_NODES = 50_000;
+
+/**
+ * Nodes of `root` that lead to a field helper, so the value walkers skip
+ * every part of a document no helper is in (most of it). `undefined` when
+ * the schema is too large to map.
+ */
+function fieldReach(root: ZodNode): FieldReach | undefined {
+  const cached = fieldReaches.get(root);
+  if (cached !== undefined) return cached ?? undefined;
+  const parents = new Map<ZodNode, ZodNode[]>();
+  const leaves: ZodNode[] = [];
+  const seen = new Set<ZodNode>([root]);
+  const pending = [root];
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    if (seen.size > MAX_REACH_NODES) {
+      fieldReaches.set(root, null);
+      return undefined;
+    }
+    if (readFieldSpec(node)) {
+      leaves.push(node);
+      continue;
+    }
+    for (const child of childSchemas(node)) {
+      const list = parents.get(child);
+      if (list) list.push(node);
+      else parents.set(child, [node]);
+      if (seen.has(child)) continue;
+      seen.add(child);
+      pending.push(child);
+    }
+  }
+  const marked = new Set<ZodNode>(leaves);
+  const queue = [...leaves];
+  while (queue.length > 0) {
+    for (const parent of parents.get(queue.pop()!) ?? []) {
+      if (marked.has(parent)) continue;
+      marked.add(parent);
+      queue.push(parent);
+    }
+  }
+  const reach: FieldReach = {
+    known: new WeakSet(seen),
+    withFields: new WeakSet(marked),
+  };
+  fieldReaches.set(root, reach);
+  return reach;
 }
 
 /**
@@ -159,7 +239,7 @@ function transformsValue(schema: ZodNode, seen: Set<ZodNode>): boolean {
     );
   }
   if (def.type === "lazy" && def.getter) {
-    return transformsValue(def.getter(), seen);
+    return transformsValue(lazyTarget(schema, def.getter), seen);
   }
   if (WRAPPERS.has(def.type) && def.innerType) {
     return transformsValue(def.innerType, seen);
@@ -225,7 +305,7 @@ function topLevelKeys(
       return def.in ? topLevelKeys(def.in, seen) : undefined;
     }
     if (def.type === "lazy" && def.getter) {
-      return topLevelKeys(def.getter(), seen);
+      return topLevelKeys(lazyTarget(schema, def.getter), seen);
     }
     if (def.type === "union") {
       return mergeKeySets(
@@ -372,7 +452,7 @@ export function analyzeSchema(schema: ZodNode): SchemaAnalysis {
         }
         break;
       case "lazy":
-        if (def.getter) visit(def.getter(), pattern);
+        if (def.getter) visit(lazyTarget(node, def.getter), pattern);
         break;
       default:
         if (WRAPPERS.has(def.type) && def.innerType) {
@@ -451,6 +531,7 @@ function walkValues(
   const active = new Map<ZodNode, Set<object>>();
   let tooDeep: FieldPath | undefined;
   const rootObject = isPlainObject(root) ? root : undefined;
+  const reach = fieldReach(schema);
 
   const materialize = (
     inner: ZodNode,
@@ -585,7 +666,9 @@ function walkValues(
         }
         return;
       case "lazy":
-        if (def.getter) visit(def.getter(), value, path, pattern, depth + 1);
+        if (def.getter) {
+          visit(lazyTarget(node, def.getter), value, path, pattern, depth + 1);
+        }
         return;
       case "default":
       case "prefault": {
@@ -618,6 +701,8 @@ function walkValues(
     pattern: PatternSegment[],
     depth: number,
   ): void => {
+    // Nothing to find below this node: do not walk the value.
+    if (reach && reach.known.has(node) && !reach.withFields.has(node)) return;
     if (depth > MAX_WALK_DEPTH) {
       tooDeep ??= [...path];
       return;
@@ -696,14 +781,28 @@ export type DataWalk = {
   readonly tooDeep: FieldPath | undefined;
 };
 
+/** {@link walkData} results of deep-frozen data, by data object. */
+const dataWalks = new WeakMap<
+  object,
+  { readonly schema: ZodNode; readonly walk: DataWalk }
+>();
+
 /**
  * Walk a schema alongside document data (output side) and return every
  * field helper with its concrete path. Only the union variant selected by
  * the data is followed, and recursive schemas are followed to any depth.
  */
 export function walkData(schema: ZodNode, data: DocumentValue): DataWalk {
+  // Deep-frozen data stays as it is: the engine walks a document once,
+  // however many checks (references, uniqueness) read the result.
+  const frozen =
+    Predicate.isObjectOrArray(data) && isDeepFrozen(data) ? data : undefined;
+  if (frozen) {
+    const known = dataWalks.get(frozen);
+    if (known && known.schema === schema) return known.walk;
+  }
   const result = walkValues(schema, data, "output");
-  return {
+  const walk: DataWalk = {
     occurrences: result.hits.map((hit) => ({
       path: hit.path,
       field: formatPattern(hit.pattern),
@@ -712,6 +811,8 @@ export function walkData(schema: ZodNode, data: DocumentValue): DataWalk {
     })),
     tooDeep: result.tooDeep,
   };
+  if (frozen) dataWalks.set(frozen, { schema, walk });
+  return walk;
 }
 
 /** `author`, `tags[]`, `links{}` — for diagnostics and unique groups. */

@@ -1,15 +1,16 @@
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import {
+  Clock,
   Context,
   Effect,
-  FileSystem,
   Layer,
   Option,
   Predicate,
   Ref,
   Semaphore,
 } from "effect";
-import type { BuiltContentSnapshot, TransformDocument } from "../define/types";
+import type { BuiltContentSnapshot } from "../define/types";
 import {
   errorDiagnostic,
   hasErrors,
@@ -29,38 +30,195 @@ import type {
 } from "../plugin/types";
 import { resolveAssetBases } from "./asset-urls";
 import { BuildFailedError, buildFailed } from "./build-failed";
-import { planOutput, type OutputFile } from "./codegen";
+import {
+  createPlanMemory,
+  planOutput,
+  type EmittedFile,
+  type OutputFile,
+  type PlanMemory,
+  type PlanRevision,
+} from "./codegen";
 import { Collector, type CachedDocument } from "./collector.service";
 import {
   CONFIG_FILE_NAMES,
   ConfigLoader,
   type LoadedProject,
 } from "./config-loader.service";
-import { checkUniqueness } from "./constraints";
-import { deriveAll } from "./derive";
-import { FieldCache } from "./field-cache.service";
+import {
+  checkUniqueness,
+  createUniqueMemory,
+  type UniqueMemory,
+} from "./constraints";
+import { createDeriveMemory, deriveAll, type DeriveMemory } from "./derive";
+import { collectStoredDocuments, documentStoreDir } from "./document-store";
+import { FieldCache, fieldCacheDir } from "./field-cache.service";
 import type { AssetHashEntry, FieldSession } from "./field-context";
-import { deepFreeze } from "./freeze";
+import { copyData } from "./copy-data";
+import { createSignatureMemo } from "./file-signature";
+import { fileWork } from "./file-work";
+import { deepFreeze, frozenWriteHint } from "./freeze";
 import { toExport } from "./list-rows";
 import { OutputWriter } from "./output.service";
-import { resolveRelations } from "./relations";
+import {
+  createRelationMemory,
+  resolveRelations,
+  type RelationMemory,
+} from "./relations";
 import type { ResolvedProject } from "./resolve";
-import type {
-  BuildOptions,
-  BuildResult,
-  SourceSummary,
-  WatchTargets,
+import {
+  recordFailedTimings,
+  type BuildOptions,
+  type BuildResult,
+  type BuildStage,
+  type SourceSummary,
+  type StageTiming,
+  type WatchTargets,
 } from "./result";
-import { runTransforms } from "./transform";
+import { sameData } from "./same-data";
+import { sameItems } from "./same-items";
+import {
+  createTransformMemory,
+  runTransforms,
+  type TransformMemory,
+} from "./transform";
 import type { FinalDocument, SourceDocuments } from "./types";
 
 const HOOK_TIMEOUT = "5 minutes";
+/** A session removes unused cache entries at most this often. */
+const CLEANUP_INTERVAL_MS = 60_000;
 
 type EngineState = {
   readonly loaded: LoadedProject | undefined;
   readonly configFiles: readonly string[];
   readonly watch: WatchTargets | undefined;
 };
+
+/**
+ * Summary and plugin snapshot of a source, kept while its documents stay
+ * the same. Both go to user code in every build, so they are frozen.
+ */
+type SourceRecord = {
+  readonly documents: readonly FinalDocument[];
+  readonly summary: SourceSummary;
+  readonly snapshot: SourceSnapshot;
+};
+
+/** Watch targets, and what they were made from. */
+type WatchRecord = {
+  readonly configFiles: readonly string[];
+  /** Final documents of every source, in config order. */
+  readonly documents: readonly (readonly FinalDocument[])[];
+  readonly targets: WatchTargets;
+};
+
+/**
+ * What the stages after validation remember between the builds of one
+ * session, so a build redoes work only for the documents that changed.
+ * Everything here belongs to one loaded project and is dropped when the
+ * config is loaded again.
+ */
+type BuildMemory = {
+  readonly project: ResolvedProject;
+  readonly transforms: TransformMemory;
+  readonly relations: RelationMemory;
+  readonly uniques: UniqueMemory;
+  readonly derived: DeriveMemory;
+  readonly plan: PlanMemory;
+  readonly sources: Map<string, SourceRecord>;
+  /**
+   * What `prepare` made of a document the last time it changed it, by the
+   * document it was given.
+   */
+  readonly prepared: WeakMap<FinalDocument, FinalDocument>;
+  /** Watch targets of the last build that got that far. */
+  watch: WatchRecord | undefined;
+};
+
+function createBuildMemory(project: ResolvedProject): BuildMemory {
+  return {
+    project,
+    transforms: createTransformMemory(),
+    relations: createRelationMemory(),
+    uniques: createUniqueMemory(),
+    derived: createDeriveMemory(),
+    plan: createPlanMemory(),
+    sources: new Map(),
+    prepared: new WeakMap(),
+    watch: undefined,
+  };
+}
+
+/** Measures the stages of one build. */
+type StageClock = {
+  /** Every stage that ended, in the order the stages ran. */
+  readonly timings: StageTiming[];
+  /** The stage that runs now ends here, and `stage` starts. */
+  readonly enter: (stage: BuildStage) => void;
+  /** The stage that runs now ends here (also when it failed). */
+  readonly stop: () => void;
+};
+
+function createStageClock(): StageClock {
+  const timings: StageTiming[] = [];
+  let running: BuildStage | undefined;
+  let since = 0;
+  const stop = (): void => {
+    if (running === undefined) return;
+    timings.push({ stage: running, ms: performance.now() - since });
+    running = undefined;
+  };
+  return {
+    timings,
+    enter: (stage) => {
+      stop();
+      running = stage;
+      since = performance.now();
+    },
+    stop,
+  };
+}
+
+/**
+ * A failed build has no result: the times of its stages (the stage that
+ * failed is the last one) are kept with its error.
+ */
+function keepFailedTimings<A, R>(
+  effect: Effect.Effect<A, BuildFailedError, R>,
+  _options: BuildOptions,
+  clock: StageClock,
+): Effect.Effect<A, BuildFailedError, R> {
+  return Effect.tapError(effect, (error) =>
+    Effect.sync(() => {
+      clock.stop();
+      recordFailedTimings(error, clock.timings);
+    }),
+  );
+}
+
+/**
+ * The document `prepare` left for `original`, given the `data` it has
+ * after the hook. A new document only when the data is new: `original`
+ * itself when the hook did not change it, and the document of the last
+ * build when the hook made the same data again. The later stages know a
+ * document by its identity, so they do nothing for it then.
+ */
+function preparedDocument(
+  memory: BuildMemory,
+  original: FinalDocument,
+  data: DocumentFields,
+): FinalDocument {
+  const known = memory.prepared.get(original);
+  if (known && sameData(known.data, data)) return known;
+  if (sameData(original.data, data)) return original;
+  const next: FinalDocument = {
+    file: original.file,
+    data: deepFreeze(data),
+    effects: original.effects,
+    origin: original.origin,
+  };
+  memory.prepared.set(original, next);
+  return next;
+}
 
 /** Hook failure as a build failure. */
 function hookFailed(
@@ -73,7 +231,7 @@ function hookFailed(
       cause,
       hint: published
         ? "The output was already published; fix the hook and rebuild."
-        : undefined,
+        : frozenWriteHint(cause),
     }),
   ]);
 }
@@ -83,18 +241,45 @@ function assetBaseFor(host: AssetHost, mode: BuildMode): string {
   return mode === "dev" && host.devBase ? host.devBase : host.base;
 }
 
-function summaryOf(
+/**
+ * Summary and plugin snapshot of every source. A source whose documents
+ * are the same objects as in the last build keeps the same record, so
+ * plugins can tell an unchanged source (and document) by identity.
+ */
+function sourceRecords(
+  memory: BuildMemory,
   sources: readonly SourceDocuments<FinalDocument>[],
-): SourceSummary[] {
-  return sources.map((group) => ({
-    name: group.source.name,
-    kind: group.source.kind,
-    documents: group.documents.map((document) =>
-      document.file.locale
-        ? `${document.file.locale}/${document.file.id}`
-        : document.file.id,
-    ),
-  }));
+): SourceRecord[] {
+  const names = new Set(sources.map((group) => group.source.name));
+  for (const name of memory.sources.keys()) {
+    if (!names.has(name)) memory.sources.delete(name);
+  }
+  return sources.map((group) => {
+    const known = memory.sources.get(group.source.name);
+    if (known && sameItems(known.documents, group.documents)) return known;
+    const record: SourceRecord = {
+      documents: [...group.documents],
+      summary: Object.freeze({
+        name: group.source.name,
+        kind: group.source.kind,
+        documents: Object.freeze(
+          group.documents.map((document) =>
+            document.file.locale
+              ? `${document.file.locale}/${document.file.id}`
+              : document.file.id,
+          ),
+        ),
+      }),
+      snapshot: Object.freeze({
+        name: group.source.name,
+        type: group.source.kind,
+        localized: group.source.localized,
+        documents: Object.freeze(group.documents.map(toExport)),
+      }),
+    };
+    memory.sources.set(group.source.name, record);
+    return record;
+  });
 }
 
 function snapshotsOf(
@@ -153,10 +338,51 @@ function watchTargetsOf(
 }
 
 /**
- * Runs builds for one session: load config → collect → transform →
- * relations → constraints → prepare → derive → plugins → plan → publish.
- * Keeps validated documents between builds, so a rebuild only re-reads the
- * files whose content or dependencies changed.
+ * Watch targets of a build. They are made from the final documents (their
+ * assets and dependencies) and the config files, so the targets of the
+ * last build are kept, frozen, exactly while those are the same.
+ */
+function rememberedWatchTargets(
+  memory: BuildMemory,
+  configFiles: readonly string[],
+  sources: readonly SourceDocuments<FinalDocument>[],
+  assetsDir: string | undefined,
+): WatchTargets {
+  const known = memory.watch;
+  if (
+    known &&
+    sameItems(known.configFiles, configFiles) &&
+    known.documents.length === sources.length &&
+    sources.every((group, index) =>
+      sameItems(group.documents, known.documents[index] ?? []),
+    )
+  ) {
+    return known.targets;
+  }
+  const made = watchTargetsOf(memory.project, configFiles, sources, assetsDir);
+  // A host gets this object in every build until the documents change.
+  const targets: WatchTargets = Object.freeze({
+    directories: Object.freeze(made.directories),
+    files: Object.freeze(made.files),
+    ignore: Object.freeze(made.ignore),
+  });
+  memory.watch = {
+    configFiles: [...configFiles],
+    documents: sources.map((group) => [...group.documents]),
+    targets,
+  };
+  return targets;
+}
+
+/**
+ * Runs builds for one session: load config → discover → validate →
+ * transform → prepare → relations → uniqueness → views → plugins → plan →
+ * publish.
+ *
+ * A session keeps the validated documents and what every later stage made
+ * of them ({@link BuildMemory}). Documents are never changed in place, so
+ * an unchanged document is the same object in every build and a rebuild
+ * redoes work only for the files that changed.
  */
 export class Engine extends Context.Service<
   Engine,
@@ -177,7 +403,6 @@ export class Engine extends Context.Service<
       const collector = yield* Collector;
       const writer = yield* OutputWriter;
       const fieldCache = yield* FieldCache;
-      const fs = yield* FileSystem.FileSystem;
       const state = yield* Ref.make<EngineState>({
         loaded: undefined,
         configFiles: [],
@@ -185,6 +410,12 @@ export class Engine extends Context.Service<
       });
       const documentCache = new Map<string, CachedDocument>();
       const hashes = new Map<string, AssetHashEntry>();
+      /** Set by the first build and whenever the loaded project changes. */
+      let memory: BuildMemory | undefined;
+      /** Cache entries may have become unused since the last clean-up. */
+      let cachesDirty = true;
+      /** Epoch milliseconds of the last clean-up (`undefined`: none yet). */
+      let cleanedAt: number | undefined;
       // Builds of one session share caches and state: run them one at a time
       // so an older build can never publish over a newer one.
       const buildPermit = yield* Semaphore.make(1);
@@ -225,32 +456,36 @@ export class Engine extends Context.Service<
               options.publicPathPrefix,
             ).publicBase
           : undefined;
-        const assetRoots: string[] = [];
-        for (const root of host?.roots ?? []) {
-          assetRoots.push(
-            yield* fs.realPath(root).pipe(Effect.orElseSucceed(() => root)),
-          );
-        }
+        // Native real paths have the case the disk has, like the real
+        // paths of the files compared with them.
+        const assetRoots = yield* fileWork(() =>
+          Promise.all(
+            (host?.roots ?? []).map((root) =>
+              realpath(root).catch(() => path.resolve(root)),
+            ),
+          ),
+        );
         const session: FieldSession = {
           project,
           publicBase,
           assetRoots,
           hashes,
+          stats: createSignatureMemo(),
+          emitted: new Map(),
         };
         return session;
       });
 
       const prepare = Effect.fn("Engine.prepare")(function* (
-        project: ResolvedProject,
+        remembered: BuildMemory,
         sources: SourceDocuments<FinalDocument>[],
       ) {
-        const hook = project.config.prepare;
+        const hook = remembered.project.config.prepare;
         if (!hook) return;
+        // The hook may edit documents: it gets its own copies.
         const snapshots = snapshotsOf(sources).map((snapshot) => ({
           ...snapshot,
-          documents: snapshot.documents.map((document) =>
-            structuredClone(document),
-          ),
+          documents: snapshot.documents.map((document) => copyData(document)),
         }));
         yield* runHook("prepare", () => hook(snapshots), false);
         const diagnostics: Diagnostic[] = [];
@@ -288,7 +523,7 @@ export class Engine extends Context.Service<
               continue;
             }
             const { _meta: _ignored, ...data } = document;
-            next.push({ file: original.file, data, effects: original.effects });
+            next.push(preparedDocument(remembered, original, data));
           }
           group.documents = next;
         }
@@ -299,19 +534,11 @@ export class Engine extends Context.Service<
       const generateFromPlugins = Effect.fn("Engine.generateFromPlugins")(
         function* (
           project: ResolvedProject,
-          sources: readonly SourceDocuments<FinalDocument>[],
+          snapshots: readonly SourceSnapshot[],
         ) {
           const modules: (EmittedModule & { readonly plugin: string })[] = [];
-          const files: (OutputFile & { readonly plugin: string })[] = [];
+          const files: EmittedFile[] = [];
           const warnings: Diagnostic[] = [];
-          const snapshots: SourceSnapshot[] = sources.map((group) => ({
-            name: group.source.name,
-            type: group.source.kind,
-            localized: group.source.localized,
-            documents: group.documents.map((document): TransformDocument =>
-              toExport(document),
-            ),
-          }));
           for (const plugin of project.plugins) {
             const generate = plugin.generate;
             if (!generate) continue;
@@ -355,6 +582,8 @@ export class Engine extends Context.Service<
         project: ResolvedProject,
         sources: readonly SourceDocuments<FinalDocument>[],
         files: readonly OutputFile[],
+        revision: PlanRevision,
+        assets: readonly AssetRef[],
         assetsInfo: AssetsInfo | undefined,
         assetsDir: string | undefined,
         messages: string[],
@@ -366,7 +595,7 @@ export class Engine extends Context.Service<
           projectDir: project.projectDir,
           outputDir: project.outputDir,
           mode: project.mode,
-          assets: uniqueAssets(sources),
+          assets,
           assetsInfo,
           assetsDir,
           info: (message) => {
@@ -385,7 +614,7 @@ export class Engine extends Context.Service<
               false,
             );
         }
-        const written = yield* writer.write(project.outputDir, files);
+        const written = yield* writer.write(project.outputDir, files, revision);
         for (const plugin of project.plugins) {
           const hook = plugin.afterPublish;
           if (hook)
@@ -395,8 +624,13 @@ export class Engine extends Context.Service<
               true,
             );
         }
+        const complete = project.config.complete;
+        const hooked =
+          complete !== undefined ||
+          sources.some((group) => group.source.definition.onSuccess);
+        if (!hooked) return written;
         const snapshots = snapshotsOf(sources);
-        for (const snapshot of snapshots) deepFreeze(snapshot.documents);
+        for (const snapshot of snapshots) Object.freeze(snapshot.documents);
         for (const group of sources) {
           const onSuccess = group.source.definition.onSuccess;
           const documents =
@@ -410,7 +644,6 @@ export class Engine extends Context.Service<
             );
           }
         }
-        const complete = project.config.complete;
         if (complete) {
           yield* runHook(
             "complete",
@@ -454,9 +687,11 @@ export class Engine extends Context.Service<
 
       const runBuild = Effect.fn("Engine.runBuild")(function* (
         options: BuildOptions,
+        clock: StageClock,
       ) {
         const rootDir = path.resolve(options.rootDir ?? process.cwd());
         const mode = options.mode ?? "build";
+        clock.enter("config");
         const current = yield* Ref.get(state);
         const loaded = yield* configLoader.load({
           rootDir,
@@ -464,6 +699,7 @@ export class Engine extends Context.Service<
           mode,
           previous: current.loaded,
         });
+        clock.enter("discover");
         yield* Ref.update(state, (value) => ({
           ...value,
           loaded,
@@ -496,7 +732,13 @@ export class Engine extends Context.Service<
           },
         }));
 
+        if (!memory || memory.project !== project) {
+          memory = createBuildMemory(project);
+        }
+        const remembered = memory;
+
         const discovered = yield* collector.discover(project);
+        clock.enter("validate");
         const session = yield* fieldSession(project, options);
         const validated = yield* collector.validate(
           project,
@@ -505,6 +747,7 @@ export class Engine extends Context.Service<
           documentCache,
           { dryRun: options.dryRun === true },
         );
+        if (validated.changed) cachesDirty = true;
         const collectDiagnostics = [
           ...discovered.diagnostics,
           ...validated.diagnostics,
@@ -517,37 +760,52 @@ export class Engine extends Context.Service<
         if (hasErrors(collectDiagnostics))
           return yield* Effect.fail(buildFailed(collectDiagnostics));
 
-        const transformed = yield* runTransforms(project, validated.documents);
+        clock.enter("transform");
+        const transformed = yield* runTransforms(
+          project,
+          validated.documents,
+          remembered.transforms,
+        );
         if (hasErrors(transformed.diagnostics))
           return yield* Effect.fail(buildFailed(transformed.diagnostics));
         const sources = transformed.sources;
 
+        clock.enter("relations");
         // `prepare` may still edit or drop documents, so references and
         // uniqueness are checked on what it leaves.
-        yield* prepare(project, sources);
+        yield* prepare(remembered, sources);
         const linkDiagnostics = [
-          ...resolveRelations(project, sources, validated.documents),
-          ...checkUniqueness(sources),
+          ...resolveRelations(project, sources, remembered.relations),
+          ...checkUniqueness(sources, remembered.uniques),
         ];
         if (hasErrors(linkDiagnostics))
           return yield* Effect.fail(buildFailed(linkDiagnostics));
-        for (const group of sources) {
-          for (const document of group.documents) deepFreeze(document.data);
-        }
 
-        const derived = deriveAll(project.derived, sources);
+        clock.enter("views");
+        const derived = deriveAll(project.derived, sources, remembered.derived);
         if (hasErrors(derived.diagnostics))
           return yield* Effect.fail(buildFailed(derived.diagnostics));
 
-        const generated = yield* generateFromPlugins(project, sources);
-        warnings.push(...generated.warnings);
-        const plan = planOutput({
+        clock.enter("plugins");
+        const records = sourceRecords(remembered, sources);
+        const generated = yield* generateFromPlugins(
           project,
-          sources,
-          derived: derived.results,
-          modules: generated.modules,
-          files: generated.files,
-        });
+          // One list for every plugin of this build: a plugin cannot change
+          // what the next one gets.
+          Object.freeze(records.map((record) => record.snapshot)),
+        );
+        warnings.push(...generated.warnings);
+        clock.enter("plan");
+        const plan = planOutput(
+          {
+            project,
+            sources,
+            derived: derived.results,
+            modules: generated.modules,
+            files: generated.files,
+          },
+          remembered.plan,
+        );
         if (hasErrors(plan.diagnostics))
           return yield* Effect.fail(buildFailed(plan.diagnostics));
         warnings.push(
@@ -555,6 +813,9 @@ export class Engine extends Context.Service<
             (diagnostic) => diagnostic.severity === "warning",
           ),
         );
+        // A dry run publishes nothing.
+        if (options.dryRun) clock.stop();
+        else clock.enter("publish");
 
         const bases = host
           ? resolveAssetBases(
@@ -565,13 +826,14 @@ export class Engine extends Context.Service<
         const assetsInfo: AssetsInfo | undefined = bases
           ? { publicBase: bases.publicBase, localBase: bases.localBase }
           : undefined;
-        const watch = watchTargetsOf(
-          project,
+        const watch = rememberedWatchTargets(
+          remembered,
           loaded.configFiles,
           sources,
           assetsDir,
         );
         yield* Ref.update(state, (value) => ({ ...value, watch }));
+        const assets = uniqueAssets(sources);
 
         let written: readonly string[] = [];
         let removed: readonly string[] = [];
@@ -583,6 +845,8 @@ export class Engine extends Context.Service<
             project,
             sources,
             plan.files,
+            plan.revision,
+            assets,
             assetsInfo,
             assetsDir,
             messages,
@@ -590,17 +854,37 @@ export class Engine extends Context.Service<
           );
           written = result.written;
           removed = result.removed;
-          if (project.cacheDir) {
-            const keep = new Set<string>();
+          clock.stop();
+          const cacheDir = project.cacheDir;
+          const now = yield* Clock.currentTimeMillis;
+          // Entries only become unused when a document changed or went
+          // away. Listing the cache folders is not free: while a session
+          // rebuilds on every save, it cleans up once in a while (the
+          // first build of the next session cleans up what is left).
+          if (
+            cacheDir !== undefined &&
+            cachesDirty &&
+            (cleanedAt === undefined || now - cleanedAt >= CLEANUP_INTERVAL_MS)
+          ) {
+            clock.enter("cleanup");
+            const fields = new Set<string>();
+            const stored = new Set<string>();
             for (const cached of documentCache.values()) {
               for (const key of cached.document.effects.cacheKeys)
-                keep.add(key);
+                fields.add(key);
+              if (cached.storeKey !== undefined) stored.add(cached.storeKey);
             }
-            yield* fieldCache.collect(project.cacheDir, keep);
+            yield* fieldCache.collect(fieldCacheDir(cacheDir, mode), fields);
+            yield* fileWork(() =>
+              collectStoredDocuments(documentStoreDir(cacheDir, mode), stored),
+            );
+            cachesDirty = false;
+            cleanedAt = now;
+            clock.stop();
           }
         }
 
-        const summary = summaryOf(sources);
+        const summary = records.map((record) => record.summary);
         const result: BuildResult = {
           configPath: project.configPath,
           projectDir: project.projectDir,
@@ -620,18 +904,21 @@ export class Engine extends Context.Service<
                   dir: assetsDir,
                   publicBase: assetsInfo.publicBase,
                   localBase: assetsInfo.localBase,
-                  count: uniqueAssets(sources).length,
+                  count: assets.length,
                 },
           watch,
           warnings,
           messages,
           dryRun: options.dryRun === true,
+          timings: clock.timings,
+          reuse: validated.reuse,
+          notStored: validated.notStored,
         };
         return result;
-      });
+      }, keepFailedTimings);
 
       const build = (options: BuildOptions) =>
-        buildPermit.withPermits(1)(runBuild(options));
+        buildPermit.withPermits(1)(runBuild(options, createStageClock()));
 
       const watchTargets = Effect.fn("Engine.watchTargets")(function* (
         options: BuildOptions,

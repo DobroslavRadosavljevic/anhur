@@ -110,4 +110,63 @@ describe("cli", () => {
       "notes/b.md › title",
     );
   });
+
+  it("says where the time went and what came from a cache with --timings", async () => {
+    // Failure: a slow build gave no way to see which stage was slow, or
+    // that a field without `pure` made every session validate again.
+    const project = await createProject({
+      "anhur.config.ts": `
+import { defineCollection, defineConfig, schema as s } from "@anhur/core";
+import { defineField } from "@anhur/core/plugin";
+const stamp = defineField(s.string(), { kind: "stamp", whenAbsent: "compile", compile: () => "x" });
+export default defineConfig({
+  content: [defineCollection({ name: "notes", directory: "notes", include: "**/*.md", schema: s.object({ title: s.string(), stamp }) })],
+});
+`,
+      "notes/a.md": "---\ntitle: A\n---\n",
+    });
+    projects.push(project);
+    const built = await run("bun", [
+      cli,
+      "build",
+      "--root",
+      project.dir,
+      "--timings",
+    ]);
+    expect(built.stdout).toMatch(/config \d+ ms · discover \d+ ms · validate/);
+    expect(built.stdout).toContain(
+      "documents: 0 unchanged · 0 compared by content · 1 validated",
+    );
+    expect(built.stdout).toContain(
+      '"notes" is validated in every new session: the field "stamp" (stamp) is not pure and has no cache',
+    );
+
+    const json = await run("bun", [
+      cli,
+      "check",
+      "--root",
+      project.dir,
+      "--json",
+    ]);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      reuse: { unchanged: 0, compared: 0, validated: 1 },
+      notStored: [{ source: "notes" }],
+    });
+
+    // A failed build says which stage failed and how long the stages took.
+    await project.write("notes/b.md", "---\n---\n");
+    const failed = await run("bun", [
+      cli,
+      "build",
+      "--root",
+      project.dir,
+      "--timings",
+    ]).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(hasStderr(failed) ? failed.stderr : "").toMatch(
+      /failed in validate · config \d+ ms · discover \d+ ms · validate \d+ ms\n?$/,
+    );
+  });
 });

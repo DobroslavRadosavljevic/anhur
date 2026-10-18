@@ -160,7 +160,7 @@ describe("field cache", () => {
     );
     store.anhurCompiles = 0;
     expect(await run()).toBe(1);
-    const entries = await readdir(project.path(".anhur/cache/fields"));
+    const entries = await readdir(project.path(".anhur/cache/fields/build"));
     expect(entries.filter((name) => name.endsWith(".json"))).toHaveLength(1);
   });
 });

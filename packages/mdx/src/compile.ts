@@ -251,6 +251,14 @@ function remarkRejectModuleCode() {
   };
 }
 
+/** Note the headings (with the ids they have by now) and leave the tree as it is. */
+function rehypeRecordHeadings(headings: BodyHeading[]) {
+  return () =>
+    (tree: HastRoot): void => {
+      headings.push(...collectHastHeadings(tree));
+    };
+}
+
 function rehypeCollectHeadings(headings: BodyHeading[]) {
   return () =>
     (tree: HastRoot): HastRoot => {
@@ -264,8 +272,11 @@ function rehypeCollectHeadings(headings: BodyHeading[]) {
 export type MdxSourceKind = "body" | "field";
 
 type Stage =
-  /** Full compile; relative URLs are resolved when there is a context. */
-  | { readonly kind: "code" }
+  /**
+   * Full compile; relative URLs are resolved when there is a context. The
+   * headings are noted on the way when `headings` is given.
+   */
+  | { readonly kind: "code"; readonly headings?: BodyHeading[] }
   /** Up to heading ids only (no assets, no user rehype / recma plugins). */
   | { readonly kind: "headings"; readonly headings: BodyHeading[] };
 
@@ -310,6 +321,9 @@ async function run(
   if (stage.kind === "headings") {
     rehypePlugins.push(rehypeCollectHeadings(stage.headings));
   } else {
+    if (stage.headings) {
+      rehypePlugins.push(rehypeRecordHeadings(stage.headings));
+    }
     rehypePlugins.push(...(options.rehypePlugins ?? []));
   }
   const file = await compile(
@@ -352,6 +366,30 @@ export function compileMdx(
   sourceKind: MdxSourceKind = "body",
 ): Promise<string> {
   return run(source, options, sourceKind, context, { kind: "code" });
+}
+
+/** A compiled body with the headings found on the way. */
+export type CompiledMdx = {
+  readonly code: string;
+  /** What {@link extractMdxHeadings} gives for the same body and options. */
+  readonly headings: readonly BodyHeading[];
+};
+
+/**
+ * {@link compileMdx} of a document body that also returns its headings, so
+ * `s.toc()` does not compile the body a second time to find them.
+ */
+export async function compileMdxWithHeadings(
+  source: string,
+  options: MdxOptions = {},
+  context?: FieldContext,
+): Promise<CompiledMdx> {
+  const headings: BodyHeading[] = [];
+  const code = await run(source, options, "body", context, {
+    kind: "code",
+    headings,
+  });
+  return { code, headings };
 }
 
 /**

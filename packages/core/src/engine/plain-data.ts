@@ -21,6 +21,66 @@ function describe(value: unknown): string {
   return `a ${name || "class"} instance`;
 }
 
+/** Nesting the quick check follows before it leaves the value to the full walk. */
+const QUICK_DEPTH = 64;
+/** Values the quick check looks at before it gives up (a cycle would never end). */
+const QUICK_BUDGET = 200_000;
+
+type Budget = { left: number };
+
+/**
+ * True when `value` is certainly plain data: plain objects, arrays, `Map`,
+ * `Set`, `Date` and primitives, at most {@link QUICK_DEPTH} levels deep
+ * and within the budget. `false` means "look closer", not "invalid":
+ * cycles and very large values end here and get the full walk.
+ */
+function isClearlyPlain(
+  value: unknown,
+  depth: number,
+  budget: Budget,
+): boolean {
+  if (value === null || value === undefined) return true;
+  if (
+    Predicate.isString(value) ||
+    Predicate.isNumber(value) ||
+    Predicate.isBoolean(value) ||
+    Predicate.isBigInt(value)
+  ) {
+    return true;
+  }
+  if (!Predicate.isObject(value) && !Array.isArray(value)) return false;
+  if (value instanceof Date) return true;
+  budget.left -= 1;
+  if (depth >= QUICK_DEPTH || budget.left < 0) return false;
+  if (Array.isArray(value)) {
+    const items: readonly unknown[] = value;
+    for (let index = 0; index < items.length; index += 1) {
+      if (!isClearlyPlain(items[index], depth + 1, budget)) return false;
+    }
+    return true;
+  }
+  if (isPlainObject(value)) {
+    for (const key of Object.keys(value)) {
+      if (!isClearlyPlain(value[key], depth + 1, budget)) return false;
+    }
+    return true;
+  }
+  if (value instanceof Map) {
+    for (const [key, item] of value) {
+      if (!isClearlyPlain(key, depth + 1, budget)) return false;
+      if (!isClearlyPlain(item, depth + 1, budget)) return false;
+    }
+    return true;
+  }
+  if (value instanceof Set) {
+    for (const item of value) {
+      if (!isClearlyPlain(item, depth + 1, budget)) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 type Frame =
   | {
       readonly kind: "enter";
@@ -40,6 +100,9 @@ export function findNonPlainData(
   value: unknown,
   basePath: FieldPath = [],
 ): PlainDataProblem | undefined {
+  // Nearly every value is a small tree of plain data: no need to track
+  // paths, cycles and shared objects for it.
+  if (isClearlyPlain(value, 0, { left: QUICK_BUDGET })) return undefined;
   const active = new Set<object>();
   // Shared (non-cyclic) objects are checked once.
   const done = new Set<object>();

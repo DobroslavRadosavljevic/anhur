@@ -5,11 +5,43 @@ import {
   type DocumentFields,
   type DocumentValue,
 } from "../document";
-import type { FinalDocument } from "./types";
+import { deepFreeze } from "./freeze";
+import type { FinalDocument, ValidatedDocument } from "./types";
 
-/** Final document as exported: data + `_meta`. */
+/**
+ * Exported form of documents: one deep-frozen object per document, made
+ * once.
+ */
+const exported = new WeakMap<
+  FinalDocument | ValidatedDocument,
+  TransformDocument
+>();
+
+function withMeta(
+  document: FinalDocument | ValidatedDocument,
+): TransformDocument {
+  let known = exported.get(document);
+  if (!known) {
+    // The data is deep-frozen already: this freezes the new object, and
+    // makes the whole of it known as deep-frozen.
+    known = deepFreeze({ ...document.data, _meta: document.file.meta });
+    exported.set(document, known);
+  }
+  return known;
+}
+
+/**
+ * Final document as exported: data + `_meta`. The same frozen object is
+ * returned for the same document, so hooks, plugins and later builds can
+ * tell an unchanged document by identity.
+ */
 export function toExport(document: FinalDocument): TransformDocument {
-  return { ...document.data, _meta: document.file.meta };
+  return withMeta(document);
+}
+
+/** Validated document as `ctx.documents()` shows it: data + `_meta`, frozen. */
+export function toSnapshot(document: ValidatedDocument): TransformDocument {
+  return withMeta(document);
 }
 
 function isEmbedded(value: DocumentValue): value is DocumentFields {
@@ -49,10 +81,29 @@ export function omitDeep(
   return out;
 }
 
-/** Light-list row of a final document. */
+/** Light-list rows by document, for one list of omitted keys. */
+type RowMemo = WeakMap<FinalDocument, DocumentFields>;
+
+const rowMemos = new WeakMap<readonly string[], RowMemo>();
+
+/**
+ * Light-list row of a final document. Rows are remembered per `omit` list
+ * (a list that lives as long as the loaded config) and frozen, so an
+ * unchanged document gives the same row object in every build.
+ */
 export function toListRow(
   document: FinalDocument,
   omit: readonly string[],
 ): DocumentFields {
-  return omitDeep(toExport(document), new Set(omit));
+  let memo = rowMemos.get(omit);
+  if (!memo) {
+    memo = new WeakMap();
+    rowMemos.set(omit, memo);
+  }
+  let row = memo.get(document);
+  if (!row) {
+    row = deepFreeze(omitDeep(toExport(document), new Set(omit)));
+    memo.set(document, row);
+  }
+  return row;
 }

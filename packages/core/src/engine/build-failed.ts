@@ -1,4 +1,5 @@
 import { Predicate, Schema } from "effect";
+import { failedTimingsOf } from "./result";
 import {
   AnhurBuildError,
   formatDiagnostics,
@@ -43,5 +44,8 @@ export function toAnhurBuildError(
   error: BuildFailedError,
   relativeTo: string | undefined,
 ): AnhurBuildError {
-  return new AnhurBuildError(error.diagnostics, { relativeTo });
+  return new AnhurBuildError(error.diagnostics, {
+    relativeTo,
+    timings: failedTimingsOf(error),
+  });
 }

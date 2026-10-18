@@ -5,10 +5,15 @@ import {
   errorDiagnostic,
   messageOf,
 } from "../diagnostics";
-import { BuildFailedError } from "../engine/build-failed";
+import { BuildFailedError, toAnhurBuildError } from "../engine/build-failed";
 import { Engine } from "../engine/engine.service";
 import { AnhurLive } from "../engine/live";
-import type { BuildOptions, BuildResult, WatchTargets } from "../engine/result";
+import {
+  failedTimingsOf,
+  type BuildOptions,
+  type BuildResult,
+  type WatchTargets,
+} from "../engine/result";
 import { Watcher, type WatchOptions } from "../engine/watcher.service";
 
 /** A long-lived build session (one per dev server / watcher / CLI run). */
@@ -32,7 +37,10 @@ export function toAnhurError(
 ): AnhurBuildError {
   const typed = Cause.findError(cause);
   if (Result.isSuccess(typed)) {
-    return new AnhurBuildError(typed.success.diagnostics, { relativeTo });
+    return new AnhurBuildError(typed.success.diagnostics, {
+      relativeTo,
+      timings: failedTimingsOf(typed.success),
+    });
   }
   const defect = Cause.squash(cause);
   return new AnhurBuildError(
@@ -128,7 +136,7 @@ export async function watch(
           onBuild: (result) => notify("onBuild", () => handlers.onBuild?.(result)),
           onError: (error) =>
             notify("onError", () =>
-              handlers.onError?.(new AnhurBuildError(error.diagnostics, { relativeTo })),
+              handlers.onError?.(toAnhurBuildError(error, relativeTo)),
             ),
         },
       ),

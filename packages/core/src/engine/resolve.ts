@@ -40,7 +40,12 @@ import {
   type PatternSegment,
   type SchemaAnalysis,
 } from "../schema/walk";
+import { globProblem } from "./content-files";
 import { fingerprint } from "./fingerprint";
+import {
+  schemaFingerprint,
+  type SchemaFingerprint,
+} from "./schema-fingerprint";
 import { isInside, overlaps } from "./paths";
 
 export type ResolvedCollectionGenerate = {
@@ -78,6 +83,13 @@ type SourceCommon = {
   /** Absolute directory the source reads from. */
   readonly root: string;
   readonly analysis: SchemaAnalysis;
+  /**
+   * Fingerprint of the schema (its shape, checks, defaults and the source
+   * of its functions), taken when the config is resolved. Stored documents are
+   * only valid for the schema that made them, wherever it is defined. A
+   * schema without one (`problem` says why) is validated in every session.
+   */
+  readonly schemaFingerprint: SchemaFingerprint;
   readonly references: readonly ReferenceLocation[];
   readonly uniques: readonly UniqueLocation[];
   /** Folder under the output dir for per-document modules (POSIX). */
@@ -166,13 +178,21 @@ export type ResolvedProject = {
   readonly embedOrder: readonly string[];
   /** Changes whenever anything that affects the output changes. */
   readonly fingerprint: string;
+  /**
+   * False when the modules the config imports could not all be followed:
+   * a change in one of them would go unseen, so validated documents are
+   * not kept on disk.
+   */
+  readonly sourcesComplete: boolean;
 };
 
 export type ResolveOptions = {
   readonly configPath: string;
   readonly mode: BuildMode;
-  /** Hash of the config file and the local modules it imports. */
+  /** Hash of the config file, the modules it imports and the lockfile. */
   readonly sourceFingerprint: string;
+  /** See {@link ResolvedProject.sourcesComplete}. Default `true`. */
+  readonly sourcesComplete?: boolean;
 };
 
 export type ResolveResult = {
@@ -546,7 +566,53 @@ function checkSchema(
       }
     }
   }
+  // A value that is not a boolean must not count as "on" without a word.
+  for (const option of ["transformCache", "documentCache"] as const) {
+    const value: unknown = source[option];
+    if (value !== undefined && !Predicate.isBoolean(value)) {
+      context.diagnostics.push(
+        errorDiagnostic(
+          "config-invalid",
+          `${label} ${option} must be true or false.`,
+          { source: source.name },
+        ),
+      );
+    }
+  }
   return analysis;
+}
+
+/** Report every pattern the glob matcher cannot use. */
+function checkGlobs(
+  label: string,
+  source: AnyContent,
+  role: "include" | "exclude",
+  patterns: readonly string[],
+  diagnostics: Diagnostic[],
+): void {
+  for (const pattern of patterns) {
+    if (!isNonEmptyString(pattern)) continue;
+    const problem =
+      globProblem(pattern) ??
+      // A folder pattern is right in `exclude`; in `include` it lists no file.
+      (role === "include" && /[\\/]$/.test(pattern)
+        ? "an include pattern must name files, not a folder"
+        : undefined);
+    if (problem === undefined) continue;
+    diagnostics.push(
+      errorDiagnostic(
+        "config-invalid",
+        `${label} ${role} pattern "${pattern}": ${problem}.`,
+        {
+          source: source.name,
+          hint:
+            role === "include"
+              ? 'Patterns are relative to the directory of the source, for example "**/*.md" or "posts/*.{md,mdx}".'
+              : 'Name what to leave out, for example "drafts/" or "**/*.draft.md".',
+        },
+      ),
+    );
+  }
 }
 
 function resolveCollection(
@@ -585,6 +651,8 @@ function resolveCollection(
       ),
     );
   }
+  checkGlobs(label, source, "include", include, diagnostics);
+  checkGlobs(label, source, "exclude", exclude, diagnostics);
   if (source.localized === true && !context.localization) {
     diagnostics.push(
       errorDiagnostic(
@@ -692,6 +760,7 @@ function resolveCollection(
     include,
     exclude,
     analysis,
+    schemaFingerprint: schemaFingerprint(source.schema),
     references: referencesOf(analysis),
     uniques: uniquesOf(analysis),
     documentsDir,
@@ -782,6 +851,7 @@ function resolveSingleton(
     }
   }
   const include = toList(source.include);
+  checkGlobs(label, source, "include", include, diagnostics);
   const analysis = checkSchema(source, label, context);
   if (!root || !analysis) return undefined;
 
@@ -830,6 +900,7 @@ function resolveSingleton(
     filePath,
     include: include.length > 0 ? include : DEFAULT_SINGLETON_INCLUDE,
     analysis,
+    schemaFingerprint: schemaFingerprint(source.schema),
     references: referencesOf(analysis),
     uniques: uniquesOf(analysis),
     documentsDir,
@@ -944,6 +1015,15 @@ function resolveDerived(
       errorDiagnostic(
         "config-invalid",
         `${label} generate.limit must be a whole number ≥ 0.`,
+        { source: entry.name },
+      ),
+    );
+  }
+  if (gen.cache !== undefined && !Predicate.isBoolean(gen.cache)) {
+    diagnostics.push(
+      errorDiagnostic(
+        "config-invalid",
+        `${label} generate.cache must be true or false.`,
         { source: entry.name },
       ),
     );
@@ -1430,6 +1510,31 @@ export function resolveProject(
     loaders.push(loader);
   }
 
+  for (const loader of loaders) {
+    if (loader.pure !== undefined && !Predicate.isBoolean(loader.pure)) {
+      diagnostics.push(
+        errorDiagnostic(
+          "config-invalid",
+          `Loader "${String(loader.name)}": pure must be true or false.`,
+        ),
+      );
+    }
+  }
+
+  const workers = config.workers;
+  if (
+    workers !== undefined &&
+    !Predicate.isBoolean(workers) &&
+    !(Number.isInteger(workers) && workers >= 1)
+  ) {
+    diagnostics.push(
+      errorDiagnostic(
+        "config-invalid",
+        "workers must be true, false or a whole number of at least 1.",
+      ),
+    );
+  }
+
   for (const hook of ["prepare", "complete"] as const) {
     const value = config[hook];
     if (value !== undefined && !Predicate.isFunction(value)) {
@@ -1457,12 +1562,20 @@ export function resolveProject(
     loaders,
     assetHost,
     embedOrder: order,
+    // The schemas are in it too: one that changed with the same config
+    // sources (a value read when the config loads) is another project,
+    // also for a worker thread that loads the config again.
     fingerprint: fingerprint([
       options.sourceFingerprint,
       configPath,
       options.mode,
       plugins.map((plugin) => [plugin.name, plugin.version ?? ""]),
+      sources.map((source) => [
+        source.name,
+        source.schemaFingerprint.value ?? "",
+      ]),
     ]),
+    sourcesComplete: options.sourcesComplete !== false,
   };
   return { project, diagnostics };
 }

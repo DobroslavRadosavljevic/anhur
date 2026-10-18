@@ -1,9 +1,7 @@
-import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AssetRef } from "@anhur/core/plugin";
 import {
   ASSETS_MANIFEST,
   copyAssets,
@@ -12,10 +10,10 @@ import {
   pruneStorage,
   readImageMeta,
   sanitizeSvg,
-  SVG_SANITIZER_VERSION,
   syncStorage,
   type AssetStorageClient,
 } from "../../src";
+import { assetRef } from "../fixtures/asset-ref";
 import { createProject, type TestProject } from "../fixtures/temp-project";
 
 const projects: TestProject[] = [];
@@ -27,34 +25,6 @@ async function project() {
   const created = await createProject({});
   projects.push(created);
   return created;
-}
-
-/** Asset hash as core computes it (see `AssetHost.transformVersion`). */
-function hashOf(contents: string | Uint8Array, version?: string): string {
-  const hash = createHash("sha256");
-  if (version !== undefined) hash.update(`${version}\0`);
-  return hash.update(contents).digest("hex").slice(0, 16);
-}
-
-function assetRef(
-  sourcePath: string,
-  contents: string | Uint8Array,
-  options: { readonly stem?: string; readonly svg?: boolean } = {},
-): AssetRef {
-  const extension = options.svg ? ".svg" : ".png";
-  const hash = hashOf(
-    contents,
-    options.svg ? SVG_SANITIZER_VERSION : undefined,
-  );
-  const fileName = `${options.stem ?? "a"}-${hash}${extension}`;
-  return {
-    src: `/a/${fileName}`,
-    sourcePath,
-    fileName,
-    hash,
-    size: Buffer.byteLength(contents),
-    contentType: options.svg ? "image/svg+xml" : "image/png",
-  };
 }
 
 describe("image metadata", () => {

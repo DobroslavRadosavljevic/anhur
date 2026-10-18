@@ -14,12 +14,16 @@ export type {
   BuildAssets,
   BuildOptions,
   BuildResult,
+  BuildStage,
+  DocumentReuse,
+  NotStored,
   SourceSummary,
+  StageTiming,
   WatchTargets,
 } from "../engine/result";
 export { isRelevantChange, type WatchOptions } from "../engine/watcher.service";
 export { CONFIG_FILE_NAMES } from "../engine/config-loader.service";
-export { MANIFEST_FILE } from "../engine/output.service";
+export { MANIFEST_FILE } from "../engine/output-files";
 export {
   AnhurBuildError,
   isAnhurBuildError,

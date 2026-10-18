@@ -47,6 +47,8 @@ const post = await getPost("hello");
 
 A build either succeeds completely or changes nothing: every problem (schema errors, broken references, duplicate slugs, unsafe asset paths) is reported with the file and field, and the previous output stays in place.
 
+Builds stay fast with thousands of files: a rebuild only does work for the files that changed, a restart reuses the documents it validated before, and a first build compiles in worker threads. See [Speed](./packages/core/README.md#-speed) and the benchmark in [`apps/bench`](./apps/bench).
+
 ## 📦 Packages
 
 Install only what you need:

@@ -214,7 +214,7 @@ describe("cache folder", () => {
       "notes/a.md": "---\ntitle: A\n---\nBody text.\n",
     });
     await check({ rootDir: dir.dir });
-    const cache = await readdir(dir.path(".anhur/cache/fields")).catch(
+    const cache = await readdir(dir.path(".anhur/cache/fields/build")).catch(
       () => [],
     );
     expect(cache).toEqual([]);
