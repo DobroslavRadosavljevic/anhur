@@ -21,6 +21,8 @@ import { serveAssets, type AssetRoute } from "./serve-assets";
 
 /** Import specifier of the generated modules. */
 export const IMPORT_ID = "anhur/generated";
+/** Import specifier prefix of a scope's generated modules: `anhur/scopes/<name>`. */
+export const SCOPE_IMPORT_PREFIX = "anhur/scopes/";
 const DEBOUNCE_MS = 75;
 
 export type AnhurViteOptions = {
@@ -61,6 +63,8 @@ function assetRoute(
 /** True when `file` is output Anhur itself writes (generated modules, copied assets). */
 function isAnhurOutput(file: string, result: BuildResult): boolean {
   if (isInside(file, result.outputDir)) return true;
+  if (result.scopes.some((scope) => isInside(file, scope.outputDir)))
+    return true;
   const assetsDir = result.assets?.dir;
   return assetsDir !== undefined && isInside(file, assetsDir);
 }
@@ -269,7 +273,12 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
     },
 
     resolveId(id) {
-      return id === IMPORT_ID ? generatedIndex() : null;
+      if (id === IMPORT_ID) return generatedIndex();
+      if (!id.startsWith(SCOPE_IMPORT_PREFIX)) return null;
+      const name = id.slice(SCOPE_IMPORT_PREFIX.length);
+      const scope = result?.scopes.find((entry) => entry.name === name);
+      // Before the first build no scope is known: let Vite report the import.
+      return scope ? path.join(scope.outputDir, "index.js") : null;
     },
 
     watchChange(id) {
@@ -375,8 +384,11 @@ export function anhur(options: AnhurViteOptions = {}): Plugin {
         for (const target of [...targets.directories, ...targets.files]) {
           if (!isInside(target, rootDir)) wanted.add(target);
         }
-        if (result && !isInside(result.outputDir, rootDir))
-          wanted.add(result.outputDir);
+        for (const dir of result
+          ? [result.outputDir, ...result.scopes.map((scope) => scope.outputDir)]
+          : []) {
+          if (!isInside(dir, rootDir)) wanted.add(dir);
+        }
         for (const target of state.added) {
           if (!wanted.has(target)) {
             server.watcher.unwatch(target);

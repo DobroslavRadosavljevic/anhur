@@ -6,7 +6,7 @@ import * as NodeRuntime from "@effect/platform-node-shared/NodeRuntime";
 import * as NodeStdio from "@effect/platform-node-shared/NodeStdio";
 import * as NodeTerminal from "@effect/platform-node-shared/NodeTerminal";
 import { Console, Effect, Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import path from "node:path";
 import {
   AnhurBuildError,
@@ -68,10 +68,26 @@ function failedStageLine(error: AnhurBuildError): string | undefined {
 }
 
 function report(kind: string, result: BuildResult, timings: boolean): string {
-  const relative =
-    path.relative(process.cwd(), result.outputDir) || result.outputDir;
+  const relative = (dir: string) => path.relative(process.cwd(), dir) || dir;
+  const changes = (written: number, removed: number) =>
+    result.dryRun
+      ? " (dry run, nothing written)"
+      : ` (${written} written, ${removed} removed)`;
+  // `written` and `removed` count every output; the first line is the main one.
+  const scopeWritten = result.scopes.reduce(
+    (total, scope) => total + scope.written.length,
+    0,
+  );
+  const scopeRemoved = result.scopes.reduce(
+    (total, scope) => total + scope.removed.length,
+    0,
+  );
   const lines = [
-    `anhur: ${kind} ${result.documentCount} document(s) → ${relative}${result.dryRun ? " (dry run, nothing written)" : ` (${result.written.length} written, ${result.removed.length} removed)`}`,
+    `anhur: ${kind} ${result.documentCount} document(s) → ${relative(result.outputDir)}${changes(result.written.length - scopeWritten, result.removed.length - scopeRemoved)}`,
+    ...result.scopes.map(
+      (scope) =>
+        `anhur:   scope ${scope.name}: ${scope.documentCount} document(s) → ${relative(scope.outputDir)}${changes(scope.written.length, scope.removed.length)}`,
+    ),
     ...result.messages.map((message) => `anhur:   ${message}`),
   ];
   if (timings) {
@@ -110,6 +126,7 @@ function jsonReport(
       documents: result?.documentCount,
       written: result?.written,
       removed: result?.removed,
+      scopes: result?.scopes,
       timings: result?.timings ?? failedTimings,
       reuse: result?.reuse,
       notStored: result?.notStored,

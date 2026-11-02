@@ -22,6 +22,7 @@ export type DiagnosticCode =
   | "field-failed"
   | "validation-failed"
   | "transform-failed"
+  | "scope-failed"
   | "reference-failed"
   | "unique-conflict"
   | "derive-failed"

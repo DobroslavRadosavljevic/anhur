@@ -223,6 +223,42 @@ describe("vite build", () => {
     expect(copied).toEqual([expect.stringMatching(/^a-[0-9a-f]{16}\.png$/)]);
   });
 
+  it("resolves anhur/scopes/<name> to the scope's output, with only its documents", async () => {
+    const project = await createProject({
+      ...FILES,
+      "anhur.config.ts": CONFIG.replace(
+        "export default defineConfig({ content: [posts], plugins: [assets()] });",
+        `export default defineConfig({
+  content: [posts],
+  plugins: [assets()],
+  scopes: [{ name: "public", outputDir: ".anhur/public", where: { posts: (doc) => doc.title !== "Hidden post" } }],
+});`,
+      ),
+      "main.js":
+        'import { allPosts as all } from "anhur/generated";\nimport { allPosts as shown } from "anhur/scopes/public";\ndocument.title = `all:${all.map((post) => post.title).join(",")};shown:${shown.map((post) => post.title).join(",")}`;\n',
+      "content/two.md": "---\ntitle: Hidden post\n---\n",
+    });
+    projects.push(project);
+    await build({
+      root: project.dir,
+      logLevel: "silent",
+      plugins: [anhur()],
+      build: { minify: false },
+    });
+    const bundles = await readdir(project.path("dist/assets"));
+    const script = bundles.find((file) => file.endsWith(".js")) ?? "";
+    const code = await readFile(project.path(`dist/assets/${script}`), "utf8");
+    expect(code).toContain("Hidden post");
+    expect(code).toContain("First post");
+    // The scope's list module has only the kept post.
+    const scoped = await readFile(
+      project.path(".anhur/public/allPosts.js"),
+      "utf8",
+    );
+    expect(scoped).toContain("First post");
+    expect(scoped).not.toContain("Hidden post");
+  });
+
   it("fails the build with the diagnostics", async () => {
     const project = await createProject({
       ...FILES,
@@ -330,6 +366,54 @@ describe("vite dev", () => {
       return current.length === 2 ? current : undefined;
     });
     expect([...titles].sort()).toEqual(["Fixed", "Second"]);
+  });
+
+  it("serves a scope in dev and updates it when a document leaves the scope", async () => {
+    const project = await createProject({
+      ...FILES,
+      "anhur.config.ts": CONFIG.replace(
+        "export default defineConfig({ content: [posts], plugins: [assets()] });",
+        `export default defineConfig({
+  content: [posts],
+  plugins: [assets()],
+  scopes: [{ name: "public", outputDir: ".anhur/public", where: { posts: (doc) => !doc.title.startsWith("Draft") } }],
+});`,
+      ),
+      "content/two.md": "---\ntitle: Second\n---\n",
+    });
+    projects.push(project);
+    const server = await createServer({
+      root: project.dir,
+      logLevel: "silent",
+      plugins: [anhur()],
+      server: { middlewareMode: true, ws: false },
+    });
+    servers.push(server);
+    const loadScope = async () => {
+      const dir = path.join(server.config.root, ".anhur/public");
+      for (const file of await readdir(dir)) {
+        const module = server.moduleGraph.getModuleById(path.join(dir, file));
+        if (module) server.moduleGraph.invalidateModule(module);
+      }
+      // SAFETY: the scope's generated index exports allPosts (checked below).
+      const loaded = (await server.ssrLoadModule(
+        "anhur/scopes/public",
+      )) as PostsModule;
+      return loaded.allPosts.map((post) => post.title).sort();
+    };
+    expect(await loadScope()).toEqual(["First post", "Second"]);
+
+    await project.write("content/two.md", "---\ntitle: Draft two\n---\n");
+    expect(
+      await until(async () => {
+        const titles = await loadScope();
+        return titles.length === 1 ? titles : undefined;
+      }),
+    ).toEqual(["First post"]);
+    expect([...(await loadPosts(server))].sort()).toEqual([
+      "Draft two",
+      "First post",
+    ]);
   });
 
   it("keeps rebuilding after server.restart() with an inline plugin", async () => {

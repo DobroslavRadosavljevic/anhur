@@ -274,4 +274,27 @@ describe("orama plugin", () => {
       /languages\.en is "klingon", which has no stemmer\. Use one of .*"german"/,
     );
   });
+
+  it("builds a separate index for each scope, with only the documents it keeps", async () => {
+    const config = CONFIG().replace(
+      "export default defineConfig({",
+      `export default defineConfig({
+  scopes: [
+    { name: "public", outputDir: ".anhur/public", where: { posts: (doc) => !doc.title.startsWith("Running") } },
+  ],`,
+    );
+    const project = await buildProject(config);
+    const main = await createSearcher(
+      await (await loadModule(project.dir)).loadSearchIndex(),
+    );
+    expect((await main.search({ term: "running" })).count).toBe(1);
+
+    // SAFETY: the scope's generated search module exports loadSearchIndex (asserted by use below).
+    const scoped = (await import(
+      pathToFileURL(`${project.dir}/.anhur/public/search.js`).href
+    )) as SearchModule;
+    const publicSearch = await createSearcher(await scoped.loadSearchIndex());
+    expect((await publicSearch.search({ term: "running" })).count).toBe(0);
+    expect((await publicSearch.search({ term: "hello" })).count).toBe(1);
+  });
 });

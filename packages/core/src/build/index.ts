@@ -14,6 +14,7 @@ export type {
   BuildAssets,
   BuildOptions,
   BuildResult,
+  ScopeResult,
   BuildStage,
   DocumentReuse,
   NotStored,

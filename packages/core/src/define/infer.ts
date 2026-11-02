@@ -242,6 +242,48 @@ export type GetTypeByName<
   TConfig
 >;
 
+/** The scope called `TScope` in a config's `scopes`, or `never`. */
+type ScopeByName<TConfig, TScope extends string> = TConfig extends {
+  readonly scopes?: infer TScopes;
+}
+  ? TScopes extends readonly (infer TEntry)[]
+    ? Extract<TEntry, { readonly name: TScope }>
+    : never
+  : never;
+
+/** What a scope's `where` predicate for `TName` narrows to, or `never`. */
+type ScopeNarrowing<TScopeEntry, TName extends string> = TScopeEntry extends {
+  readonly where?: infer TWhere;
+}
+  ? TWhere extends { readonly [K in TName]?: infer TFilter }
+    ? TFilter extends ((document: any, ...rest: any[]) => document is infer N)
+      ? N
+      : never
+    : never
+  : never;
+
+/**
+ * Final document type of a source in a scope's output. A `where` written as
+ * a type predicate (`(doc): doc is Doc & { status: "published" } => …`)
+ * narrows it; any other filter keeps `GetTypeByName` (correct, only wider).
+ */
+export type GetScopeTypeByName<
+  TConfig extends TypedConfig,
+  TScope extends string,
+  TName extends TConfig["content"][number]["name"],
+> = [ScopeNarrowing<ScopeByName<TConfig, TScope>, TName>] extends [never]
+  ? GetTypeByName<TConfig, TName>
+  : RemapEmbeddedRefs<
+      Omit<ScopeNarrowing<ScopeByName<TConfig, TScope>, TName>, "_meta"> & {
+        _meta: ContentMetaFor<
+          TConfig,
+          Extract<TConfig["content"][number], { name: TName }>
+        >;
+      },
+      TConfig["content"],
+      TConfig
+    >;
+
 /** Item data of a view / index / group definition. */
 export type InferViewData<T> =
   T extends ViewDefinition<string, infer TData>

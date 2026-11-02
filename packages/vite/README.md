@@ -28,6 +28,8 @@ Put `anhur.config.ts` in the Vite root (or pass `configPath`), and point TypeScr
 {
   "compilerOptions": {
     "paths": { "anhur/generated": ["./.anhur/generated"] },
+    // With scopes: one entry per scope, for example
+    // "anhur/scopes/public": ["./.anhur/public"]
   },
 }
 ```
@@ -35,6 +37,8 @@ Put `anhur.config.ts` in the Vite root (or pass `configPath`), and point TypeScr
 ```ts
 import { allPosts, getPost } from "anhur/generated";
 ```
+
+With `scopes` in the config, `anhur/scopes/<name>` resolves to the output of that scope (`import { allPosts } from "anhur/scopes/public"`).
 
 No separate `anhur build` step is needed — the plugin builds on `vite dev` and `vite build` (including `vite build --watch`).
 

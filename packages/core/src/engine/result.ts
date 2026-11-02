@@ -63,6 +63,7 @@ export type BuildStage =
   | "views"
   | "plugins"
   | "plan"
+  | "scopes"
   | "publish"
   | "cleanup";
 
@@ -114,6 +115,19 @@ export type NotStored = {
   readonly reason: string;
 };
 
+/** What one scope of a build wrote (see `AnhurConfig.scopes`). */
+export type ScopeResult = {
+  readonly name: string;
+  readonly outputDir: string;
+  /** The documents the scope kept, by source. */
+  readonly sources: readonly SourceSummary[];
+  readonly documentCount: number;
+  /** Absolute paths written in this scope's output. */
+  readonly written: readonly string[];
+  /** Absolute paths removed from this scope's output. */
+  readonly removed: readonly string[];
+};
+
 /** Outcome of a successful build. */
 export type BuildResult = {
   readonly configPath: string;
@@ -122,10 +136,15 @@ export type BuildResult = {
   readonly mode: BuildMode;
   readonly sources: readonly SourceSummary[];
   readonly documentCount: number;
-  /** Absolute paths written (unchanged files are not rewritten). */
+  /**
+   * Absolute paths written (unchanged files are not rewritten), in the
+   * main output and in every scope.
+   */
   readonly written: readonly string[];
-  /** Absolute paths removed. */
+  /** Absolute paths removed, in the main output and in every scope. */
   readonly removed: readonly string[];
+  /** One entry per scope of the config, in config order. */
+  readonly scopes: readonly ScopeResult[];
   readonly assets: BuildAssets | undefined;
   readonly watch: WatchTargets;
   readonly warnings: readonly Diagnostic[];

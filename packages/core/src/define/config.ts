@@ -1,4 +1,5 @@
 import type { PluginInput } from "../plugin/types";
+import type { ScopeInput } from "./scope";
 import type {
   AnhurConfig,
   AnyContent,
@@ -8,7 +9,7 @@ import type {
 
 type ConfigBase = Omit<
   AnhurConfig,
-  "content" | "views" | "localization" | "plugins"
+  "content" | "views" | "localization" | "plugins" | "scopes"
 >;
 
 /**
@@ -28,18 +29,23 @@ export function defineConfig<
   // inferred from `content` while TPlugins itself is still being inferred.
   const TPlugins extends readonly PluginInput<NoInfer<TContent>>[] =
     readonly [],
+  // Kept literal (names, and `where` type predicates) so a scope's generated
+  // declarations can narrow its documents (`GetScopeTypeByName`).
+  const TScopes extends readonly ScopeInput<NoInfer<TContent>>[] = readonly [],
 >(
   config: ConfigBase & {
     readonly content: TContent;
     readonly views?: TViews;
     readonly localization: FolderLocalization<TLocales>;
     readonly plugins?: TPlugins | readonly PluginInput<NoInfer<TContent>>[];
+    readonly scopes?: TScopes | readonly ScopeInput<NoInfer<TContent>>[];
   },
 ): ConfigBase & {
   readonly content: TContent;
   readonly views?: TViews;
   readonly localization: FolderLocalization<TLocales>;
   readonly plugins?: TPlugins;
+  readonly scopes?: TScopes;
 };
 export function defineConfig<
   const TContent extends readonly AnyContent[],
@@ -49,17 +55,22 @@ export function defineConfig<
   // inferred from `content` while TPlugins itself is still being inferred.
   const TPlugins extends readonly PluginInput<NoInfer<TContent>>[] =
     readonly [],
+  // Kept literal (names, and `where` type predicates) so a scope's generated
+  // declarations can narrow its documents (`GetScopeTypeByName`).
+  const TScopes extends readonly ScopeInput<NoInfer<TContent>>[] = readonly [],
 >(
   config: ConfigBase & {
     readonly content: TContent;
     readonly views?: TViews;
     readonly localization?: undefined;
     readonly plugins?: TPlugins | readonly PluginInput<NoInfer<TContent>>[];
+    readonly scopes?: TScopes | readonly ScopeInput<NoInfer<TContent>>[];
   },
 ): ConfigBase & {
   readonly content: TContent;
   readonly views?: TViews;
   readonly plugins?: TPlugins;
+  readonly scopes?: TScopes;
 };
 export function defineConfig(config: AnhurConfig): AnhurConfig {
   return config;

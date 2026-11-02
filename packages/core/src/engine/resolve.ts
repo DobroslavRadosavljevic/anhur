@@ -1,5 +1,6 @@
 import path from "node:path";
 import { Predicate } from "effect";
+import { isPlainObject } from "../document";
 import { resolvePluginInput } from "../plugin/define";
 import type {
   AnhurConfig,
@@ -11,6 +12,7 @@ import type {
   GenerateSplit,
   ListSort,
   Localization,
+  ScopeFilter,
 } from "../define/types";
 import {
   errorDiagnostic,
@@ -171,6 +173,13 @@ export type ResolvedProject = {
   readonly sources: readonly ResolvedSource[];
   readonly derived: readonly ResolvedDerived[];
   readonly plugins: readonly AnhurPlugin[];
+  /** Extra outputs with only some documents, in config order. */
+  readonly scopes: readonly ResolvedScope[];
+  /**
+   * Set on the copy of the project a scope's output is planned with: its
+   * declarations use the scope's document types.
+   */
+  readonly scope?: string;
   /** User loaders, then plugin loaders (built-ins are appended by the loader stage). */
   readonly loaders: readonly Loader[];
   readonly assetHost: ResolvedAssetHost | undefined;
@@ -184,6 +193,13 @@ export type ResolvedProject = {
    * not kept on disk.
    */
   readonly sourcesComplete: boolean;
+};
+
+/** A scope of the config, checked: absolute output, filters by source name. */
+export type ResolvedScope = {
+  readonly name: string;
+  readonly outputDir: string;
+  readonly where: ReadonlyMap<string, ScopeFilter>;
 };
 
 export type ResolveOptions = {
@@ -1158,12 +1174,18 @@ type ManagedPaths = {
   readonly outputDir: string;
   readonly cacheDir: string | undefined;
   readonly sources: readonly ResolvedSource[];
+  readonly scopes: readonly ResolvedScope[];
+  /** Absolute folder the asset plugin copies into, if it has one. */
+  readonly assetsDir: string | undefined;
 };
 
 function checkPaths(project: ManagedPaths, diagnostics: Diagnostic[]): void {
   const { projectDir, outputDir, cacheDir } = project;
   const managed: [string, string][] = [["outputDir", outputDir]];
   if (cacheDir) managed.push(["cacheDir", cacheDir]);
+  for (const scope of project.scopes) {
+    managed.push([`outputDir of scope "${scope.name}"`, scope.outputDir]);
+  }
   for (const [label, dir] of managed) {
     if (isInside(projectDir, dir)) {
       diagnostics.push(
@@ -1171,7 +1193,7 @@ function checkPaths(project: ManagedPaths, diagnostics: Diagnostic[]): void {
           "path-unsafe",
           `${label} "${dir}" is the project directory or one of its parents.`,
           {
-            hint: `Use a dedicated folder such as ".anhur/${label === "outputDir" ? "generated" : "cache"}".`,
+            hint: `Use a dedicated folder such as ".anhur/${label === "cacheDir" ? "cache" : "generated"}".`,
           },
         ),
       );
@@ -1213,6 +1235,154 @@ function checkPaths(project: ManagedPaths, diagnostics: Diagnostic[]): void {
       ),
     );
   }
+  // Each output owns its folder (its manifest and lock): no output may be
+  // inside another one.
+  for (const [index, scope] of project.scopes.entries()) {
+    // Only the main output folder is skipped when content is read: a scope
+    // folder inside a content folder would be read back as content.
+    for (const source of project.sources) {
+      const readsFolder =
+        source.kind === "collection" || source.filePath === undefined;
+      if (readsFolder && isInside(scope.outputDir, source.root)) {
+        diagnostics.push(
+          errorDiagnostic(
+            "path-unsafe",
+            `The outputDir of scope "${scope.name}" is inside the content of "${source.name}", which would read its files back as content.`,
+            {
+              source: source.name,
+              hint: `Put scope folders next to the main output, such as ".anhur/${scope.name}".`,
+            },
+          ),
+        );
+      }
+    }
+    const others: [string, string][] = [["outputDir", outputDir]];
+    if (cacheDir) others.push(["cacheDir", cacheDir]);
+    if (project.assetsDir)
+      others.push(["the assets folder", project.assetsDir]);
+    for (const other of project.scopes.slice(0, index)) {
+      others.push([`the outputDir of scope "${other.name}"`, other.outputDir]);
+    }
+    for (const [label, dir] of others) {
+      if (overlaps(scope.outputDir, dir)) {
+        diagnostics.push(
+          errorDiagnostic(
+            "path-unsafe",
+            `The outputDir of scope "${scope.name}" and ${label} must be separate folders.`,
+            {
+              hint: `Give each scope its own folder, such as ".anhur/${scope.name}".`,
+            },
+          ),
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Checks `scopes`: an array of objects with a unique name, a non-empty
+ * `outputDir`, and `where` filters keyed by known source names.
+ */
+function resolveScopes(
+  config: AnhurConfig,
+  projectDir: string,
+  sources: readonly ResolvedSource[],
+  diagnostics: Diagnostic[],
+): ResolvedScope[] {
+  // Typed as the config says, but checked: a plain JS config can hold anything.
+  const input = config.scopes;
+  if (input === undefined) return [];
+  if (!Array.isArray(input)) {
+    diagnostics.push(
+      errorDiagnostic("config-invalid", "scopes must be an array."),
+    );
+    return [];
+  }
+  const sourceNames = new Set(sources.map((source) => source.name));
+  const names = new Set<string>();
+  const scopes: ResolvedScope[] = [];
+  input.forEach((entry, index) => {
+    if (!isPlainObject(entry)) {
+      diagnostics.push(
+        errorDiagnostic(
+          "config-invalid",
+          `scopes[${index}] must be an object with a name and an outputDir.`,
+        ),
+      );
+      return;
+    }
+    const name = entry.name;
+    if (!Predicate.isString(name) || !checkName(name, "Scope", diagnostics)) {
+      if (!Predicate.isString(name)) {
+        diagnostics.push(
+          errorDiagnostic("config-invalid", `scopes[${index}] needs a name.`),
+        );
+      }
+      return;
+    }
+    if (names.has(name)) {
+      diagnostics.push(
+        errorDiagnostic(
+          "config-invalid",
+          `"${name}" is used by more than one scope.`,
+        ),
+      );
+      return;
+    }
+    names.add(name);
+    const outputDir = entry.outputDir;
+    if (!isNonEmptyString(outputDir)) {
+      diagnostics.push(
+        errorDiagnostic(
+          "config-invalid",
+          `Scope "${name}" needs an outputDir (a non-empty path).`,
+          { hint: `For example ".anhur/${name}".` },
+        ),
+      );
+      return;
+    }
+    const where = new Map<string, ScopeFilter>();
+    const filters = entry.where;
+    if (filters !== undefined && !isPlainObject(filters)) {
+      diagnostics.push(
+        errorDiagnostic(
+          "config-invalid",
+          `Scope "${name}": where must be an object of functions by source name.`,
+        ),
+      );
+      return;
+    }
+    for (const [source, filter] of Object.entries(filters ?? {})) {
+      if (filter === undefined) continue;
+      if (!sourceNames.has(source)) {
+        diagnostics.push(
+          errorDiagnostic(
+            "config-invalid",
+            `Scope "${name}": where names "${source}", which is not a collection or singleton.`,
+          ),
+        );
+        continue;
+      }
+      if (!Predicate.isFunction(filter)) {
+        diagnostics.push(
+          errorDiagnostic(
+            "config-invalid",
+            `Scope "${name}": where.${source} must be a function.`,
+          ),
+        );
+        continue;
+      }
+      // SAFETY: checked to be a function above. Its arguments are documented
+      // on ScopeFilter; a callback that throws fails the build with the document.
+      where.set(source, filter as ScopeFilter);
+    }
+    scopes.push({
+      name,
+      outputDir: path.resolve(projectDir, outputDir),
+      where,
+    });
+  });
+  return scopes;
 }
 
 type ResolvedPlugins = {
@@ -1486,7 +1656,14 @@ export function resolveProject(
       errorDiagnostic("config-invalid", "outputDir must be a non-empty path."),
     );
   }
-  checkPaths({ projectDir, outputDir, cacheDir, sources }, diagnostics);
+  const scopes = resolveScopes(config, projectDir, sources, diagnostics);
+  const assetsDir = assetHost?.host.dir
+    ? path.resolve(projectDir, assetHost.host.dir)
+    : undefined;
+  checkPaths(
+    { projectDir, outputDir, cacheDir, sources, scopes, assetsDir },
+    diagnostics,
+  );
 
   const userLoaders = config.loaders ?? [];
   const loaders: Loader[] = [];
@@ -1559,6 +1736,7 @@ export function resolveProject(
     sources,
     derived,
     plugins,
+    scopes,
     loaders,
     assetHost,
     embedOrder: order,
