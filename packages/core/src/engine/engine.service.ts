@@ -64,11 +64,13 @@ import {
   resolveRelations,
   type RelationMemory,
 } from "./relations";
-import type { ResolvedProject } from "./resolve";
+import type { ResolvedProject, ResolvedScope } from "./resolve";
+import { inScope, scopeSources } from "./scope";
 import {
   recordFailedTimings,
   type BuildOptions,
   type BuildResult,
+  type ScopeResult,
   type BuildStage,
   type SourceSummary,
   type StageTiming,
@@ -101,6 +103,18 @@ type SourceRecord = {
   readonly documents: readonly FinalDocument[];
   readonly summary: SourceSummary;
   readonly snapshot: SourceSnapshot;
+};
+
+/** A scope whose output is planned and waits to be written. */
+type PlannedScope = {
+  readonly scope: ResolvedScope;
+  readonly planned: {
+    readonly records: readonly SourceRecord[];
+    readonly plan: {
+      readonly files: readonly OutputFile[];
+      readonly revision: PlanRevision;
+    };
+  };
 };
 
 /** Watch targets, and what they were made from. */
@@ -419,6 +433,28 @@ export class Engine extends Context.Service<
       // Builds of one session share caches and state: run them one at a time
       // so an older build can never publish over a newer one.
       const buildPermit = yield* Semaphore.make(1);
+      /**
+       * The project and stage memory of each scope, by scope name. A scope's
+       * project is the main one with the scope's output folder; both are
+       * made again when the config is loaded again.
+       */
+      const scopeMemories = new Map<
+        string,
+        { readonly project: ResolvedProject; readonly memory: BuildMemory }
+      >();
+
+      const scopeTarget = (project: ResolvedProject, scope: ResolvedScope) => {
+        const known = scopeMemories.get(scope.name);
+        if (known && known.project.outputDir === scope.outputDir) return known;
+        const scoped: ResolvedProject = {
+          ...project,
+          outputDir: scope.outputDir,
+          scope: scope.name,
+        };
+        const target = { project: scoped, memory: createBuildMemory(scoped) };
+        scopeMemories.set(scope.name, target);
+        return target;
+      };
 
       const runHook = Effect.fn("Engine.runHook")(function* (
         label: string,
@@ -658,6 +694,104 @@ export class Engine extends Context.Service<
         return written;
       }, Effect.scoped);
 
+      /**
+       * The stages after `prepare` for one output (the main one or a scope):
+       * references, uniqueness, views, plugin modules and the output plan.
+       * Writes nothing. `clock` is left out for scopes, which are timed as
+       * one stage.
+       */
+      const planTarget = Effect.fn("Engine.planTarget")(function* (
+        project: ResolvedProject,
+        remembered: BuildMemory,
+        sources: SourceDocuments<FinalDocument>[],
+        clock: StageClock | undefined,
+      ) {
+        const linkDiagnostics = [
+          ...resolveRelations(project, sources, remembered.relations),
+          ...checkUniqueness(sources, remembered.uniques),
+        ];
+        if (hasErrors(linkDiagnostics))
+          return yield* Effect.fail(buildFailed(linkDiagnostics));
+
+        clock?.enter("views");
+        const derived = deriveAll(project.derived, sources, remembered.derived);
+        if (hasErrors(derived.diagnostics))
+          return yield* Effect.fail(buildFailed(derived.diagnostics));
+
+        clock?.enter("plugins");
+        const records = sourceRecords(remembered, sources);
+        const generated = yield* generateFromPlugins(
+          project,
+          // One list for every plugin of this build: a plugin cannot change
+          // what the next one gets.
+          Object.freeze(records.map((record) => record.snapshot)),
+        );
+        clock?.enter("plan");
+        const plan = planOutput(
+          {
+            project,
+            sources,
+            derived: derived.results,
+            modules: generated.modules,
+            files: generated.files,
+          },
+          remembered.plan,
+        );
+        if (hasErrors(plan.diagnostics))
+          return yield* Effect.fail(buildFailed(plan.diagnostics));
+        const warnings: Diagnostic[] = [
+          ...generated.warnings,
+          ...plan.diagnostics.filter(
+            (diagnostic) => diagnostic.severity === "warning",
+          ),
+        ];
+        return { records, plan, warnings };
+      });
+
+      /**
+       * Writes the output of a scope. A scope runs no publish hooks: plugin
+       * `beforePublish` / `afterPublish`, `onSuccess` and `complete` belong
+       * to the main output and run once per build.
+       */
+      /**
+       * Publishes the main output, then writes each scope. Every scope folder
+       * is checked and locked first, so a scope that cannot be written stops
+       * the build before the main output changes, and no other build writes
+       * a scope between the main output and it. A scope runs no publish
+       * hooks: plugin `beforePublish` / `afterPublish`, `onSuccess` and
+       * `complete` belong to the main output and run once per build.
+       */
+      const publishAll = Effect.fn("Engine.publishAll")(function* <E>(
+        scopes: readonly PlannedScope[],
+        publishMain: Effect.Effect<
+          {
+            readonly written: readonly string[];
+            readonly removed: readonly string[];
+          },
+          E
+        >,
+      ) {
+        for (const entry of scopes) {
+          yield* writer.checkOwnership(entry.scope.outputDir);
+          yield* writer.lock(entry.scope.outputDir);
+        }
+        const main = yield* publishMain;
+        const scoped: {
+          readonly written: readonly string[];
+          readonly removed: readonly string[];
+        }[] = [];
+        for (const entry of scopes) {
+          scoped.push(
+            yield* writer.write(
+              entry.scope.outputDir,
+              entry.planned.plan.files,
+              entry.planned.plan.revision,
+            ),
+          );
+        }
+        return { main, scoped };
+      }, Effect.scoped);
+
       const fallbackTargets = Effect.fn("Engine.fallbackTargets")(function* (
         options: BuildOptions,
       ) {
@@ -734,6 +868,7 @@ export class Engine extends Context.Service<
 
         if (!memory || memory.project !== project) {
           memory = createBuildMemory(project);
+          scopeMemories.clear();
         }
         const remembered = memory;
 
@@ -774,45 +909,40 @@ export class Engine extends Context.Service<
         // `prepare` may still edit or drop documents, so references and
         // uniqueness are checked on what it leaves.
         yield* prepare(remembered, sources);
-        const linkDiagnostics = [
-          ...resolveRelations(project, sources, remembered.relations),
-          ...checkUniqueness(sources, remembered.uniques),
-        ];
-        if (hasErrors(linkDiagnostics))
-          return yield* Effect.fail(buildFailed(linkDiagnostics));
+        // Scopes choose from the documents before references are resolved:
+        // each gets its own groups, so the main output's stages below never
+        // change what a scope sees.
+        const filtered = project.scopes.map((scope) => ({
+          scope,
+          ...scopeSources(scope, sources, project.localization?.defaultLocale),
+        }));
+        const scopeDiagnostics = filtered.flatMap((entry) => entry.diagnostics);
+        if (hasErrors(scopeDiagnostics))
+          return yield* Effect.fail(buildFailed(scopeDiagnostics));
 
-        clock.enter("views");
-        const derived = deriveAll(project.derived, sources, remembered.derived);
-        if (hasErrors(derived.diagnostics))
-          return yield* Effect.fail(buildFailed(derived.diagnostics));
+        const main = yield* planTarget(project, remembered, sources, clock);
+        warnings.push(...main.warnings);
+        const records = main.records;
 
-        clock.enter("plugins");
-        const records = sourceRecords(remembered, sources);
-        const generated = yield* generateFromPlugins(
-          project,
-          // One list for every plugin of this build: a plugin cannot change
-          // what the next one gets.
-          Object.freeze(records.map((record) => record.snapshot)),
-        );
-        warnings.push(...generated.warnings);
-        clock.enter("plan");
-        const plan = planOutput(
-          {
-            project,
-            sources,
-            derived: derived.results,
-            modules: generated.modules,
-            files: generated.files,
-          },
-          remembered.plan,
-        );
-        if (hasErrors(plan.diagnostics))
-          return yield* Effect.fail(buildFailed(plan.diagnostics));
-        warnings.push(
-          ...plan.diagnostics.filter(
-            (diagnostic) => diagnostic.severity === "warning",
-          ),
-        );
+        // Every scope is planned before anything is written: a scope that
+        // fails leaves every output as it was.
+        const scopes: PlannedScope[] = [];
+        if (filtered.length > 0) clock.enter("scopes");
+        for (const entry of filtered) {
+          const target = scopeTarget(project, entry.scope);
+          const planned = yield* planTarget(
+            target.project,
+            target.memory,
+            entry.sources,
+            undefined,
+          ).pipe(
+            Effect.mapError((error) =>
+              buildFailed(inScope(entry.scope.name, error.diagnostics)),
+            ),
+          );
+          warnings.push(...inScope(entry.scope.name, planned.warnings));
+          scopes.push({ scope: entry.scope, planned });
+        }
         // A dry run publishes nothing.
         if (options.dryRun) clock.stop();
         else clock.enter("publish");
@@ -837,23 +967,57 @@ export class Engine extends Context.Service<
 
         let written: readonly string[] = [];
         let removed: readonly string[] = [];
+        const scopeResults: ScopeResult[] = [];
+        const scopeResult = (
+          entry: PlannedScope,
+          files: {
+            readonly written: readonly string[];
+            readonly removed: readonly string[];
+          },
+        ): ScopeResult => {
+          const summary = entry.planned.records.map((record) => record.summary);
+          return {
+            name: entry.scope.name,
+            outputDir: entry.scope.outputDir,
+            sources: summary,
+            documentCount: summary.reduce(
+              (total, source) => total + source.documents.length,
+              0,
+            ),
+            written: files.written,
+            removed: files.removed,
+          };
+        };
         if (options.dryRun) {
           // `check` must fail wherever `build` would refuse to write.
           yield* writer.checkOwnership(project.outputDir);
+          for (const entry of scopes) {
+            yield* writer.checkOwnership(entry.scope.outputDir);
+            scopeResults.push(scopeResult(entry, { written: [], removed: [] }));
+          }
         } else {
-          const result = yield* publish(
-            project,
-            sources,
-            plan.files,
-            plan.revision,
-            assets,
-            assetsInfo,
-            assetsDir,
-            messages,
-            warnings,
+          const result = yield* publishAll(
+            scopes,
+            publish(
+              project,
+              sources,
+              main.plan.files,
+              main.plan.revision,
+              assets,
+              assetsInfo,
+              assetsDir,
+              messages,
+              warnings,
+            ),
           );
-          written = result.written;
-          removed = result.removed;
+          written = result.main.written;
+          removed = result.main.removed;
+          for (const [index, entry] of scopes.entries()) {
+            const files = result.scoped[index] ?? { written: [], removed: [] };
+            scopeResults.push(scopeResult(entry, files));
+            written = [...written, ...files.written];
+            removed = [...removed, ...files.removed];
+          }
           clock.stop();
           const cacheDir = project.cacheDir;
           const now = yield* Clock.currentTimeMillis;
@@ -897,6 +1061,7 @@ export class Engine extends Context.Service<
           ),
           written,
           removed,
+          scopes: scopeResults,
           assets:
             assetsInfo === undefined
               ? undefined

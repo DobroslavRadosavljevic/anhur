@@ -319,6 +319,47 @@ export type AnyIndex = IndexDefinition<string, any>;
 export type AnyGroup = GroupDefinition<string, any>;
 export type AnyDerived = AnyView | AnyIndex | AnyGroup;
 
+/** Lookups inside the `where` callbacks of a scope. */
+export type ScopeContext = {
+  /** Name of the scope that is being built. */
+  readonly scope: string;
+  /**
+   * Every document of a source after transforms and `prepare`, before any
+   * scope keeps or drops it. Read-only. References are still ids here.
+   */
+  readonly documents: (
+    source: AnyContent | string,
+  ) => readonly TransformDocument[];
+};
+
+/**
+ * Decides whether a scope keeps one document of a source. Written as a
+ * method so a callback typed for one source (see `ScopeInput`) is accepted.
+ */
+export type ScopeFilter = {
+  check(document: any, context: ScopeContext): boolean;
+}["check"];
+
+/**
+ * An extra output with only some of the documents, written next to the
+ * main output: a public build without drafts, a build per audience.
+ * Documents are loaded, validated and transformed once; references,
+ * uniqueness, views, plugin modules and the written files are made again
+ * for each scope from the documents it keeps. A reference to a document the
+ * scope drops fails the build, as a reference to a draft does.
+ */
+export type ScopeDefinition = {
+  /** Lowercase letters, digits and dashes, starting with a letter. */
+  readonly name: string;
+  /** Output of this scope, relative to the config file. Its own folder. */
+  readonly outputDir: string;
+  /**
+   * Per source: keep a document when the callback returns `true`. Sources
+   * that are not listed keep every document.
+   */
+  readonly where?: { readonly [source: string]: ScopeFilter | undefined };
+};
+
 /** Full project config (what `defineConfig` returns). */
 export type AnhurConfig = {
   readonly content: readonly AnyContent[];
@@ -328,6 +369,14 @@ export type AnhurConfig = {
   readonly localization?: Localization;
   /** Generated output, relative to the config file. Default `.anhur/generated`. */
   readonly outputDir?: string;
+  /**
+   * Extra outputs with only some of the documents (see
+   * {@link ScopeDefinition}). The main output keeps every document.
+   * `plugins` emit modules into every output; their `beforePublish` and
+   * `afterPublish` hooks, `onSuccess` and `complete` run once, for the main
+   * output.
+   */
+  readonly scopes?: readonly ScopeDefinition[];
   /** Field cache, relative to the config file. Default `.anhur/cache`; `false` disables. */
   readonly cacheDir?: string | false;
   /**

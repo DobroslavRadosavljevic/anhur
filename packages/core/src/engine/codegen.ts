@@ -132,6 +132,13 @@ function moduleText(body: string): string {
   return `${GENERATED_HEADER}\n${body}\n`;
 }
 
+/** The declared document type of a source: narrowed by the scope, if any. */
+function documentType(project: ResolvedProject, sourceName: string): string {
+  return project.scope === undefined
+    ? `__AnhurGetTypeByName<typeof __AnhurConfig, ${JSON.stringify(sourceName)}>`
+    : `__AnhurGetScopeTypeByName<typeof __AnhurConfig, ${JSON.stringify(project.scope)}, ${JSON.stringify(sourceName)}>`;
+}
+
 function literalUnion(values: readonly string[]): string {
   const unique = [...new Set(values)].sort();
   return unique.length === 0
@@ -365,7 +372,7 @@ function planCollection(
 
   const dts = plan.indexDts;
   dts.push(
-    `export type ${names.typeName} = __AnhurGetTypeByName<typeof __AnhurConfig, ${JSON.stringify(source.name)}>;`,
+    `export type ${names.typeName} = ${documentType(project, source.name)};`,
   );
   dts.push(
     generate.listOmit.length === 0
@@ -599,7 +606,7 @@ function planSingleton(
   );
   const dts = plan.indexDts;
   dts.push(
-    `export type ${names.typeName} = __AnhurGetTypeByName<typeof __AnhurConfig, ${JSON.stringify(source.name)}>;`,
+    `export type ${names.typeName} = ${documentType(project, source.name)};`,
   );
   dts.push(
     `export declare const ${names.exportName}: ${names.typeName}${source.definition.optional ? " | undefined" : ""};`,
@@ -861,7 +868,7 @@ export function planOutput(
   );
   const header = [
     GENERATED_HEADER,
-    `import type { GetTypeByName as __AnhurGetTypeByName, GetViewByName as __AnhurGetViewByName, OmitListFields as __AnhurOmitListFields } from "@anhur/core";`,
+    `import type { ${project.scope === undefined ? "" : "GetScopeTypeByName as __AnhurGetScopeTypeByName, "}GetTypeByName as __AnhurGetTypeByName, GetViewByName as __AnhurGetViewByName, OmitListFields as __AnhurOmitListFields } from "@anhur/core";`,
     `import type __AnhurConfig from ${JSON.stringify(configImport(project.outputDir, project.configPath))};`,
     // Private aliases: user type names (a collection called "promises") must not shadow them.
     "type __AnhurPromise<T> = globalThis.Promise<T>;",

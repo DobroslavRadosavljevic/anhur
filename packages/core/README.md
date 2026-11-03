@@ -129,7 +129,7 @@ Content fields also work inside `.optional()`, `.default()`, nested objects and 
 3. `transform(doc, ctx)` adds or reshapes fields. `ctx.documents(otherSource)` reads another source's validated documents; `return ctx.skip("reason")` drops a document.
 4. Documents with **`draft: true`** at the top level of the file are dropped, even when the schema does not declare `draft` (they are still validated). Drafts and skipped documents never cause duplicate-slug errors, and references to them fail.
 5. `prepare(sources)` may edit or remove the final documents.
-6. References are checked and embedded, uniqueness is checked, views are derived, plugins generate extra modules.
+6. References are checked and embedded, uniqueness is checked, views are derived, plugins generate extra modules. With [scopes](#-scopes), this step and the next run again for each scope, on the documents it keeps.
 7. Output is written: only changed files (a file edited by hand is rewritten), atomically, with a lock against concurrent builds. Anhur only deletes files it created (tracked in `.anhur-manifest.json`) and refuses to write into a folder it does not own.
 8. `onSuccess` hooks and `complete(sources, { projectDir, outputDir })` run.
 
@@ -220,6 +220,44 @@ export default defineConfig({ content, views: [featured, bySku, byAuthor] });
 ```
 
 Views run on the final documents (after transforms, references and `prepare`). `createDerivedHelpers(content)` types `doc` with embedded references resolved. Indexes and groups emit literal key unions (`ProductBySkuKey`).
+
+## 🎯 Scopes
+
+A scope is an extra output with only some of the documents: a public build without drafts, a build per audience. The main output keeps every document.
+
+```ts
+export default defineConfig({
+  content: [items, families],
+  scopes: [
+    {
+      name: "public",
+      outputDir: ".anhur/public",
+      where: {
+        // `doc` is typed for the source. References are still ids here.
+        items: (doc, ctx) => {
+          if (!doc.partOf) return doc.status !== "draft";
+          const parent = ctx
+            .documents(items)
+            .find((item) => item._meta.id === doc.partOf);
+          return parent?.status !== "draft";
+        },
+      },
+    },
+  ],
+});
+```
+
+- Documents are loaded, validated, transformed and `prepare`d once. Each scope then picks its documents; references, uniqueness, views, plugin modules (such as the search index of `orama()`) and the written files are made again from what it keeps.
+- A source with no `where` entry keeps every document. `ctx.documents(source)` gives every document of a source before any scope picks, and `ctx.scope` is the scope name.
+- A kept document that points to a document the scope leaves out fails the build, as a reference to a draft does. A failing scope writes nothing: not the main output either.
+- A callback that throws or returns something other than `true` or `false` is a `scope-failed` error on that document.
+- A singleton keeps the document its export always has (the only one, or the default locale's), unless it is `optional: true`: dropping it is a `scope-failed` error. Other locales may be dropped; their getter then returns `null`.
+- **Types:** each scope writes its own `index.d.ts`. Id, slug and index key unions name only the documents it keeps. Write a filter as a type predicate to narrow the scope's document types, lists and getters: `items: (doc): doc is typeof doc & { status: "published" } => doc.status === "published"`. A plain boolean filter keeps the full type (correct, only wider), and so do views, indexes and groups. `GetScopeTypeByName<typeof config, "public", "items">` is the narrowed type.
+- **Assets are shared.** The asset plugin copies (and uploads) the files of every document into its one folder, also files that only documents a scope drops use. A scope's modules link only to the files of its own documents, but if a scope's deploy must not carry the others, deploy without the assets folder or keep those files out of the content.
+- Anhur does not delete the folder of a scope you remove or move to another `outputDir`. Delete it yourself, or it keeps the last files written there.
+- Each scope writes its own folder, separate from `outputDir`, `cacheDir`, the assets folder and every other scope, and outside every content folder (only the main output folder is skipped when content is read). Import it from that folder (or with the Vite plugin, `anhur/scopes/<name>`).
+- Plugin `beforePublish` / `afterPublish` hooks, `onSuccess` and `complete` run once per build, for the main output.
+- `BuildResult.scopes` lists each scope's documents and files; `written` and `removed` count every output. The CLI prints one line per scope.
 
 ## 🖥️ CLI
 

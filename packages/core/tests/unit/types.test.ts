@@ -5,6 +5,7 @@ import {
   defineConfig,
   defineView,
   schema as s,
+  type GetScopeTypeByName,
   type GetTypeByName,
   type GetViewByName,
 } from "../../src";
@@ -95,5 +96,102 @@ describe("generated types", () => {
     expectTypeOf<
       GetTypeByName<typeof tagConfig, "tags">["size"]
     >().toEqualTypeOf<number>();
+  });
+
+  it("types scope filters by source name, with the source's document", () => {
+    const scoped = defineConfig({
+      content: [authors, posts],
+      scopes: [
+        {
+          name: "public",
+          outputDir: ".anhur/public",
+          where: {
+            posts: (doc, ctx) => {
+              expectTypeOf(doc.title).toEqualTypeOf<string>();
+              expectTypeOf(doc.permalink).toEqualTypeOf<string>();
+              // References are ids here: the scope decides before they resolve.
+              expectTypeOf(doc.author).toExtend<string>();
+              expectTypeOf(ctx.scope).toEqualTypeOf<string>();
+              const people = ctx.documents(authors);
+              expectTypeOf(people[0]!.upper).toEqualTypeOf<string>();
+              return doc.featured === true;
+            },
+          },
+        },
+      ],
+    });
+    expectTypeOf(scoped.scopes).not.toBeUndefined();
+
+    defineConfig({
+      content: [authors, posts],
+      scopes: [
+        {
+          name: "public",
+          outputDir: ".anhur/public",
+          // @ts-expect-error -- "comments" is not a source of this config.
+          where: { comments: () => true },
+        },
+      ],
+    });
+
+    defineConfig({
+      content: [authors, posts],
+      scopes: [
+        {
+          name: "public",
+          outputDir: ".anhur/public",
+          // @ts-expect-error -- a filter returns a boolean.
+          where: { posts: (doc) => doc.title },
+        },
+      ],
+    });
+  });
+
+  it("narrows a scope's document types with a where type predicate", () => {
+    const releases = defineCollection({
+      name: "releases",
+      directory: "releases",
+      include: "*.md",
+      localized: false,
+      schema: s.object({
+        title: s.string(),
+        status: s.enum(["draft", "published"]),
+        author: s.reference("authors", { embed: true }),
+      }),
+    });
+    const scoped = defineConfig({
+      content: [authors, releases],
+      scopes: [
+        {
+          name: "public",
+          outputDir: ".anhur/public",
+          where: {
+            releases: (doc): doc is typeof doc & { status: "published" } =>
+              doc.status === "published",
+          },
+        },
+        {
+          name: "loose",
+          outputDir: ".anhur/loose",
+          where: { releases: (doc) => doc.status === "published" },
+        },
+      ],
+    });
+    type Public = GetScopeTypeByName<typeof scoped, "public", "releases">;
+    expectTypeOf<Public["status"]>().toEqualTypeOf<"published">();
+    expectTypeOf<Public["title"]>().toEqualTypeOf<string>();
+    // References are still embedded documents in the output.
+    expectTypeOf<Public["author"]["upper"]>().toEqualTypeOf<string>();
+    expectTypeOf<Public["_meta"]["locale"]>().toEqualTypeOf<undefined>();
+    // A plain boolean filter, an unknown scope, or an unfiltered source keep the full type.
+    expectTypeOf<
+      GetScopeTypeByName<typeof scoped, "loose", "releases">["status"]
+    >().toEqualTypeOf<"draft" | "published">();
+    expectTypeOf<
+      GetScopeTypeByName<typeof scoped, "other", "releases">["status"]
+    >().toEqualTypeOf<"draft" | "published">();
+    expectTypeOf<
+      GetScopeTypeByName<typeof scoped, "public", "authors">
+    >().toEqualTypeOf<GetTypeByName<typeof scoped, "authors">>();
   });
 });

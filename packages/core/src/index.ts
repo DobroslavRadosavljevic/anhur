@@ -25,6 +25,7 @@ export {
   type ViewSourceDocument,
 } from "./define/derived";
 export { defineConfig } from "./define/config";
+export type { ScopeInput, TypedScopeContext } from "./define/scope";
 export { schema } from "./schema";
 export type {
   ExcerptOptions,
@@ -63,6 +64,9 @@ export type {
   PrepareHook,
   SchemaDocument,
   SchemaOutput,
+  ScopeContext,
+  ScopeDefinition,
+  ScopeFilter,
   SingletonDefinition,
   SingletonGenerateOptions,
   SingletonOnSuccess,
@@ -78,6 +82,7 @@ export type {
   ContentMetaFor,
   DerivedName,
   DocumentForConfig,
+  GetScopeTypeByName,
   EmbeddedDocument,
   GetTypeByName,
   GetViewByName,

@@ -70,7 +70,8 @@ export function createTransformMemory(): TransformMemory {
   };
 }
 
-function describeValue(value: unknown): string {
+/** Short words for what a callback returned, for error messages. */
+export function describeValue(value: unknown): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
   if (Array.isArray(value)) return "an array";

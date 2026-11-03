@@ -58,6 +58,59 @@ describe("assets plugin", () => {
     expect((await readdir(project.path(".anhur/assets"))).length).toBe(3);
   });
 
+  it("gives a scope the same asset URLs, copied once by the main output", async () => {
+    const project = await createProject({
+      "anhur.config.ts": config("{}").replace(
+        "export default defineConfig({ content: [products], plugins: [assets({})] });",
+        `export default defineConfig({
+  content: [products],
+  plugins: [assets({})],
+  scopes: [{ name: "shop", outputDir: ".anhur/shop", where: { products: (doc) => doc._meta.id === "kit" } }],
+});`,
+      ),
+      "content/img/a.png": PNG_1X1,
+      "content/img/b.png": PNG_1X1,
+      "content/kit.yml": "cover: ./img/a.png\n",
+      "content/old.yml": "cover: ./img/b.png\n",
+    });
+    projects.push(project);
+    const result = await build({ rootDir: project.dir });
+    expect(result.scopes[0]?.documentCount).toBe(1);
+    const scoped = await project.read(".anhur/shop/allProducts.js");
+    const main = await project.read(".anhur/generated/allProducts.js");
+    const url = /\/anhur-assets\/a-[0-9a-f]{16}\.png/.exec(scoped)?.[0];
+    expect(url).toBeDefined();
+    expect(main).toContain(url);
+    expect(scoped).not.toMatch(/\/anhur-assets\/b-/);
+    // Copied once, into the one assets folder.
+    const copied = await readdir(project.path(".anhur/assets"));
+    expect(copied.filter((file) => file.endsWith(".png"))).toHaveLength(2);
+  });
+
+  it("refuses a scope folder that overlaps the assets folder", async () => {
+    const project = await createProject({
+      "anhur.config.ts": config('{ dir: ".anhur/shop/img" }').replace(
+        'export default defineConfig({ content: [products], plugins: [assets({ dir: ".anhur/shop/img" })] });',
+        `export default defineConfig({
+  content: [products],
+  plugins: [assets({ dir: ".anhur/shop/img" })],
+  scopes: [{ name: "shop", outputDir: ".anhur/shop" }],
+});`,
+      ),
+      "content/img/a.png": PNG_1X1,
+      "content/kit.yml": "cover: ./img/a.png\n",
+    });
+    projects.push(project);
+    const error = await build({ rootDir: project.dir }).catch(
+      (cause: unknown) => cause,
+    );
+    expect(isAnhurBuildError(error) && error.message).toContain(
+      'The outputDir of scope "shop" and the assets folder must be separate folders.',
+    );
+    // Refused when the config loads: nothing was copied or written.
+    await expect(readdir(project.path(".anhur"))).rejects.toThrow();
+  });
+
   it("rejects remote URLs unless allowed, and unsafe folders at config time", async () => {
     const remote = await createProject({
       "anhur.config.ts": config("{}"),

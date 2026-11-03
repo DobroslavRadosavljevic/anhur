@@ -11,11 +11,12 @@ description: >-
   i18n / localization, anhur/generated imports, localized getters/lists
   (_meta.locale), the Vite plugin, CLI build/check/watch, drafts/hooks,
   diagnostics, MDX/Markdown bodies, assets, CDN/object storage upload (assets
-  storage + files-sdk), or full-text search — or when the user mentions Anhur,
+  storage + files-sdk), full-text search, or scopes (extra outputs with only
+  some documents, such as a public build without drafts) — or when the user mentions Anhur,
   .anhur, cms/, folder i18n, or local MD/MDX/YAML/JSON content pipelines.
 license: MIT
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
   packages: "@anhur/core,@anhur/vite,@anhur/mdx,@anhur/markdown,@anhur/assets,@anhur/orama"
 ---
 
@@ -50,6 +51,7 @@ More framing: [references/why.md](references/why.md)
 | Directories / SEO facets   | `defineView` / `defineIndex` / `defineGroup` at build   |
 | Multi-locale sites         | Same collection under `en/` / `de/` folders             |
 | In-app full-text search    | Orama index per locale, any script                      |
+| Public and private outputs | `scopes`: a second output without drafts                |
 | CDN-delivered assets       | Build-time upload via `assets({ storage })` + files-sdk |
 
 **Not for (today):** remote CMS as the source of truth, runtime media uploads, non-Zod schema libraries, vector / AI search, MDX from untrusted authors (MDX is code).
@@ -188,7 +190,7 @@ export default defineConfig({
 
 `doc` in `orama` / view callbacks is typed from `content` (transform fields and embeds included) — no generics, never pass `content` into `orama`.
 
-Schema fields, generate options, hooks: [references/schemas.md](references/schemas.md) · Views: [references/views.md](references/views.md) · Search: [references/search.md](references/search.md) · Storage: [references/assets-storage.md](references/assets-storage.md)
+Schema fields, generate options, hooks: [references/schemas.md](references/schemas.md) · Views: [references/views.md](references/views.md) · Search: [references/search.md](references/search.md) · Storage: [references/assets-storage.md](references/assets-storage.md) · Scopes: [references/scopes.md](references/scopes.md)
 
 ## Content layout
 
@@ -277,6 +279,7 @@ MDX evaluates with `new Function` → needs `'unsafe-eval'` under a CSP, or rend
 8. Cross-document data in `transform` comes from `ctx.documents(source)` (validated, pre-transform, read-only). Reading other files directly is not tracked for rebuilds.
 9. Remote storage: `base` must be the public URL of `storage.prefix`; uploads run in build mode only; `prune` is opt-in.
 10. Out of scope: Next-specific adapters, Valibot, vector search, untrusted MDX.
+11. Scopes: each `outputDir` is its own folder; `where` decides before references resolve, so a kept document may not point to a dropped one. Publish hooks run once, for the main output.
 
 ## Recommended project layout
 

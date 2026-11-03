@@ -1,6 +1,6 @@
 {
   "name": "@anhur/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Typed content from Markdown, MDX, YAML and JSON files: define collections, validate with Zod, import generated modules",
   "keywords": [
     "content",
@@ -69,10 +69,10 @@
     "test:integration": "vitest run --project integration --passWithNoTests"
   },
   "dependencies": {
-    "@effect/platform-node-shared": "4.0.0-rc.115",
+    "@effect/platform-node-shared": "4.0.7",
     "@types/hast": "^3.0.4",
     "@types/mdast": "^4.0.4",
-    "effect": "4.0.0-rc.115",
+    "effect": "4.0.7",
     "github-slugger": "^2.0.0",
     "hast-util-to-string": "^3.0.1",
     "jiti": "^2.7.0",
@@ -88,7 +88,7 @@
   "devDependencies": {
     "@anhur/oxfmt": "workspace:*",
     "@anhur/oxlint": "workspace:*",
-    "@effect/vitest": "^4.0.0-rc.115",
+    "@effect/vitest": "4.0.7",
     "@types/node": "^22.20.2",
     "@types/pluralize": "^0.0.33",
     "bellona": "0.5.0",

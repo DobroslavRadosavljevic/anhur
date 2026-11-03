@@ -4,6 +4,7 @@ import {
   createSearchMemory,
   generateSearchModules,
   type RuntimeOramaOptions,
+  type SearchMemory,
 } from "./build";
 import type {
   OramaOptions,
@@ -49,12 +50,23 @@ export function orama<
   const runtime = options as RuntimeOramaOptions;
   // SAFETY: the name is "orama" at runtime; the brand on its type is a phantom (type-only) carrier of the store types.
   const name = "orama" as OramaPluginName<StoresOf<TCollections>>;
-  const memory = createSearchMemory();
+  // One memory per output folder: with scopes, `generate` runs once for the
+  // main output and once per scope, each with other documents.
+  const memories = new Map<string, SearchMemory>();
+  const memoryFor = (outputDir: string) => {
+    let memory = memories.get(outputDir);
+    if (!memory) {
+      memory = createSearchMemory();
+      memories.set(outputDir, memory);
+    }
+    return memory;
+  };
   return defineContentPlugin<TContent, OramaPluginName<StoresOf<TCollections>>>(
     () => ({
       name,
       version: "4",
-      generate: (context) => generateSearchModules(runtime, context, memory),
+      generate: (context) =>
+        generateSearchModules(runtime, context, memoryFor(context.outputDir)),
     }),
   );
 }

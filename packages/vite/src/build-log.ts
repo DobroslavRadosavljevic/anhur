@@ -18,6 +18,10 @@ export function formatBuildLog(
       : `${result.written.length} written, ${result.removed.length} removed`;
   const lines = [
     `[anhur] ${kind} ${result.documentCount} document(s) in ${Math.round(durationMs)}ms → ${output} (${changed}; ${sources})`,
+    ...result.scopes.map(
+      (scope) =>
+        `[anhur]   scope ${scope.name}: ${scope.documentCount} document(s) → ${path.relative(result.projectDir, scope.outputDir) || scope.outputDir}`,
+    ),
     ...result.messages.map((message) => `[anhur]   ${message}`),
   ];
   if (result.warnings.length > 0) {

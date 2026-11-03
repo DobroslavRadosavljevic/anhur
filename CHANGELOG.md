@@ -2,6 +2,38 @@
 
 All `@anhur/*` packages are released together with the same version.
 
+## 0.3.0 — 2026-11-02
+
+Scopes: extra outputs with only some of the documents, such as a public build without drafts next to the full one. And Effect 4.0.7, the first stable line of Effect 4.
+
+### Added
+
+- **`scopes` in `defineConfig`.** Each scope has a `name`, its own `outputDir`, and `where` filters by source name (`where: { items: (doc, ctx) => doc.status !== "draft" }`). The main output keeps every document. Documents are loaded, validated, transformed and `prepare`d once; each scope then picks its documents, and references, uniqueness, views, plugin modules (the Orama index too) and the written files are made again from what it keeps. See [Scopes](packages/core/README.md#-scopes).
+  - `where` callbacks are typed per source; `ctx.documents(source)` gives every document of a source before any scope picks, and `ctx.scope` the scope name.
+  - A kept document that points to a document the scope leaves out fails the build (`reference-failed`, with the scope in the message and a hint), as a reference to a draft does.
+  - Every output is planned before anything is written: a failing scope leaves every output as it was. `anhur check` checks the scopes too.
+  - A `where` callback that throws or returns something other than `true` or `false` is a new diagnostic, `scope-failed`, on that document.
+  - A scope keeps the document a singleton's export always has (the only one, or the default locale's) unless the singleton is `optional: true`; dropping it is also `scope-failed`.
+  - Anhur does not delete the folder of a scope you remove or move: delete it yourself.
+  - Scope folders are checked like `outputDir`: each must be separate from `outputDir`, `cacheDir`, the assets folder and every other scope, and may not be inside a content folder (it would be read back as content).
+  - Every scope folder is checked and locked before the main output is written, so a scope that cannot be written changes nothing.
+  - `orama()` keeps one search cache per output, so a rebuild with scopes still indexes only what changed.
+  - Assets are shared: the asset plugin copies the files of every document, also those only dropped documents use.
+  - Plugin `beforePublish` / `afterPublish` hooks, `onSuccess` and `complete` run once per build, for the main output.
+- **Typed scope outputs.** Each scope writes its own declarations: id, slug and index key unions name only the documents it keeps. A `where` filter written as a type predicate (`(doc): doc is typeof doc & { status: "published" } => …`) narrows the scope's document types, lists and getters; a plain boolean filter keeps the full type. New `GetScopeTypeByName<typeof config, scope, source>`. `defineConfig` keeps `scopes` literal for this.
+- **`BuildResult.scopes`** (`ScopeResult[]`: name, folder, documents by source, written and removed files), the `scopes` build stage in `timings`, one CLI line per scope, and a `scopes` key in `--json`.
+- **`@anhur/vite` resolves `anhur/scopes/<name>`** to the output of that scope, and watches scope folders outside the Vite root.
+- New exported types: `ScopeDefinition`, `ScopeFilter`, `ScopeContext`, `ScopeInput`, `TypedScopeContext`, `GetScopeTypeByName` (`@anhur/core`), `ScopeResult` (`@anhur/core/build`).
+
+### Changed
+
+- **Effect 4.0.7** (was `4.0.0-rc.115`), with `@effect/platform-node-shared` 4.0.7. The CLI imports `effect/cli` (the `effect/unstable/*` paths are gone in 4.0). Projects on Effect 4.0.x now share one copy with Anhur.
+- `BuildResult.written` and `removed` include the files of every scope. Code that needs only the main output can subtract `scopes[].written`.
+
+### Tested
+
+- A singleton read from a file above the config folder (`filePath: "../registry.json"`, as a package of a monorepo reads a root file) loads, is visible to `ctx.documents()` in transforms, and is read again when it changes.
+
 ## 0.2.0 — 2026-10-18
 
 A rework of the build engine for sites with thousands of files. A build now does work only for what changed. Measured with the benchmark in [`apps/bench`](apps/bench) on generated projects (MDX posts, Markdown pages, JSON products, one image per four documents, views, search), with Bun on an Apple M3 Max. Each number is the median of its runs; every "new process" row starts a new process, and its time is that of the build inside it.
